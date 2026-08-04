@@ -164,6 +164,23 @@ const config = Object.freeze({
     enabled: Boolean(str('REDIS_URL', '')),
   },
 
+  storage: {
+    provider: str('STORAGE_PROVIDER', 'local'),
+    baseDir: str('STORAGE_BASE_DIR', 'uploads'),
+    bucket: str('S3_BUCKET', ''),
+    region: str('S3_REGION', 'us-east-1'),
+    endpoint: str('S3_ENDPOINT', ''),
+    accessKeyId: str('S3_ACCESS_KEY_ID', ''),
+    secretAccessKey: str('S3_SECRET_ACCESS_KEY', ''),
+    forcePathStyle: bool('S3_FORCE_PATH_STYLE', false),
+  },
+
+  encryption: {
+    key: str('ENCRYPTION_KEY', ''),
+    algorithm: str('ENCRYPTION_ALGORITHM', 'aes-256-gcm'),
+    keyVersion: num('ENCRYPTION_KEY_VERSION', 1),
+  },
+
   mail: {
     provider: str('MAIL_PROVIDER', 'smtp'),
     host: str('SMTP_HOST', ''),

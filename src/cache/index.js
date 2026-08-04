@@ -1,10 +1,11 @@
 /**
- * Cache abstraction facade (placeholder).
+ * Cache abstraction facade.
  *
  * WHY IT EXISTS
- *   Analytics queries and connector previews are good cache targets. Where the
- *   cache physically lives (in-memory for dev, Redis for production) is a
- *   deployment concern; this facade keeps business logic on one interface.
+ *   Analytics queries and connector previews are good cache targets. Where
+ *   the cache physically lives (in-memory for dev, Redis for production) is
+ *   a deployment concern; this facade keeps business logic on one
+ *   interface.
  *
  * RESPONSIBILITY
  *   - Define the canonical provider names.
@@ -12,8 +13,9 @@
  *   - Each provider returns a driver with the SAME method surface.
  *
  * HOW TO EXTEND
- *   Add a provider by creating `<name>.js` exporting a factory returning the
- *   documented driver surface, then map it here. Selection is config-driven.
+ *   Add a provider by creating `<name>.js` exporting a factory returning
+ *   the documented driver surface, then map it here. Selection is
+ *   config-driven.
  *
  *   ```js
  *   import { createCache } from '../cache/index.js';
@@ -33,10 +35,9 @@ export const CACHE_PROVIDERS = Object.freeze({
 
 /**
  * Create a cache driver for the requested provider.
- * PLACEHOLDER in Phase 1.1 - providers return fail-closed stubs.
  *
  * @param {Object} [config] - { provider, ttlDefault?, url?, keyPrefix?, ... }.
- * @returns {Object} CacheDriver (stub until implemented).
+ * @returns {Object} CacheDriver.
  */
 export function createCache(config = {}) {
   const provider = config.provider ?? CACHE_PROVIDERS.MEMORY;

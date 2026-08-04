@@ -17,11 +17,12 @@
 
 import logger from '../utils/logger.js';
 import { JOB } from '../config/constants.js';
+import env from '../config/env.js';
 
 export default {
   name: JOB.NAMES.ANOMALY,
-  cronExpression: process.env.JOB_ANOMALY_CRON || JOB.CRON.ANOMALY,
-  enabled: process.env.JOB_ANOMALY_ENABLED === 'true',
+  cronExpression: env.jobs.anomaly.cron,
+  enabled: env.jobs.anomaly.enabled,
 
   async handler() {
     // TODO(analytics): detect anomalies in recent metrics and enqueue alerts.

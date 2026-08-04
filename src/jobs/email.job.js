@@ -1,30 +1,32 @@
 /**
- * Email queue job (stub).
+ * Email queue draining job (stub).
  *
  * WHY IT EXISTS
- *   Reserves the scheduled slot for the future outbound email pipeline
- *   (transactional mail + alert notifications) as a retrying queue worker.
+ *   Reserves the scheduled slot for periodic polling of the email delivery
+ *   queue and demonstrates the job contract consumed by `jobs/scheduler.js`.
  *
  * RESPONSIBILITY
- *   None yet - logs and exits. Will drain queued email records, render
- *   templates from `src/templates/emails/` and send via `config/mail.js`.
+ *   None yet - logs and exits. Sprint 1 will subscribe a BullMQ worker to
+ *   `queues/email.queue.js` and call it directly; this cron becomes the
+ *   fallback / safety net.
  *
  * HOW TO EXTEND
- *   - Adjust `JOB_EMAIL_CRON` / `JOB_EMAIL_ENABLED` in `.env.example`.
- *   - When mail sending lands, cap the batch size per tick and mark records
- *     as `queued -> sending -> sent|failed` to survive process restarts.
+ *   - Adjust the cron / enable flag in `.env.example`
+ *     (`JOB_EMAIL_CRON`, `JOB_EMAIL_ENABLED`).
+ *   - Implement the feature under `src/services/email.service.js`.
  */
 
 import logger from '../utils/logger.js';
 import { JOB } from '../config/constants.js';
+import env from '../config/env.js';
 
 export default {
   name: JOB.NAMES.EMAIL,
-  cronExpression: process.env.JOB_EMAIL_CRON || JOB.CRON.EMAIL,
-  enabled: process.env.JOB_EMAIL_ENABLED === 'true',
+  cronExpression: env.jobs.email.cron,
+  enabled: env.jobs.email.enabled,
 
   async handler() {
-    // TODO(alerts): drain the email queue in batches, render + send.
-    logger.info('Email queue job executed (stub - nothing to do)');
+    // TODO(email): drain queued emails via services/email.service.js.
+    logger.info('Email queue drain job executed (stub - nothing to do)');
   },
 };

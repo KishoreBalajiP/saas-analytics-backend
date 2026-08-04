@@ -1,50 +1,166 @@
 /**
- * In-memory cache provider placeholder.
+ * In-memory cache driver.
  *
  * WHY IT EXISTS
- *   Default cache for development/tests and single-instance deployments - no
- *   external dependency, ideal for local `npm run dev`.
+ *   Default cache for development, tests and single-instance deployments.
+ *   No external dependency; ideal for local `npm run dev`.
  *
  * RESPONSIBILITY
- *   Return a driver implementing the same `CacheDriver` surface as every other
- *   provider. PLACEHOLDER - all methods fail closed until implemented.
+ *   Return a driver implementing the `CacheDriver` surface shared by every
+ *   provider. Single-instance only - use the Redis driver for multi-
+ *   instance deployments.
  *
  * DRIVER SURFACE (documented, shared by all providers):
- *   - get(key)                 -> Promise<any | null>
- *   - set(key, value, ttlSec?) -> Promise<void>
- *   - del(key)                 -> Promise<boolean>
- *   - ttl(key)                 -> Promise<number | -1 | -2>
- *   - increment(key, by)       -> Promise<number>
- *   - flushAll()               -> Promise<void>
- *   - getOrSet(key, fn, ttlSec) -> Promise<any>   (memoize helper)
+ *   - get(key)                   -> Promise<any | null>
+ *   - set(key, value, ttlSec?)   -> Promise<void>
+ *   - del(key)                   -> Promise<boolean>
+ *   - ttl(key)                   -> Promise<number | -1 | -2>
+ *   - increment(key, by)         -> Promise<number>
+ *   - flushAll()                 -> Promise<void>
+ *   - getOrSet(key, fn, ttlSec)  -> Promise<any>   (memoize helper)
+ *   - close()                    -> Promise<void>  (release resources)
  *
- * CONFIG (future):
- *   { provider: 'memory', ttlDefault: 300, keyPrefix: 'saas:' }
+ * CONFIG:
+ *   { provider: 'memory', ttlDefault, keyPrefix }
  *
  * HOW TO EXTEND
- *   Implement with a `Map` + per-key expiry timestamps, apply `keyPrefix`,
- *   and keep the surface identical. Note: single-instance only - use the
- *   Redis provider for multi-instance deployments.
+ *   The implementation uses a `Map` + per-key expiry timestamps, applies
+ *   `keyPrefix`, and keeps the surface identical to the Redis driver.
  */
 
-import { createStubDriver } from '../utils/stubs.js';
-
-const DRIVER_METHODS = ['get', 'set', 'del', 'ttl', 'increment', 'flushAll', 'getOrSet'];
+const DEFAULT_TTL_SEC = 300;
+const DEFAULT_KEY_PREFIX = 'saas:';
 
 /**
  * Create the in-memory cache driver.
- * PLACEHOLDER - returns a fail-closed stub in Phase 1.1.
  *
  * @param {Object} [config] - { ttlDefault, keyPrefix }.
- * @returns {Object} CacheDriver (stub).
+ * @returns {Object} CacheDriver.
  */
 export function createMemoryCache(config = {}) {
+  const ttlDefault = Number.isInteger(config.ttlDefault) && config.ttlDefault > 0
+    ? config.ttlDefault
+    : DEFAULT_TTL_SEC;
+  const keyPrefix = typeof config.keyPrefix === 'string' ? config.keyPrefix : DEFAULT_KEY_PREFIX;
+
+  /** @type {Map<string, { value: any, expiresAt: number | null }>} */
+  const store = new Map();
+
+  function applyPrefix(key) {
+    return keyPrefix + key;
+  }
+
+  function isExpired(entry) {
+    return entry.expiresAt !== null && entry.expiresAt <= Date.now();
+  }
+
+  /**
+   * Lazily remove expired entries on read paths so memory does not grow
+   * unbounded.
+   *
+   * @param {string} fullKey
+   */
+  function purgeIfExpired(fullKey) {
+    const entry = store.get(fullKey);
+    if (entry && isExpired(entry)) {
+      store.delete(fullKey);
+    }
+  }
+
   return Object.freeze({
     provider: 'memory',
-    config: Object.freeze({
-      ttlDefault: config.ttlDefault ?? 300,
-      keyPrefix: config.keyPrefix ?? 'saas:',
-    }),
-    ...createStubDriver('memoryCache', DRIVER_METHODS),
+    config: Object.freeze({ ttlDefault, keyPrefix }),
+
+    async get(key) {
+      if (typeof key !== 'string' || key.length === 0) {
+        throw new Error('cache.get requires a non-empty key');
+      }
+      const fullKey = applyPrefix(key);
+      purgeIfExpired(fullKey);
+      const entry = store.get(fullKey);
+      return entry ? entry.value : null;
+    },
+
+    async set(key, value, ttlSec) {
+      if (typeof key !== 'string' || key.length === 0) {
+        throw new Error('cache.set requires a non-empty key');
+      }
+      const fullKey = applyPrefix(key);
+      // When ttlSec is omitted the value never expires; an explicit `0`
+      // or negative value also opts out so callers can pass user-provided
+      // TTLs without sanitising them.
+      const effectiveTtl = ttlSec === undefined ? null : ttlSec;
+      const expiresAt = Number.isInteger(effectiveTtl) && effectiveTtl > 0
+        ? Date.now() + effectiveTtl * 1000
+        : null;
+      store.set(fullKey, { value, expiresAt });
+    },
+
+    async del(key) {
+      if (typeof key !== 'string' || key.length === 0) {
+        throw new Error('cache.del requires a non-empty key');
+      }
+      const fullKey = applyPrefix(key);
+      return store.delete(fullKey);
+    },
+
+    async ttl(key) {
+      if (typeof key !== 'string' || key.length === 0) {
+        throw new Error('cache.ttl requires a non-empty key');
+      }
+      const fullKey = applyPrefix(key);
+      const entry = store.get(fullKey);
+      if (!entry) return -2;
+      if (entry.expiresAt === null) return -1;
+      const remaining = Math.ceil((entry.expiresAt - Date.now()) / 1000);
+      if (remaining <= 0) {
+        store.delete(fullKey);
+        return -2;
+      }
+      return remaining;
+    },
+
+    async increment(key, by = 1) {
+      if (typeof key !== 'string' || key.length === 0) {
+        throw new Error('cache.increment requires a non-empty key');
+      }
+      const fullKey = applyPrefix(key);
+      const entry = store.get(fullKey);
+      const current = entry ? Number(entry.value) : 0;
+      const next = current + Number(by);
+      if (!Number.isFinite(next)) {
+        throw new Error('cache.increment produced a non-finite value');
+      }
+      const expiresAt = entry?.expiresAt ?? null;
+      store.set(fullKey, { value: next, expiresAt });
+      return next;
+    },
+
+    async flushAll() {
+      store.clear();
+    },
+
+    async getOrSet(key, fn, ttlSec) {
+      if (typeof fn !== 'function') {
+        throw new Error('cache.getOrSet requires a function');
+      }
+      const fullKey = applyPrefix(key);
+      purgeIfExpired(fullKey);
+      const entry = store.get(fullKey);
+      if (entry) return entry.value;
+      const value = await fn();
+      const effectiveTtl = ttlSec === undefined ? null : ttlSec;
+      const expiresAt = Number.isInteger(effectiveTtl) && effectiveTtl > 0
+        ? Date.now() + effectiveTtl * 1000
+        : null;
+      store.set(fullKey, { value, expiresAt });
+      return value;
+    },
+
+    async close() {
+      store.clear();
+    },
   });
 }
+
+export default createMemoryCache;

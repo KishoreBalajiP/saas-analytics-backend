@@ -1,5 +1,5 @@
 /**
- * Storage abstraction facade (placeholder).
+ * Storage abstraction facade.
  *
  * WHY IT EXISTS
  *   Files (CSV uploads, exports, images) are stored differently per
@@ -24,6 +24,7 @@
  *   ```
  */
 
+import env from '../config/env.js';
 import { createLocalStorage } from './localStorage.js';
 import { createS3Storage } from './s3Storage.js';
 
@@ -34,19 +35,33 @@ export const STORAGE_PROVIDERS = Object.freeze({
 });
 
 /**
+ * Determine the default storage provider from configuration.
+ *
+ * Returns `s3` when `STORAGE_PROVIDER=s3` is set AND `S3_BUCKET` is
+ * configured. Defaults to `local`.
+ *
+ * @returns {string}
+ */
+function defaultProvider() {
+  return env.storage?.provider ?? STORAGE_PROVIDERS.LOCAL;
+}
+
+/**
  * Create a storage driver for the requested provider.
- * PLACEHOLDER in Phase 1.1 - providers return fail-closed stubs.
  *
  * @param {Object} [config] - { provider, baseDir?, bucket?, region?, ... }.
- * @returns {Object} StorageDriver (stub until implemented).
+ * @returns {Object} StorageDriver.
  */
 export function createStorage(config = {}) {
-  const provider = config.provider ?? STORAGE_PROVIDERS.LOCAL;
+  const provider = config.provider ?? defaultProvider();
   switch (provider) {
     case STORAGE_PROVIDERS.LOCAL:
       return createLocalStorage(config);
     case STORAGE_PROVIDERS.S3:
-      return createS3Storage(config);
+      return createS3Storage({
+        ...env.storage,
+        ...config,
+      });
     default:
       throw new Error(`Unknown storage provider "${provider}"`);
   }

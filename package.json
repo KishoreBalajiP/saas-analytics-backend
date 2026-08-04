@@ -10,7 +10,13 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "nodemon",
-    "test": "node --test"
+    "test": "node --test",
+    "ci:guards": "node scripts/ci/run-all.js",
+    "ci:check-stubs": "node scripts/ci/check-stubs.js",
+    "ci:check-routes": "node scripts/ci/check-routes.js",
+    "ci:check-models": "node scripts/ci/check-models.js",
+    "ci:check-config": "node scripts/ci/check-config.js",
+    "ci:check-readme-sync": "node scripts/ci/check-readme-sync.js"
   },
   "keywords": [
     "saas",
@@ -22,22 +28,40 @@
   ],
   "license": "UNLICENSED",
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1102.0",
+    "@aws-sdk/lib-storage": "^3.1102.0",
+    "@aws-sdk/s3-request-presigner": "^3.1102.0",
+    "@socket.io/redis-adapter": "^8.3.0",
+    "argon2": "^0.45.1",
+    "bullmq": "^6.0.7",
     "compression": "^1.7.5",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
+    "csv-parse": "^7.0.2",
     "dotenv": "^16.4.5",
     "express": "^5.1.0",
     "express-rate-limit": "^7.4.1",
     "helmet": "^8.0.0",
+    "ioredis": "^6.0.0",
+    "jose": "^6.2.8",
     "mongoose": "^8.9.5",
+    "mongoose-paginate-v2": "^1.9.5",
+    "mongoose-update-if-current": "^1.4.0",
     "morgan": "^1.10.0",
+    "multer": "^2.2.0",
     "node-cron": "^4.0.0",
+    "nodemailer": "^9.0.4",
+    "otplib": "^13.4.1",
     "pino": "^9.5.0",
     "pino-pretty": "^13.0.0",
+    "rate-limit-redis": "^4.3.1",
     "socket.io": "^4.8.1",
+    "ua-parser-js": "^2.0.10",
+    "ulid": "^3.0.2",
     "uuid": "^11.0.5"
   },
   "devDependencies": {
+    "mongodb-memory-server": "^11.2.0",
     "nodemon": "^3.1.9"
   }
 }
