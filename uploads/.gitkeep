@@ -1,0 +1,2 @@
+# Reserved for user-uploaded files (CSV, images, exports).
+# The directory exists so deployments can mount persistent volumes here.

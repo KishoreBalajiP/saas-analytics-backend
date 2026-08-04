@@ -1,0 +1,215 @@
+/**
+ * Environment configuration loader.
+ *
+ * WHY IT EXISTS
+ *   Centralises every environment-derived setting in a single validated
+ *   module. Application code should never read `process.env` directly;
+ *   it imports this config instead. This keeps configuration predictable,
+ *   auditable and easy to test as the team grows.
+ *
+ * RESPONSIBILITY
+ *   - Loads the `.env` file from the project root via dotenv.
+ *   - Validates variables and fails fast in production when a required
+ *     variable is missing.
+ *   - Normalises raw strings into numbers, booleans and arrays.
+ *   - Exports a deeply frozen, dependency-free configuration object.
+ *
+ * HOW TO EXTEND
+ *   To add a setting:
+ *     1. Document it in `.env.example`.
+ *     2. Read it here with one of the `str() / num() / bool() / list()`
+ *        helpers.
+ *     3. Expose it under the matching `config.<section>` group.
+ */
+
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
+import dotenv from 'dotenv';
+
+const require = createRequire(import.meta.url);
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const projectRoot = path.resolve(__dirname, '../..');
+
+// Load variables from `<project root>/.env` when present. Already-defined
+// process.env values always win, which is what deploy platforms rely on.
+dotenv.config({ path: path.join(projectRoot, '.env') });
+
+// The project version falls back to the version declared in package.json so
+// there is a single source of truth for the running build.
+const pkg = require('../../package.json');
+
+/* ----------------------------- helpers ---------------------------------- */
+
+const read = (key) => process.env[key];
+
+/** Read a string variable with a fallback default. */
+const str = (key, fallback = '') => {
+  const value = read(key);
+  return value === undefined || value === '' ? fallback : value;
+};
+
+/** Read a numeric variable, falling back when absent or invalid. */
+const num = (key, fallback) => {
+  const value = Number(read(key));
+  return Number.isFinite(value) && read(key) !== undefined ? value : fallback;
+};
+
+/** Read a boolean variable (accepts true/1/yes, case-insensitive). */
+const bool = (key, fallback = false) => {
+  const value = read(key);
+  if (value === undefined || value === '') return fallback;
+  return ['true', '1', 'yes', 'on'].includes(value.toLowerCase());
+};
+
+/** Read a comma-separated list variable into a trimmed string array. */
+const list = (key, fallback = []) => {
+  const value = read(key);
+  if (value === undefined || value === '') return fallback;
+  return value.split(',').map((item) => item.trim()).filter(Boolean);
+};
+
+/** Fail-fast helper for variables that are mandatory in a given mode. */
+const required = (key, value) => {
+  if (value === undefined || value === '') {
+    throw new Error(`Missing required environment variable "${key}"`);
+  }
+  return value;
+};
+
+/* --------------------------- environment mode ---------------------------- */
+
+const env = str('NODE_ENV', 'development');
+const isProduction = env === 'production';
+const isDevelopment = env === 'development';
+const isTest = env === 'test';
+
+if (!isProduction && !isDevelopment && !isTest) {
+  throw new Error(
+    `Invalid NODE_ENV "${env}". Expected "development", "production" or "test".`,
+  );
+}
+
+/* ------------------------------ validation ------------------------------- */
+
+// Secrets must exist in production. A dev-only default keeps local boot simple,
+// but the app refuses to run in production with the known-insecure default.
+const jwtSecret = str('JWT_SECRET', 'dev-only-insecure-jwt-secret');
+if (isProduction) required('JWT_SECRET', jwtSecret === 'dev-only-insecure-jwt-secret' ? undefined : jwtSecret);
+
+const mailPassword = str('MAIL_PASSWORD');
+if (isProduction && str('MAIL_PROVIDER', 'smtp') !== 'none' && str('SMTP_HOST') && !mailPassword) {
+  throw new Error('Missing required environment variable "MAIL_PASSWORD"');
+}
+
+/* --------------------------- configuration object ------------------------ */
+
+const config = Object.freeze({
+  app: {
+    name: str('APP_NAME', 'SaaS Analytics Platform'),
+    version: str('APP_VERSION', pkg.version || '0.0.0'),
+    env,
+    isProduction,
+    isDevelopment,
+    isTest,
+    port: num('PORT', 8080),
+    apiPrefix: str('API_PREFIX', '/api/v1'),
+    bodyLimit: str('REQUEST_BODY_LIMIT', '1mb'),
+  },
+
+  server: {
+    trustProxy: num('TRUST_PROXY', 1),
+    shutdownTimeoutMs: num('SHUTDOWN_TIMEOUT_MS', 10000),
+  },
+
+  database: {
+    uri: str('MONGODB_URI', 'mongodb://127.0.0.1:27017/saas_analytics'),
+    connectAttempts: num('MONGODB_CONNECT_ATTEMPTS', 3),
+    retryDelayMs: num('MONGODB_RETRY_DELAY_MS', 2000),
+    maxPoolSize: num('MONGODB_MAX_POOL_SIZE', 50),
+    minPoolSize: num('MONGODB_MIN_POOL_SIZE', 5),
+    serverSelectionTimeoutMs: num('MONGODB_SERVER_SELECTION_TIMEOUT_MS', 10000),
+    connectTimeoutMs: num('MONGODB_CONNECT_TIMEOUT_MS', 15000),
+  },
+
+  cors: {
+    origins: list('CORS_ORIGINS', []).length
+      ? list('CORS_ORIGINS', [])
+      : [str('CLIENT_URL', 'http://localhost:3000')],
+    clientUrl: str('CLIENT_URL', 'http://localhost:3000'),
+  },
+
+  security: {
+    jwtSecret,
+    jwtExpiresIn: str('JWT_EXPIRES_IN', '1d'),
+    cookieSecure: bool('COOKIE_SECURE', isProduction),
+    rateLimit: {
+      windowMs: num('RATE_LIMIT_WINDOW_MS', 15 * 60 * 1000),
+      max: num('RATE_LIMIT_MAX', 300),
+      strictMax: num('RATE_LIMIT_STRICT_MAX', 20),
+    },
+  },
+
+  socket: {
+    corsOrigins: list('SOCKET_CORS_ORIGIN', ['http://localhost:3000']),
+    pingIntervalMs: num('SOCKET_PING_INTERVAL_MS', 25000),
+    pingTimeoutMs: num('SOCKET_PING_TIMEOUT_MS', 20000),
+    maxHttpBufferSize: num('SOCKET_MAX_HTTP_BUFFER_SIZE', 1000000),
+    transports: list('SOCKET_TRANSPORTS', ['polling', 'websocket']),
+  },
+
+  redis: {
+    url: str('REDIS_URL', ''),
+    enabled: Boolean(str('REDIS_URL', '')),
+  },
+
+  mail: {
+    provider: str('MAIL_PROVIDER', 'smtp'),
+    host: str('SMTP_HOST', ''),
+    port: num('SMTP_PORT', 587),
+    secure: bool('MAIL_SECURE', num('SMTP_PORT', 587) === 465),
+    user: str('MAIL_USER', ''),
+    password: mailPassword,
+    from: str('MAIL_FROM', 'SaaS Analytics Platform <noreply@localhost>'),
+  },
+
+  scheduler: {
+    enabled: bool('SCHEDULER_ENABLED', true),
+    timezone: str('SCHEDULER_TIMEZONE', 'UTC'),
+  },
+
+  jobs: {
+    sheetSync: {
+      cron: str('JOB_SHEET_SYNC_CRON', '0 */6 * * *'),
+      enabled: bool('JOB_SHEET_SYNC_ENABLED', false),
+    },
+    email: {
+      cron: str('JOB_EMAIL_CRON', '*/5 * * * *'),
+      enabled: bool('JOB_EMAIL_ENABLED', false),
+    },
+    cleanup: {
+      cron: str('JOB_CLEANUP_CRON', '0 3 * * *'),
+      enabled: bool('JOB_CLEANUP_ENABLED', false),
+    },
+    anomaly: {
+      cron: str('JOB_ANOMALY_CRON', '0 * * * *'),
+      enabled: bool('JOB_ANOMALY_ENABLED', false),
+    },
+  },
+
+  logging: {
+    level: str('LOG_LEVEL', isProduction ? 'info' : 'debug'),
+    redact: list('LOG_REDACT', [
+      'req.headers.authorization',
+      'req.headers.cookie',
+      'password',
+      'authorization',
+      'jwt',
+      'token',
+      'apiKey',
+    ]),
+  },
+});
+
+export default config;

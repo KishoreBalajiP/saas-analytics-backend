@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json.schemastore.org/nodemon.json",
+  "watch": ["src"],
+  "ext": "js,json,mjs",
+  "ignore": ["src/**/*.test.js", "node_modules", "logs", "uploads", "docs"],
+  "exec": "node src/server.js",
+  "env": {
+    "NODE_ENV": "development"
+  },
+  "quiet": true
+}

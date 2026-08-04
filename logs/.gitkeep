@@ -1,0 +1,2 @@
+# Reserved for runtime log files (currently logs go to stdout).
+# Add pino file transports here if a platform requires on-disk logs.
