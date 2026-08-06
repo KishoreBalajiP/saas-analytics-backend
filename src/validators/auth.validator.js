@@ -1,27 +1,28 @@
 /**
- * Admin Validators (Sprint 1 - auth surface implemented).
+ * Auth Validators (Sprint 1 - implemented).
  *
  * PURPOSE
  *   Declarative request-shape schemas consumed by `validate(schema)`
  *   from `src/validators/index.js`. Wired into route files via
- *   `router.post('/path', validate(adminValidator.loginSchema), handler)`.
+ *   `router.post('/login', validate(authValidator.loginSchema), handler)`.
  *
- * RESPONSIBILITY (auth surface implemented, Sprint 1)
+ * RESPONSIBILITY
  *   - loginSchema           { email, password, mfaToken? }
- *   - refreshSchema         { refreshToken? }
- *   - logoutSchema          { refreshToken? }
+ *   - refreshSchema         { refreshToken? } (token normally via cookie)
+ *   - logoutSchema          { refreshToken? } (token normally via cookie)
  *   - forgotPasswordSchema  { email }
  *   - resetPasswordSchema   { token, newPassword }
- *   - mfaEnrollSchema       (no body - identity comes from the bearer)
  *   - mfaVerifySchema       { code }
- *   - createAdminSchema / updateAdminSchema / assignRoleSchema remain
- *     empty placeholders until the `/admin` CRUD surface lands (Sprint 2).
  *
  * CODING GUIDELINES
  *   - Schemas follow the engine's shorthand (`'string|required'`) or
  *     rules object (`{ type: 'string', required: true, minLength: 8 }`).
  *   - Validation lives here only. Controllers stay trivial.
  *   - All required fields MUST be enumerated; never permissive defaults.
+ *   - Refresh/logout accept an optional body token because cookies can be
+ *     disabled; the body is ignored when the cookie is present.
+ *   - MFA codes are six digits (RFC 6238) and validated as STRINGS so a
+ *     leading zero survives the round trip to the authenticator.
  */
 
 /** Six-digit TOTP code. Optional on login (only required when MFA is on). */
@@ -76,38 +77,10 @@ export const resetPasswordSchema = {
 };
 
 /** @type {import('../index.js').Schema} */
-export const mfaEnrollSchema = {
-  body: {},
-  params: {},
-  query: {},
-};
-
-/** @type {import('../index.js').Schema} */
 export const mfaVerifySchema = {
   body: {
     code: { ...mfaToken, required: true },
   },
-  params: {},
-  query: {},
-};
-
-/** @type {import('../index.js').Schema} */
-export const createAdminSchema = {
-  body: {},
-  params: {},
-  query: {},
-};
-
-/** @type {import('../index.js').Schema} */
-export const updateAdminSchema = {
-  body: {},
-  params: {},
-  query: {},
-};
-
-/** @type {import('../index.js').Schema} */
-export const assignRoleSchema = {
-  body: {},
   params: {},
   query: {},
 };
@@ -118,10 +91,6 @@ export default {
   logoutSchema,
   forgotPasswordSchema,
   resetPasswordSchema,
-  mfaEnrollSchema,
   mfaVerifySchema,
-  createAdminSchema,
-  updateAdminSchema,
-  assignRoleSchema,
-  _meta: { phase: '1.2 - auth schemas implemented, CRUD schemas pending (Sprint 2)' },
+  _meta: { sprint: '1 - auth validators implemented' },
 };

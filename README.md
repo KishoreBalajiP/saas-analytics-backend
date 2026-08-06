@@ -91,7 +91,8 @@ docker compose up --build
 | ------------------------------- | ---------------------------------------------------- |
 | `npm start`                     | run in production (`node src/server.js`)             |
 | `npm run dev`                   | run with nodemon (auto-restart on change)            |
-| `npm test`                      | run the `node --test` suite                          |
+| `npm test`                      | run the `node --test` suite (scrypt KDF, portable)             |
+| `npm run test:argon2`           | run the suite against the real Argon2id KDF                    |
 | `npm run ci:guards`             | run every CI guard in `scripts/ci/`                  |
 | `npm run ci:check-stubs`        | verify no orphan `notImplementedStub`                |
 | `npm run ci:check-routes`       | verify every route has auth or explicit exemption    |

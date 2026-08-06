@@ -40,8 +40,8 @@
 
 ## Current Status
 
-> **Status:** `In Progress` — Phase 2 (Sprint 0 complete; Sprints 1–9 planned).
-> **Sprint:** Between Sprint 0 (✅ complete) and Sprint 1 (🕓 planned).
+> **Status:** `In Progress` — Phase 2 (Sprints 0–1 complete; Sprints 2–9 planned).
+> **Sprint:** Sprint 1 (✅ complete) → Sprint 2 (🕓 planned).
 > **Owner:** Engineering team.
 
 ## Business Perspective
@@ -121,7 +121,7 @@ The detailed per-sprint criteria live in
 | **1** | Production Backend Foundation | `Completed` | ✅ | [`ARCHITECTURE.md`](./ARCHITECTURE.md), [repo-root `README.md`](../../README.md) |
 | **1.1** | Connector & Infrastructure Architecture | `Completed` | ✅ | [`src/connectors/`](../../src/connectors/) |
 | **1.2** | Platform Management Architecture | `Completed` | ✅ | [`src/modules/`](../../src/modules/) |
-| **2** | Implementation (Sprints 0–9) | `In Progress` | Sprint 0 ✅; Sprints 1–9 🕓 | [`phases/sprint-0.md`](./phases/sprint-0.md) → [`phases/sprint-9.md`](./phases/sprint-9.md) |
+| **2** | Implementation (Sprints 0–9) | `In Progress` | Sprints 0–1 ✅; Sprints 2–9 🕓 | [`phases/sprint-0.md`](./phases/sprint-0.md) → [`phases/sprint-9.md`](./phases/sprint-9.md) |
 | **3** | Enterprise Features | `Future` | — | [`DECISIONS.md` "Postponed Decisions"](./DECISIONS.md#postponed-decisions-phase-3) |
 | **4** | Advanced Enterprise | `Future` | — | (planned) |
 | **5** | Mobile Apps & SDKs | `Future` | — | (planned) |
@@ -338,9 +338,9 @@ Sprint 0 (Foundation — shared utilities, drivers, plugins)
 
 ### Current Status
 
-`In Progress`. Sprint 0 is ✅ complete (see
-[`STATUS.md`](./STATUS.md#what-is-shipped-today-sprint-0)). Sprints
-1–9 are 🕓 planned (see [`phases/`](./phases/README.md)).
+`In Progress`. Sprints 0–1 are ✅ complete (see
+[`STATUS.md`](./STATUS.md#what-is-shipped-today-sprint-1)). Sprints
+2–9 are 🕓 planned (see [`phases/`](./phases/README.md)).
 
 ### Expected Outcome
 
@@ -607,8 +607,8 @@ them in mind.
 ## Summary
 
 The roadmap is seven phases deep and three years wide. Phase 1 and
-Phase 1.1 and Phase 1.2 are complete; Phase 2 is in flight (Sprint 0
-done, Sprints 1–9 planned); Phase 3+ is future. The order is
+Phase 1.1 and Phase 1.2 are complete; Phase 2 is in flight (Sprints 0–1
+done, Sprints 2–9 planned); Phase 3+ is future. The order is
 non-negotiable: foundation, then auth, then RBAC, then business
 features, then enterprise, then mobile/AI/white-label. Every
 deliverable is traceable back to a sprint plan in `phases/`.
@@ -616,7 +616,7 @@ deliverable is traceable back to a sprint plan in `phases/`.
 ## Key Takeaways
 
 - **Three phases complete, one in flight, four future.**
-- **Sprint 0 is the only completed sprint of ten** in Phase 2.
+- **Sprints 0–1 are the two completed sprints of ten** in Phase 2.
 - **Phase 3+ items already have hooks in the code** (KMS swap,
   audit events, public compliance endpoint shape). They are not
   rewrites; they are slot-fills.
@@ -704,7 +704,7 @@ deliverable is traceable back to a sprint plan in `phases/`.
 
 ## Last Updated
 
-- **Sprint:** Sprint 0 close
+- **Sprint:** Sprint 1 close
 - **Phase:** Phase 2 — Implementation
-- **Date:** 2026-08-05
-- **Author:** Documentation (Sprint 0)
+- **Date:** 2026-08-06
+- **Author:** Engineering (Sprint 1)

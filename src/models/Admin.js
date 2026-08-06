@@ -1,44 +1,67 @@
 /**
- * Admin (architecture placeholder - NO schema).
+ * Admin (Sprint 1 - implemented).
  *
  * PURPOSE
  *   Platform Admin identity. NOT a tenant user. Owns the platform's
  *   configuration, support tooling and high-privilege operations.
  *
- * PLANNED FIELDS (Phase 2 schemas land here)
- *   _id, email (unique, lower), passwordHash, mfaSecret?, mfaEnabled,
- *   status: 'pending' | 'active' | 'suspended' | 'locked',
- *   adminType: 'super' | 'platform' | 'support',
- *   tenantScope?: tenantId | null,   // only for support admins
- *   profile: { name, locale, timezone, avatarUrl },
- *   lastLoginAt, failedAttempts, lockedUntil,
- *   createdAt, updatedAt, createdBy, updatedBy
+ * SECURITY
+ *   - `passwordHash` stores the Argon2id hash (see `utils/password.js`).
+ *   - `mfaSecret` is the encrypted TOTP secret (Sprint 0 encryption util);
+ *     `mfaEnabled` gates whether MFA is enforced at login.
+ *   - `failedAttempts` + `lockedUntil` persist account lockout state.
+ *   - `tenantScope` is the optional tenant a `support` admin may operate
+ *     in. It is NOT multi-tenancy scoping (admins are platform-scoped),
+ *     which is why the `tenantScope` plugin is not applied here.
  *
- * PLANNED INDEXES
+ * PLUGINS
+ *   softDelete, paginate, optimisticConcurrency, audit (module `iam.admins`).
+ *
+ * INDEXES
  *   - unique(email)
  *   - { status: 1, lastLoginAt: -1 }
- *
- * RELATIONSHIPS
- *   - Admin -> AdminRole[] (many-to-many, with optional tenant scope)
- *   - AdminRole -> Role -> Permission[]
- *
- * WHY NO SCHEMA HERE
- *   Phase 1.2 establishes the module surface. Schemas land in Phase 2 along
- *   with auth, hashing, and RBAC. Do NOT add mongoose.Schema here.
+ *   - { adminType: 1 }
  */
+
+import mongoose from 'mongoose';
+import { softDelete, paginate, optimisticConcurrency, audit } from './plugins/index.js';
 
 export const MODEL_NAME = 'Admin';
 export const ADMIN_TYPES = Object.freeze(['super', 'platform', 'support']);
 export const ADMIN_STATUSES = Object.freeze(['pending', 'active', 'suspended', 'locked']);
 
-export default Object.freeze({
-  name: MODEL_NAME,
-  types: ADMIN_TYPES,
-  statuses: ADMIN_STATUSES,
-  schemaImplemented: false,
-  seeAlso: [
-    'src/services/admin.service.js',
-    'src/repositories/admin.repository.js',
-    'src/modules/iam/admins/README.md',
-  ],
-});
+const adminSchema = new mongoose.Schema(
+  {
+    email: { type: String, required: true, unique: true, lowercase: true, trim: true },
+    passwordHash: { type: String, required: true },
+    mfaSecret: { type: String, default: null },
+    mfaEnabled: { type: Boolean, default: false },
+    status: { type: String, enum: [...ADMIN_STATUSES], default: 'pending', index: true },
+    adminType: { type: String, enum: [...ADMIN_TYPES], default: 'platform' },
+    tenantScope: { type: String, default: null },
+    profile: {
+      name: { type: String, trim: true, default: '' },
+      locale: { type: String, default: 'en' },
+      timezone: { type: String, default: 'UTC' },
+      avatarUrl: { type: String, default: null },
+    },
+    lastLoginAt: { type: Date, default: null },
+    failedAttempts: { type: Number, default: 0, min: 0 },
+    lockedUntil: { type: Date, default: null },
+    createdBy: { type: String, default: null },
+    updatedBy: { type: String, default: null },
+  },
+  { timestamps: true },
+);
+
+adminSchema.index({ status: 1, lastLoginAt: -1 });
+adminSchema.index({ adminType: 1 });
+
+adminSchema.plugin(softDelete);
+adminSchema.plugin(paginate);
+adminSchema.plugin(optimisticConcurrency);
+adminSchema.plugin(audit, { module: 'iam.admins' });
+
+export const AdminSchema = adminSchema;
+export const Admin = mongoose.model(MODEL_NAME, adminSchema);
+export default Admin;

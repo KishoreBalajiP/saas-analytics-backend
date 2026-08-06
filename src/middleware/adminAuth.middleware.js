@@ -1,25 +1,21 @@
 /**
- * adminAuth.middleware.js (architecture placeholder).
+ * adminAuth.middleware.js (Sprint 1 - implemented).
  *
  * PURPOSE
  *   Resolves the calling admin identity for `/api/v1/admin*` routes.
- *   Verifies the bearer JWT, attaches `req.admin`, and gates the rest of
- *   the pipeline. Built on top of `src/middleware/auth.middleware.js`
- *   but enforces admin-only requirements (no tenant scoping on the
- *   token) and tighter session policy.
+ *   Verifies the bearer JWT (audience = `admin`), enforces session
+ *   liveness, and attaches `req.admin`. Built on top of
+ *   `src/middleware/auth.middleware.js` via the shared `authenticateToken`
+ *   factory, so both portals behave identically - only the audience and the
+ *   attach key differ.
  *
- * RESPONSIBILITY (planned, NO implementation yet)
+ * RESPONSIBILITY
  *   - Read `Authorization: Bearer <jwt>` from the request.
  *   - Verify signature, expiry, audience = admin.
- *   - Resolve `req.admin = { id, type, scopes? }`.
  *   - Reject 401 on missing / invalid / expired tokens.
- *   - Reject 403 when `sessionId` references a revoked session (via
+ *   - Reject 401 when `sessionId` references a revoked/expired session (via
  *     `repositories/session.repository.js`).
- *
- * PHASE 1.2 BEHAVIOUR
- *   Fails closed with 501 when invoked. Routes are intentionally NOT
- *   wired with this middleware yet so they remain reachable for
- *   integration tests; mounting lands in Phase 2 once real auth ships.
+ *   - Attach `req.admin = { id, sessionId, email, tenantId }` on success.
  *
  * CODING GUIDELINES
  *   - Must run BEFORE `rbac`, `permission`, `tenantIsolation`.
@@ -27,27 +23,32 @@
  *   - Pair with `rateLimiter.middleware.js` on `/login` and `/refresh`.
  */
 
-import ApiError from '../utils/ApiError.js';
-import { notImplementedStub } from '../utils/stubs.js';
+import { authenticateToken } from './auth.middleware.js';
+import { JWT_AUDIENCES } from '../utils/jwt.js';
 
 /**
- * Express middleware factory. Phase 1.2: returns a strict 501.
- * Phase 2: becomes the real admin auth gate.
+ * Require a valid platform-admin access token.
+ * Usage: `router.get('/me', adminAuth, adminController.me)`.
  */
-export const adminAuth = notImplementedStub('middleware.adminAuth');
+export const adminAuth = authenticateToken({ audience: JWT_AUDIENCES.ADMIN, attach: 'admin' });
 
 /**
- * Optional variant: passes through when the bearer is absent instead of
- * raising. Useful for endpoints that allow either signed-in or public
- * access (e.g. `/feature-flags/resolve`).
+ * Optional variant: passes through when the bearer is absent/invalid
+ * instead of raising. Useful for endpoints that allow either signed-in or
+ * public access (e.g. `/feature-flags/resolve`). Never the sole guard.
  */
-export const adminAuthOptional = notImplementedStub('middleware.adminAuthOptional');
+export const adminAuthOptional = authenticateToken({
+  audience: JWT_AUDIENCES.ADMIN,
+  attach: 'admin',
+  optional: true,
+});
 
 export default {
   adminAuth,
   adminAuthOptional,
   _meta: {
-    phase: '1.2 - fail-closed placeholder',
+    phase: '1 - implemented (shared factory with auth.middleware.js)',
+    audience: JWT_AUDIENCES.ADMIN,
     runOrder: 'before rbac / permission / tenantIsolation',
     seeAlso: ['src/middleware/auth.middleware.js'],
   },

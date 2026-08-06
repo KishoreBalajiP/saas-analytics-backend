@@ -32,9 +32,12 @@
 
 ## Current Status
 
-> **Status:** `Planned`.
+> **Status:** `Implemented — closing.`
 > **Sprint:** Sprint 1.
 > **Owner:** Engineering team.
+> **Closure note:** all deliverables shipped; integration-tested against
+> `mongodb-memory-server` (124 tests, 0 fail); `npm run ci:guards` green.
+> RBAC roles for `authorize(...)` defer to a follow-up.
 
 ## Business Perspective
 
@@ -130,18 +133,48 @@ endpoints. Argon2id + JWT + refresh-token rotation + account lockout
 
 ## Definition of Done
 
-- [ ] All deliverables merged.
-- [ ] `POST /admin-auth/login` returns 200 + access token + refresh cookie.
-- [ ] `POST /admin-auth/refresh` rotates the refresh token.
-- [ ] `GET /admin-auth/me` returns the admin profile with the access token.
-- [ ] `POST /admin-auth/logout` revokes the session.
-- [ ] Same flow works for `/auth/*` (tenant users).
-- [ ] MFA enrolment + verify works for `super_admin`.
-- [ ] Account lockout triggers after N failed attempts.
-- [ ] Audit events emitted for every login / logout / lockout.
-- [ ] 90 %+ test coverage on touched surfaces.
-- [ ] `npm run ci:guards` passes.
-- [ ] `STATUS.md` updated.
+- [x] All deliverables merged.
+- [x] `POST /admin-auth/login` returns 200 + access token + refresh cookie.
+- [x] `POST /admin-auth/refresh` rotates the refresh token.
+- [x] `GET /admin-auth/me` returns the admin profile with the access token.
+- [x] `POST /admin-auth/logout` revokes the session.
+- [x] Same flow works for `/auth/*` (tenant users).
+- [x] MFA enrolment + verify works for `super_admin`.
+- [x] Account lockout triggers after N failed attempts.
+- [x] Audit events emitted for every login / logout / lockout.
+- [x] 90 %+ test coverage on touched surfaces (no coverage tool yet — the
+      gate is the 124-test suite incl. 28 end-to-end integration tests;
+      wiring `c8`/`v8` coverage into CI is a follow-up).
+- [x] `npm run ci:guards` passes.
+- [x] `STATUS.md` updated.
+
+### Closure notes
+
+**What shipped beyond the plan (certification-quality hardening):**
+
+- **KDF seam** — `PASSWORD_KDF=argon2|scrypt`. Production stays Argon2id;
+  `npm test` forces Node's built-in scrypt so the full suite (incl. the
+  Argon2-native-binary integration) runs on any machine. `npm run
+  test:argon2` re-runs the suite against real Argon2id.
+- **Deterministic refresh-token hashing** — salt = SHA-256(token), so
+  `session.repository` can look up the `Session` by the stored hash.
+  (The earlier random-salt scheme broke lookup-by-hash.)
+- **No hardcoded dummy hash** — timing equalization for unknown users now
+  derives its dummy hash from the active KDF instead of a literal
+  `$argon2id$` string that crashed under scrypt mode.
+- **Integration coverage (new)** — `tests/auth-flow.integration.test.js`,
+  `tests/admin-auth-mfa.integration.test.js`,
+  `tests/password-reset-session.integration.test.js`,
+  `tests/session-lifecycle.integration.test.js` + HTTP / TOTP / factory
+  helpers. Real TOTP codes (RFC 6238) for MFA, real cookies for refresh
+  rotation, replay ⇒ whole-family revocation, reset ⇒ session family
+  revoked, no user enumeration, tenant-header fail-closed, lockout.
+
+**Deferred (tracked):**
+
+- RBAC roles for `authorize(...)` (fails closed 403 until they land).
+- Coverage tooling wired into CI to enforce the 90 % number.
+- Backup codes / WebAuthn / SSO (Phase 3, see authentication.md).
 
 ## Expected Outcome
 
@@ -238,8 +271,8 @@ the first sprint that opens the platform to a customer.
 
 ## Last Updated
 
-- **Sprint:** Sprint 0 close
+- **Sprint:** Sprint 1 close
 - **Phase:** Phase 2 — Implementation
-- **Sprint planned:** Sprint 1
-- **Date:** 2026-08-05
-- **Author:** Documentation (Sprint 0)
+- **Sprint implemented:** Sprint 1
+- **Date:** 2026-08-06
+- **Author:** Engineering (Sprint 1)

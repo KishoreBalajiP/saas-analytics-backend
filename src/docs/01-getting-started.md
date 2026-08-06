@@ -109,7 +109,7 @@ Goal: a working dev server and a passing test suite on your laptop.
 1. Read the [Prerequisites](#prerequisites).
 2. Run the [Quick Start](#quick-start).
 3. Hit `GET /api/v1/health` and confirm the 200 response.
-4. Run `npm test` and confirm 73 / 73 pass.
+4. Run `npm test` and confirm the suite passes (124 tests; scrypt KDF mode).
 
 ### Stage 2 — Understand the skeleton (≈ 1 h)
 
@@ -251,12 +251,13 @@ INFO: SaaS Analytics Platform is running
 curl http://localhost:8080/api/v1/health
 # → 200 with the standard envelope; data.db === 'disconnected' is OK.
 
-# Try a stubbed business endpoint. It MUST return 501 with a `hint`
-# pointing at the module README that owns it.
+# A real auth endpoint. Invalid credentials → 401 with a GENERIC message
+# (no user enumeration). Needs a valid tenant header for a real login.
 curl -i -X POST http://localhost:8080/api/v1/auth/login \
   -H "Content-Type: application/json" \
+  -H "X-Tenant-Id: tnt_000000000000000000000000" \
   -d '{"email":"a@b.c","password":"x"}'
-# → 501, body contains `"hint":"See src/modules/iam/auth/README.md"`.
+# → 401, body contains `"message":"Invalid email or password"`.
 
 # Unknown route → 404.
 curl -i http://localhost:8080/api/v1/does-not-exist
@@ -267,11 +268,15 @@ curl -i http://localhost:8080/api/v1/does-not-exist
 
 ```bash
 # Full suite (≈ 3 s on a warm cache, longer on first run while
-# mongodb-memory-server downloads a MongoDB binary).
+# mongodb-memory-server downloads a MongoDB binary). Runs in scrypt
+# KDF mode so it is portable on any machine.
 npm test
+
+# Same suite against the real Argon2id KDF.
+npm run test:argon2
 ```
 
-You should see `73 pass, 0 fail`.
+You should see `124 pass, 0 fail`.
 
 ### Run the CI guardrails
 
@@ -293,8 +298,9 @@ Use this on every new workstation.
 - [ ] `.env` copied from `.env.example`.
 - [ ] `npm run dev` starts the server on port 8080.
 - [ ] `curl /api/v1/health` returns 200.
-- [ ] `curl POST /api/v1/auth/login` returns 501 with a `hint`.
-- [ ] `npm test` reports 73 / 73 pass.
+- [ ] `curl POST /api/v1/auth/login` returns a structured error envelope
+      (real endpoint; invalid credentials → 401, generic message).
+- [ ] `npm test` reports 124 / 124 pass.
 - [ ] `npm run ci:guards` reports 5 / 5 OK.
 - [ ] I have read [`STATUS.md`](./STATUS.md) — *Current Development*
       section.

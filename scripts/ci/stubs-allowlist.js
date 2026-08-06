@@ -13,13 +13,11 @@ export default [
 
   // Phase 2 middleware stubs (replaced in subsequent sprints)
   'src/middleware/accessLog.middleware.js',
-  'src/middleware/adminAuth.middleware.js',
   'src/middleware/audit.middleware.js',
   'src/middleware/compliance.middleware.js',
   'src/middleware/modulePermission.middleware.js',
   'src/middleware/permission.middleware.js',
   'src/middleware/rbac.middleware.js',
-  'src/middleware/tenant.middleware.js',
   'src/middleware/tenantIsolation.middleware.js',
 
   // Phase 2 repositories
@@ -49,7 +47,6 @@ export default [
 
   // Phase 2 controllers
   'src/controllers/accessLog.controller.js',
-  'src/controllers/admin.controller.js',
   'src/controllers/auditLog.controller.js',
   'src/controllers/compliance.controller.js',
   'src/controllers/dashboard.controller.js',

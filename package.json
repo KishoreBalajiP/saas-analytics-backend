@@ -10,7 +10,8 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "nodemon",
-    "test": "node --test",
+    "test": "node scripts/ci/run-tests.js",
+    "test:argon2": "node scripts/ci/run-tests.js --kdf argon2",
     "ci:guards": "node scripts/ci/run-all.js",
     "ci:check-stubs": "node scripts/ci/check-stubs.js",
     "ci:check-routes": "node scripts/ci/check-routes.js",

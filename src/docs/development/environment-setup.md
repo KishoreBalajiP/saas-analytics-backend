@@ -39,7 +39,7 @@
 | Application | `NODE_ENV`, `PORT`, `APP_NAME`, `APP_VERSION`, `API_PREFIX` |
 | MongoDB | `MONGODB_URI`, `MONGODB_*` (pool, retries) |
 | CORS | `CORS_ORIGINS`, `CLIENT_URL` |
-| Security | `JWT_SECRET`, `JWT_EXPIRES_IN`, `COOKIE_SECURE`, `TRUST_PROXY` |
+| Security | `JWT_SECRET`, `JWT_EXPIRES_IN`, `JWT_ACCESS_TTL`, `JWT_REFRESH_TTL`, `AUTH_COOKIE_NAME`, `AUTH_COOKIE_SAMESITE`, `LOGIN_MAX_ATTEMPTS`, `LOGIN_LOCKOUT_MS`, `PASSWORD_RESET_TTL_MS`, `PASSWORD_RESET_TOKEN_LENGTH`, `MFA_ISSUER`, `COOKIE_SECURE`, `TRUST_PROXY` |
 | Rate limit | `RATE_LIMIT_WINDOW_MS`, `RATE_LIMIT_MAX`, `RATE_LIMIT_STRICT_MAX` |
 | Socket.IO | `SOCKET_CORS_ORIGIN`, `SOCKET_*` |
 | Redis | `REDIS_URL` |
@@ -103,7 +103,7 @@ The CI guard ensures no module reads `process.env` directly.
 
 ## Last Updated
 
-- **Sprint:** Sprint 0 close
+- **Sprint:** Sprint 1 — Batch 1 (auth config)
 - **Phase:** Phase 2 — Implementation
-- **Date:** 2026-08-05
-- **Author:** Documentation (Sprint 0)
+- **Date:** 2026-08-06
+- **Author:** Documentation (Sprint 1)

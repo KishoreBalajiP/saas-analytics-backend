@@ -45,21 +45,25 @@ Phase 4+.
 | --- | --- |
 | Current version | `1.0.0` |
 | Current phase | Phase 2 — Implementation |
-| Current sprint | Sprint 0 — complete (between Sprint 0 and Sprint 1) |
-| Next sprint | Sprint 1 — Authentication (planned) |
-| Current progress | ~15 % of Phase 2 |
-| Last completed milestone | Sprint 0 close — shared implementation foundation (73 tests, 5/5 CI guards green) |
-| Next milestone | First end-to-end login → me → logout flow on both portals |
+| Current sprint | Sprint 1 — Authentication (closing) |
+| Next sprint | Sprint 2 (planned) |
+| Current progress | ~35 % of Phase 2 |
+| Last completed milestone | Sprint 1 close — auth for both portals: login/refresh/logout, password reset, TOTP MFA, lockout (124 tests, 5/5 CI guards green) |
+| Next milestone | RBAC roles for `authorize(...)` + first post-auth feature sprint |
 
-Facts as of Sprint 0 close:
+Facts as of Sprint 1 close:
 
-- Only shared infrastructure is shipped: utilities (JWT, Argon2id, IDs,
-  AES-256-GCM encryption, idempotency), cache (memory/Redis), queue
-  (in-memory/BullMQ), storage (local/S3), email (SMTP/noop), five Mongoose
-  plugins, idempotency middleware, five CI guardrails.
-- **Every business endpoint returns `501 Not Implemented` (fail-closed).**
-- `npm test` → 73 pass, 0 fail. `npm run ci:guards` → 5/5 green. `npm audit` → 0 vulnerabilities.
-- Auth/RBAC/tenancy middleware are fail-closed stubs until their sprints land.
+- Auth is fully shipped and integration-tested against `mongodb-memory-server`
+  for both portals (`/auth/*` + `/admin-auth/*`): login → me → logout, refresh
+  rotation with replay ⇒ whole-family revocation, MFA enrolment/verify with
+  real TOTP codes, password reset with no enumeration and session-family
+  revocation, account lockout.
+- `PASSWORD_KDF` seam: Argon2id in production; `npm test` forces Node's
+  built-in scrypt (portable, no native binary); `npm run test:argon2` runs the
+  real Argon2id KDF. Refresh tokens are hashed deterministically (salt =
+  SHA-256 of the token) so session lookup-by-hash works.
+- `npm test` → 124 pass, 0 fail. `npm run ci:guards` → 5/5 green. `npm audit` → 0 vulnerabilities.
+- `authorize(...)` still fails closed (403) until RBAC roles land.
 
 See [STATUS.md](src/docs/STATUS.md) for the canonical,
 daily-read state and the full shipped/stubbed/planned inventory.
@@ -230,26 +234,34 @@ and are the contract + status for each module.
 
 ## 7. Current Priorities
 
-The next work is **Sprint 1 — Authentication** (planned, not yet opened).
-Scope: both portals (`/auth/*` for tenant users, `/admin-auth/*` for platform
-admins), JWT access tokens (15 min) + rotating refresh tokens, account lockout,
-TOTP MFA for `super_admin`, real `authenticate` / `adminAuth` / `resolveTenant`
-middleware, rate-limited login, audit events per login/logout/lockout.
+The last work was **Sprint 1 — Authentication** (closed). Both portals are
+live and integration-tested: `/auth/*` for tenant users and `/admin-auth/*`
+for platform admins, JWT access tokens (15 min) + rotating refresh tokens,
+account lockout, TOTP MFA for `super_admin`, real `authenticate` /
+`adminAuth` / `resolveTenant` middleware, rate-limited login, refresh-token
+family revocation on replay, and password reset that revokes the session
+family.
 
-Concrete Sprint 1 deliverables:
+Sprint 1 closure state:
 
-1. `POST /admin-auth/login` → access token + refresh cookie
-2. `POST /admin-auth/refresh` → rotated refresh token
-3. `GET /admin-auth/me` → admin profile
-4. `POST /admin-auth/logout` → revoke session
-5. The same flow for `/auth/*`
+1. `POST /admin-auth/login` → access token + refresh cookie ✅
+2. `POST /admin-auth/refresh` → rotated refresh token ✅
+3. `GET /admin-auth/me` → admin profile ✅
+4. `POST /admin-auth/logout` → revoke session ✅
+5. The same flow for `/auth/*` ✅
+6. MFA enrolment + verify with real TOTP codes ✅
+7. Account lockout after N failures ✅
+8. KDF seam (`PASSWORD_KDF=argon2|scrypt`) + deterministic refresh-token
+   hashing (salt = SHA-256(token)) ✅
 
-Models to add: `User`, `Admin`, `Tenant`, `Session`, `LoginAttempt` (all with
-the shared plugin set). See
-[sprint-1.md](src/docs/phases/sprint-1.md) and
-[authentication.md](src/docs/backend/authentication.md).
-Do not start later sprints (IAM, RBAC, connectors, analytics) — they are
-planned, not open.
+Models added: `User`, `Admin`, `Tenant`, `Session`, `LoginAttempt` (all with
+the shared plugin set). Suite is 124 tests (scrypt mode), green; run the
+real KDF with `npm run test:argon2`.
+
+**Next up: Sprint 2 — IAM** (tenant / admin / user lifecycle CRUD), then
+Sprint 3 (RBAC roles for `authorize(...)`, which currently fails closed).
+See [sprint-2.md](src/docs/phases/sprint-2.md). Do not start later sprints
+(connectors, analytics, governance) — they are planned, not open.
 
 ---
 

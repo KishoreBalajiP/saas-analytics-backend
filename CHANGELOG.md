@@ -7,6 +7,91 @@ here. Dates are ISO 8601.
 
 ## [Unreleased] - Phase 2
 
+### Sprint 1 — Authentication (close: 2026-08-06)
+
+Sprint 1 ships the first user-visible feature: login, refresh, logout and
+password reset for **both** portals (`/auth/*` tenant users,
+`/admin-auth/*` platform admins), plus TOTP MFA for `super_admin` and
+persisted account lockout. Suite grew 73 → 124 tests (51 new, incl.
+end-to-end integration against `mongodb-memory-server`).
+
+#### Added (models)
+
+- `src/models/User.js`, `src/models/Admin.js`, `src/models/Tenant.js`,
+  `src/models/Session.js`, `src/models/LoginAttempt.js` — the five auth
+  models, all with the shared plugin set (tenantScope, softDelete,
+  paginate, optimisticConcurrency, audit).
+
+#### Added (IAM auth module)
+
+- `src/modules/iam/auth/auth.service.js` — login (generic errors, no
+  enumeration), refresh (rotation + replay ⇒ whole-family revocation),
+  logout, lockout via `LoginAttempt`.
+- `src/modules/iam/auth/session.service.js` — session lifecycle: create /
+  rotate / revoke (idempotent) / revokeAllForActor / markExpired;
+  **deterministic** refresh-token hashing (salt = SHA-256(token)) so the
+  repository can look up `Session` by hash.
+- `src/modules/iam/auth/mfa.service.js` — two-step TOTP enrolment + verify
+  (`otplib`); secret AES-256-GCM encrypted; enforced for `super_admin`.
+- `src/modules/iam/auth/password.service.js` — forgot (no enumeration) /
+  reset with `purpose` + audience-gated token; reset revokes the session
+  family.
+- `src/modules/iam/auth/{auth,mfa,password}.controller.js` — thin
+  controllers; `src/validators/auth.validator.js`,
+  `src/validators/admin.validator.js` — request schemas.
+
+#### Added (middleware + routes, real)
+
+- `src/middleware/auth.middleware.js` — real `authenticate` /
+  `optionalAuthenticate`; `authorize(...)` fails closed until RBAC.
+- `src/middleware/adminAuth.middleware.js` — real `adminAuth` /
+  `adminAuthOptional`.
+- `src/middleware/tenant.middleware.js` — real `resolveTenant`
+  (`X-Tenant-Id` header → JWT `tenantId` claim).
+- `src/routes/auth.routes.js` + `src/routes/admin-auth.routes.js` — real
+  handlers behind `strictLimiter` + `validateRequest`.
+
+#### Changed (hardening)
+
+- `src/utils/password.js` — **KDF seam**: Argon2id (default) plus
+  `PASSWORD_KDF=scrypt` (Node built-in, portable) with self-describing PHC
+  hashes; `verify()` dispatches by prefix and never loads `argon2` for
+  scrypt hashes (fixes the native-binary crash on some Windows setups).
+- `src/config/env.js` — `PASSWORD_KDF` validated (`argon2` | `scrypt`).
+- Removed hardcoded `DUMMY_HASH` from `auth.service.js`; timing
+  equalization now derives a dummy hash from the active KDF.
+- `package.json` — `test` runs `scripts/ci/run-tests.js` (scrypt mode);
+  `test:argon2` exercises the real Argon2id KDF.
+
+#### Added (testing)
+
+- `tests/helpers/http.js` — start/stop the Express app, cookie capture +
+  replay, `getSetCookie`.
+- `tests/helpers/totp.js` — RFC 6238 TOTP code minting for MFA tests.
+- `tests/auth-flow.integration.test.js` — tenant-portal end-to-end
+  (login / me / refresh rotation / replay / logout / lockout / fail-closed
+  tenant header).
+- `tests/admin-auth-mfa.integration.test.js` — admin-portal end-to-end
+  (login / me / two-step MFA with real TOTP / refresh).
+- `tests/password-reset-session.integration.test.js` — forgot (no
+  enumeration) / reset revokes sessions.
+- `tests/session-lifecycle.integration.test.js` — service + repository
+  level session lifecycle.
+- `tests/validators/auth.test.js` — auth/admin validator schemas.
+- `tests/utils/password.test.js` — rewritten for both KDFs.
+
+#### Added (config)
+
+- `PASSWORD_KDF` in `src/config/env.js` + `.env.example` (documented as
+  `scrypt` for local/test use; production stays `argon2`).
+
+#### Added (documentation)
+
+- `src/docs/backend/authentication.md` updated to `Implemented`;
+  `src/docs/phases/sprint-1.md` DoD checked; `STATUS.md` +
+  `src/modules/iam/auth/STATUS.md` + module `README.md` + `tests/README.md`
+  + `AI_CONTEXT.md` updated for the sprint close.
+
 ### Sprint 0 — Implementation Foundation
 
 Sprint 0 wires every shared utility, infrastructure provider, Mongoose plugin

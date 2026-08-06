@@ -103,6 +103,15 @@ if (isProduction && str('MAIL_PROVIDER', 'smtp') !== 'none' && str('SMTP_HOST') 
   throw new Error('Missing required environment variable "MAIL_PASSWORD"');
 }
 
+// Password KDF: `argon2` (OWASP default, production) or `scrypt` (Node
+// built-in fallback used by the test suite so hashing works on machines
+// without a working Argon2 native binary). Fail fast on anything else so an
+// unknown value can never silently weaken credential hashing.
+const kdf = str('PASSWORD_KDF', 'argon2');
+if (!['argon2', 'scrypt'].includes(kdf)) {
+  throw new Error(`Invalid PASSWORD_KDF "${kdf}". Expected "argon2" or "scrypt".`);
+}
+
 /* --------------------------- configuration object ------------------------ */
 
 const config = Object.freeze({
@@ -141,9 +150,21 @@ const config = Object.freeze({
   },
 
   security: {
+    kdf,
     jwtSecret,
     jwtExpiresIn: str('JWT_EXPIRES_IN', '1d'),
     cookieSecure: bool('COOKIE_SECURE', isProduction),
+    auth: {
+      accessTokenTtl: str('JWT_ACCESS_TTL', '15m'),
+      refreshTokenTtl: str('JWT_REFRESH_TTL', '30d'),
+      cookieName: str('AUTH_COOKIE_NAME', 'saas_session'),
+      cookieSameSite: str('AUTH_COOKIE_SAMESITE', 'Lax'),
+      loginMaxAttempts: num('LOGIN_MAX_ATTEMPTS', 5),
+      loginLockoutMs: num('LOGIN_LOCKOUT_MS', 15 * 60 * 1000),
+      passwordResetTokenTtlMs: num('PASSWORD_RESET_TTL_MS', 15 * 60 * 1000),
+      passwordResetTokenLength: num('PASSWORD_RESET_TOKEN_LENGTH', 32),
+      mfaIssuer: str('MFA_ISSUER', 'saas-analytics'),
+    },
     rateLimit: {
       windowMs: num('RATE_LIMIT_WINDOW_MS', 15 * 60 * 1000),
       max: num('RATE_LIMIT_MAX', 300),

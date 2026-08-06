@@ -24,6 +24,18 @@
 import mongoose from 'mongoose';
 import { hash } from '../../src/utils/password.js';
 import { withPrefix, shortToken } from '../../src/utils/id.js';
+// Register every model a factory can create. Mongoose throws
+// "Schema hasn't been registered" if the schema module was never imported in
+// the current process (each `node --test` file runs in its own process).
+import '../../src/models/Tenant.js';
+import '../../src/models/User.js';
+import '../../src/models/Admin.js';
+import '../../src/models/Role.js';
+import '../../src/models/Permission.js';
+import '../../src/models/Module.js';
+import '../../src/models/Session.js';
+import '../../src/models/Setting.js';
+import '../../src/models/AuditLog.js';
 
 /**
  * Wrap a model with a factory: `factory.create({...})` returns a saved
@@ -66,27 +78,26 @@ function defineFactory(modelName, defaults) {
 export const factories = Object.freeze({
   tenant: defineFactory('Tenant', () => ({
     name: 'Acme Inc.',
-    slug: `acme-${shortToken(6).toLowerCase()}`,
+    slug: `acme-${shortToken(8).toLowerCase()}`,
     status: 'active',
-    tenantId: withPrefix('t'),
     createdAt: new Date(),
     updatedAt: new Date(),
   })),
   user: defineFactory('User', async () => ({
     tenantId: withPrefix('t'),
     email: `user-${shortToken(8).toLowerCase()}@example.com`,
-    name: 'Test User',
     status: 'active',
     passwordHash: await hash('Password123!'),
+    profile: { name: 'Test User' },
     createdAt: new Date(),
     updatedAt: new Date(),
   })),
   admin: defineFactory('Admin', async () => ({
     email: `admin-${shortToken(8).toLowerCase()}@example.com`,
-    name: 'Test Admin',
-    type: 'platform',
+    adminType: 'platform',
     status: 'active',
     passwordHash: await hash('Password123!'),
+    profile: { name: 'Test Admin' },
     createdAt: new Date(),
     updatedAt: new Date(),
   })),
@@ -114,10 +125,15 @@ export const factories = Object.freeze({
   })),
   session: defineFactory('Session', () => ({
     sessionId: withPrefix('ses'),
-    userId: new mongoose.Types.ObjectId(),
+    actorId: new mongoose.Types.ObjectId().toString(),
+    actorType: 'user',
+    tenantId: null,
     refreshTokenHash: shortToken(32),
     ip: '127.0.0.1',
     userAgent: 'node-test',
+    status: 'active',
+    issuedAt: new Date(),
+    lastUsedAt: new Date(),
     expiresAt: new Date(Date.now() + 24 * 3600 * 1000),
     revokedAt: null,
     createdAt: new Date(),

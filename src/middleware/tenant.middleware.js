@@ -1,37 +1,48 @@
 /**
- * Tenant resolution middleware (foundation shell).
+ * Tenant resolution middleware (Sprint 1 - implemented).
  *
  * WHY IT EXISTS
- *   This is a multi-tenant SaaS platform. Every tenant-scoped request must
- *   be bound to a tenant before any data access happens. The mechanism is
- *   established now so feature teams build against a stable contract.
+ *   This is a multi-tenant SaaS platform. Tenant-scoped requests (login,
+ *   password reset, user lookups) must be bound to a tenant before any data
+ *   access happens. The mechanism is stable now so feature teams build
+ *   against a fixed contract.
  *
  * RESPONSIBILITY
- *   Currently it FAILS CLOSED (501) exactly like auth. When implemented it
- *   will resolve the tenant from (in priority order):
- *     - `X-Tenant-Id` header (service-to-service / embedded widgets), or
- *     - a `tenantId` claim inside the JWT, or
- *     - a subdomain (e.g. `acme.app.com`).
- *   and attach `req.tenant = { id }`, later used by a Mongoose plugin to
- *   scope every query automatically.
+ *   Resolve the tenant for the current request in priority order:
+ *     1. `X-Tenant-Id` header (service-to-service / embedded widgets), then
+ *     2. the `tenantId` claim inside the (already verified) JWT.
+ *   and attach `req.tenant = { id }`. Subdomain resolution is deferred to
+ *   Phase 4 (see Sprint 1 risk 4) - Sprint 1 only reads the header + claim.
  *
- * HOW TO EXTEND
- *   Replace the body when the tenants module lands. Keep the rule that
- *   tenant-scoped data is NEVER accessible without a resolved tenant.
+ * SECURITY RULE
+ *   Fail closed: tenant-scoped data is NEVER reachable without a resolved
+ *   tenant, so a request that resolves no tenant is rejected.
  */
 
 import ApiError from '../utils/ApiError.js';
 
 /**
- * Resolve the tenant for the current request. Not implemented - fails closed.
- * Intended usage: `router.use(resolveTenant)` inside tenant-scoped routers.
+ * Resolve the tenant for the current request. Fails closed when no tenant
+ * can be derived.
+ *
+ * @param {import('express').Request} req
+ * @param {import('express').Response} _res
+ * @param {import('express').NextFunction} next
  */
-export function resolveTenant(_req, _res, next) {
-  return next(
-    new ApiError(501, 'Tenant resolution is not implemented yet', {
-      code: 'TENANT_NOT_IMPLEMENTED',
-    }),
-  );
+export function resolveTenant(req, _res, next) {
+  const header = req.headers?.['x-tenant-id'];
+  if (typeof header === 'string' && header.trim().length > 0) {
+    req.tenant = { id: header.trim(), source: 'header' };
+    return next();
+  }
+
+  const claim = req.user?.tenantId ?? req.admin?.tenantId ?? null;
+  if (claim) {
+    req.tenant = { id: claim, source: 'jwt' };
+    return next();
+  }
+
+  return next(ApiError.badRequest('Tenant id is required'));
 }
 
 /**
@@ -41,3 +52,5 @@ export function resolveTenant(_req, _res, next) {
 export function getTenantId(req) {
   return req.tenant?.id ?? null;
 }
+
+export default { resolveTenant, getTenantId };

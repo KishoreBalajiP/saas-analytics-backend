@@ -32,8 +32,8 @@
 
 ## Current Status
 
-> **Status:** `Planned` — Sprint 0 ships the JWT / password utilities;
-> Sprint 1 ships the real handlers.
+> **Status:** `Implemented` — Sprint 1 ships the real handlers for both
+> portals; integration-tested against `mongodb-memory-server`.
 > **Sprint:** Sprint 1.
 > **Owner:** Engineering team.
 
@@ -46,9 +46,12 @@ reset their password. Super admins can enrol TOTP MFA.
 ## Technical Perspective
 
 JWT access tokens (15 min, `aud: 'user' | 'admin'`) via
-[`utils/jwt.js`](../../../src/utils/jwt.js). Argon2id password hashing
-via [`utils/password.js`](../../../src/utils/password.js). Refresh
-tokens are opaque 256-bit, Argon2id-hashed at rest in `Session`.
+[`utils/jwt.js`](../../../src/utils/jwt.js). Password + refresh-token
+hashing via [`utils/password.js`](../../../src/utils/password.js), with a
+KDF seam selected by `PASSWORD_KDF`: Argon2id in production, scrypt under
+`npm test` so the suite runs anywhere. Refresh tokens are opaque 256-bit,
+hashed **deterministically** at rest (salt = SHA-256 of the token) in
+`Session` — reproducible so the session lookup can find the row by hash.
 Account lockout persisted on the user. TOTP MFA via `otplib` for
 `super_admin`.
 
@@ -125,8 +128,10 @@ POST /api/v1/auth/refresh
 Cookie: refresh=<opaque>
 ```
 
-1. Server hashes the opaque token, looks up `Session` by hash.
-2. If the session is revoked → 401 (replay detected).
+1. Server hashes the opaque token (deterministic: salt = SHA-256 of the
+   token), looks up `Session` by hash.
+2. If the session is revoked → 401 (replay detected); the whole family is
+   revoked.
 3. If the session is valid → revoke the old session, create a new
    one, sign a new access token, set a new refresh cookie.
 4. Audit row: `module: 'iam.auth', action: 'refresh'`.
@@ -156,7 +161,7 @@ Authorization: Bearer <admin-access>
 
 | Do | Why |
 | --- | --- |
-| **Hash refresh tokens at rest** (Argon2id). | The DB breach does not leak valid sessions. |
+| **Hash refresh tokens at rest** (Argon2id; deterministic salt = SHA-256 of the token). | The DB breach does not leak valid sessions, yet lookup-by-hash still works. |
 | **Generic error messages** on login (no user enumeration). | "Invalid credentials" covers both "user not found" and "wrong password". |
 | **Strict rate limit on `/login` and `/refresh`.** | Brute force is the first attack. |
 | **Refresh-token family revocation** on replay. | If a leaked token is presented, kill the entire chain. |
@@ -257,8 +262,8 @@ user. Sprint 1 ships it for both portals.
 
 ## Last Updated
 
-- **Sprint:** Sprint 0 close
+- **Sprint:** Sprint 1 close
 - **Phase:** Phase 2 — Implementation
-- **Sprint planned:** Sprint 1
-- **Date:** 2026-08-05
-- **Author:** Documentation (Sprint 0)
+- **Sprint implemented:** Sprint 1
+- **Date:** 2026-08-06
+- **Author:** Documentation (Sprint 1)

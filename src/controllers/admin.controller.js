@@ -1,48 +1,45 @@
 /**
- * Admin Controller (architecture placeholder).
+ * Admin Controller (Sprint 1 - auth surface delegated).
  *
  * PURPOSE
  *   HTTP-layer entry for the `/api/v1/admin` and `/api/v1/admin-auth`
- *   surface. Each handler:
- *     1. validates input via `src/validators/admin.validator.js`,
- *     2. delegates to `src/services/admin.service.js`,
- *     3. shapes the response envelope with `src/utils/ApiResponse.js`,
- *     4. surfaces failures via `src/utils/ApiError.js`.
+ *   surface.
  *
- * RESPONSIBILITY (planned, NOT implemented)
- *   - /admin-auth: login, refresh, logout, password reset, MFA enroll/verify.
- *   - /admin: list, create, get, update, suspend, restore, role assign/
- *     revoke, audit-per-admin.
+ * RESPONSIBILITY
+ *   - /admin-auth handlers delegate to the real module controllers
+ *     (`src/modules/iam/auth/`) - kept here as a compatibility alias so
+ *     import paths documented in early phases keep working.
+ *   - /admin CRUD handlers remain fail-closed `501` placeholders until the
+ *     admin-management surface lands (Sprint 2).
  *
  * CODING GUIDELINES
  *   - All async handlers MUST be wrapped in `asyncHandler`.
  *   - Never call `res.json` directly; use `ApiResponse.<verb>(res, ...)`.
  *   - Handlers never touch repositories; the service layer does that.
- *
- * FUTURE EXTENSION
- *   - Add `tenantFilter` query support for cross-tenant support admins.
- *   - Add structured `metadata` (pagination, totals) via ApiResponse.list.
  */
 
 import asyncHandler from '../utils/asyncHandler.js';
 import ApiResponse from '../utils/ApiResponse.js';
+import adminAuthController from '../modules/iam/auth/auth.controller.js';
+import adminPasswordController from '../modules/iam/auth/password.controller.js';
+import mfaController from '../modules/iam/auth/mfa.controller.js';
 
 const notImplemented = (op) =>
   asyncHandler(async (_req, res) => {
-    return ApiResponse.error(res, 501, `${op} is not implemented yet (Phase 1.2 architecture placeholder)`);
+    return ApiResponse.send(res, 501, null, `${op} is not implemented yet (Sprint 2 admin-management placeholder)`);
   });
 
-// /admin-auth
-export const adminLogin = notImplemented('POST /admin-auth/login');
-export const adminRefresh = notImplemented('POST /admin-auth/refresh');
-export const adminLogout = notImplemented('POST /admin-auth/logout');
-export const adminForgotPassword = notImplemented('POST /admin-auth/password/forgot');
-export const adminResetPassword = notImplemented('POST /admin-auth/password/reset');
-export const adminMfaEnroll = notImplemented('POST /admin-auth/mfa/enroll');
-export const adminMfaVerify = notImplemented('POST /admin-auth/mfa/verify');
-export const adminMe = notImplemented('GET /admin-auth/me');
+// /admin-auth (real handlers from the auth module)
+export const adminLogin = adminAuthController.login;
+export const adminRefresh = adminAuthController.refresh;
+export const adminLogout = adminAuthController.logout;
+export const adminForgotPassword = adminPasswordController.forgotPassword;
+export const adminResetPassword = adminPasswordController.resetPassword;
+export const adminMfaEnroll = mfaController.enroll;
+export const adminMfaVerify = mfaController.verifyEnrollment;
+export const adminMe = adminAuthController.me;
 
-// /admin (admin management)
+// /admin (admin management - Sprint 2)
 export const listAdmins = notImplemented('GET /admin/admins');
 export const createAdmin = notImplemented('POST /admin/admins');
 export const getAdmin = notImplemented('GET /admin/admins/:id');

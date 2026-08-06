@@ -1,58 +1,86 @@
 /**
- * Authentication routes (shell).
+ * /api/v1/auth routes - Tenant Portal authentication surface.
  *
  * WHY IT EXISTS
- *   Establishes the route mount point for the future auth feature so the
- *   public API surface is visible from day one.
+ *   Mount point for the tenant login/refresh/logout/password surface.
+ *   Backed by `src/modules/iam/auth/` (controllers + services).
  *
  * RESPONSIBILITY
- *   Every endpoint returns `501 Not Implemented` with a `hint` to the
- *   module README so callers know where the real implementation lands.
+ *   - POST /login               exchange credentials for a session + tokens
+ *   - POST /refresh             rotate the refresh token
+ *   - POST /logout              revoke the current session
+ *   - POST /password/forgot     request a reset link (rate-limited)
+ *   - POST /password/reset      complete the reset with the emailed token
+ *   - GET  /me                  current tenant user profile (authenticated)
  *
- * HOW TO EXTEND
- *   Implement the feature in `src/modules/iam/auth/`, then mount real
- *   endpoints here, e.g.:
- *   ```
- *   import authController from '../modules/iam/auth/auth.controller.js';
- *   import { validateRequest } from '../middleware/validation.middleware.js';
- *   import { strictLimiter } from '../middleware/rateLimiter.middleware.js';
+ * SECURITY
+ *   - Public credential endpoints are `strictLimiter` throttled and
+ *     validated. Tenant resolution for the tenant portal comes from the
+ *     `X-Tenant-Id` header via `resolveTenant` (JWT claim at /me).
+ *   - `/me` requires a valid bearer access token (`authenticate`).
+ *   - Refresh tokens are set as HttpOnly cookies by the controller.
  *
- *   router.post('/login', strictLimiter, validateRequest(loginSchema), authController.login);
- *   router.post('/refresh', authController.refresh);
- *   router.post('/logout', authController.logout);
- *   ```
+ * CI NOTE
+ *   The public endpoints below intentionally carry no auth middleware, so
+ *   they are annotated `ci:routes-exempt` for the `check-routes` guard.
  */
 
 import { Router } from 'express';
-import asyncHandler from '../utils/asyncHandler.js';
+import { strictLimiter } from '../middleware/rateLimiter.middleware.js';
+import { validateRequest } from '../middleware/validation.middleware.js';
+import { authenticate } from '../middleware/auth.middleware.js';
+import { resolveTenant } from '../middleware/tenant.middleware.js';
+import {
+  loginSchema,
+  refreshSchema,
+  logoutSchema,
+  forgotPasswordSchema,
+  resetPasswordSchema,
+} from '../validators/auth.validator.js';
+import { userAuthController } from '../modules/iam/auth/auth.controller.js';
+import { userPasswordController } from '../modules/iam/auth/password.controller.js';
 
 const router = Router();
 
-const HINT = 'See src/modules/iam/auth/README.md';
+// Public credential exchange (throttled + validated).
+router.post(
+  '/login', // ci:routes-exempt: public credential exchange, rate-limited + validated
+  resolveTenant,
+  strictLimiter,
+  validateRequest(loginSchema),
+  userAuthController.login,
+);
 
-const notImplemented = (op) =>
-  asyncHandler(async (_req, res) => {
-    res.status(501).json({
-      success: false,
-      statusCode: 501,
-      message: `${op} is not implemented yet (Phase 2 - Sprint 1)`,
-      hint: HINT,
-    });
-  });
+router.post(
+  '/refresh', // ci:routes-exempt: opaque refresh token via HttpOnly cookie or body
+  strictLimiter,
+  validateRequest(refreshSchema),
+  userAuthController.refresh,
+);
 
-// Public surface
-router.post('/login', notImplemented('POST /auth/login'));
-router.post('/refresh', notImplemented('POST /auth/refresh'));
-router.post('/logout', notImplemented('POST /auth/logout'));
-router.post('/password/forgot', notImplemented('POST /auth/password/forgot'));
-router.post('/password/reset', notImplemented('POST /auth/password/reset'));
+router.post(
+  '/logout', // ci:routes-exempt: revokes the session bound to the refresh token
+  validateRequest(logoutSchema),
+  userAuthController.logout,
+);
 
-// MFA surface (still public until verified)
-router.post('/mfa/enroll', notImplemented('POST /auth/mfa/enroll'));
-router.post('/mfa/verify', notImplemented('POST /auth/mfa/verify'));
+router.post(
+  '/password/forgot', // ci:routes-exempt: always { ok: true }, no user enumeration
+  resolveTenant,
+  strictLimiter,
+  validateRequest(forgotPasswordSchema),
+  userPasswordController.forgotPassword,
+);
 
-// Authenticated surface - guards land in Phase 2 Sprint 1:
-// router.use(authenticate);
-router.get('/me', notImplemented('GET /auth/me'));
+router.post(
+  '/password/reset', // ci:routes-exempt: stateless emailed token, session family revoked
+  resolveTenant,
+  strictLimiter,
+  validateRequest(resetPasswordSchema),
+  userPasswordController.resetPassword,
+);
+
+// Authenticated surface.
+router.get('/me', authenticate, userAuthController.me);
 
 export default router;

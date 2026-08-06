@@ -4,54 +4,88 @@
  * WHY IT EXISTS
  *   Separates admin authentication from tenant authentication so audit,
  *   rate limiting, MFA and abuse-detection policies can differ between
- *   the Admin Portal and the Tenant Portal. Backed by `iam/auth/`.
+ *   the Admin Portal and the Tenant Portal. Backed by `src/modules/iam/auth/`
+ *   (same service layer, `admin` portal).
  *
- * RESPONSIBILITY (planned, NOT implemented)
- *   - POST   /login                    password (+optional MFA)
- *   - POST   /refresh                  rotate refresh token
- *   - POST   /logout                   revoke current session
- *   - POST   /mfa/enroll               begin TOTP enrolment
- *   - POST   /mfa/verify               verify TOTP code
- *   - GET    /me                       current admin profile
+ * RESPONSIBILITY
+ *   - POST   /login                    password (+ optional MFA code)
+ *   - POST   /refresh                  rotate the refresh token
+ *   - POST   /logout                   revoke the current session
+ *   - POST   /mfa/enroll               begin TOTP enrolment (adminAuth)
+ *   - POST   /mfa/verify               confirm enrolment (adminAuth)
+ *   - GET    /me                       current admin profile (adminAuth)
  *   - POST   /password/forgot          start reset (rate-limited)
- *   - POST   /password/reset           complete reset
+ *   - POST   /password/reset           complete reset with emailed token
  *
- * HOW TO EXTEND (Phase 2)
- *   - Add `adminAuth.middleware.js` to private endpoints below /me.
- *   - Each login MUST emit a `governance/audit-logs/` event.
- *   - Phase 1.2 returns 501 for every route. Tests in this phase do NOT
- *     hit any of them, so we can iterate freely.
+ * SECURITY
+ *   - MFA and /me are behind `adminAuth` (bearer access token, `admin`
+ *     audience, session liveness enforced).
+ *   - Public credential endpoints are `strictLimiter` throttled + validated.
+ *
+ * CI NOTE
+ *   The public endpoints below intentionally carry no auth middleware, so
+ *   they are annotated `ci:routes-exempt` for the `check-routes` guard.
  */
 
 import { Router } from 'express';
-import asyncHandler from '../utils/asyncHandler.js';
-import ApiError from '../utils/ApiError.js';
+import { strictLimiter } from '../middleware/rateLimiter.middleware.js';
+import { validateRequest } from '../middleware/validation.middleware.js';
+import { adminAuth } from '../middleware/adminAuth.middleware.js';
+import {
+  loginSchema,
+  refreshSchema,
+  logoutSchema,
+  forgotPasswordSchema,
+  resetPasswordSchema,
+  mfaVerifySchema,
+} from '../validators/admin.validator.js';
+import { adminAuthController } from '../modules/iam/auth/auth.controller.js';
+import { adminPasswordController } from '../modules/iam/auth/password.controller.js';
+import mfaController from '../modules/iam/auth/mfa.controller.js';
 
 const router = Router();
 
-const notImplemented = (op) =>
-  asyncHandler(async (_req, res) => {
-    res.status(501).json({
-      success: false,
-      statusCode: 501,
-      message: `${op} is not implemented yet (Phase 1.2 architecture placeholder)`,
-      hint: 'See src/modules/iam/auth/README.md',
-    });
-  });
+// Public credential exchange (throttled + validated).
+router.post(
+  '/login', // ci:routes-exempt: public credential exchange, rate-limited + validated
+  strictLimiter,
+  validateRequest(loginSchema),
+  adminAuthController.login,
+);
 
-// Public surface
-router.post('/login', notImplemented('POST /admin-auth/login'));
-router.post('/refresh', notImplemented('POST /admin-auth/refresh'));
-router.post('/logout', notImplemented('POST /admin-auth/logout'));
-router.post('/password/forgot', notImplemented('POST /admin-auth/password/forgot'));
-router.post('/password/reset', notImplemented('POST /admin-auth/password/reset'));
+router.post(
+  '/refresh', // ci:routes-exempt: opaque refresh token via HttpOnly cookie or body
+  strictLimiter,
+  validateRequest(refreshSchema),
+  adminAuthController.refresh,
+);
 
-// MFA surface (still public until verified)
-router.post('/mfa/enroll', notImplemented('POST /admin-auth/mfa/enroll'));
-router.post('/mfa/verify', notImplemented('POST /admin-auth/mfa/verify'));
+router.post(
+  '/logout', // ci:routes-exempt: revokes the session bound to the refresh token
+  validateRequest(logoutSchema),
+  adminAuthController.logout,
+);
 
-// Authenticated surface - guards will land in Phase 2:
-// router.use(adminAuth, rbac.requireRole('platform' /* or super */));
-router.get('/me', notImplemented('GET /admin-auth/me'));
+// Authenticated MFA surface (identity comes from the bearer token).
+router.post('/mfa/enroll', adminAuth, mfaController.enroll);
+router.post('/mfa/verify', adminAuth, validateRequest(mfaVerifySchema), mfaController.verifyEnrollment);
+
+// Authenticated identity surface.
+router.get('/me', adminAuth, adminAuthController.me);
+
+// Public password reset (rate-limited).
+router.post(
+  '/password/forgot', // ci:routes-exempt: always { ok: true }, no user enumeration
+  strictLimiter,
+  validateRequest(forgotPasswordSchema),
+  adminPasswordController.forgotPassword,
+);
+
+router.post(
+  '/password/reset', // ci:routes-exempt: stateless emailed token, session family revoked
+  strictLimiter,
+  validateRequest(resetPasswordSchema),
+  adminPasswordController.resetPassword,
+);
 
 export default router;

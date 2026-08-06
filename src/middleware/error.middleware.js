@@ -95,6 +95,10 @@ export function errorHandler(err, req, res, _next) {
 
   if (error.errors) payload.errors = error.errors;
 
+  // Structured hint for the client, e.g. an admin login that must retry
+  // with a TOTP code (`mfaRequired: true` on a 401).
+  if (error.mfaRequired !== undefined) payload.mfaRequired = error.mfaRequired;
+
   // Show stack only outside production (never expose internals to clients).
   if (!env.app.isProduction && isServerError && err.stack) {
     payload.stack = err.stack;
