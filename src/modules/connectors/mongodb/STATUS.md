@@ -1,13 +1,10 @@
 # Module — Status
 
-**Sprint:** 0 (foundation)
-**Status:** 📝 Planned (Phase 2)
-**Implements:** architecture-only contracts
-**Real source files:** none yet
-**Hook points:** shared infrastructure (cache/queue/storage/email + Mongoose plugins) is in place for Sprint 1+
+**Sprint:** — (Phase 3)
+**Status:** 📝 Planned (Phase 3)
 
-Sprint 0 ships only the shared infrastructure this module will depend on.
-The module itself is still a README + 501 shell.
+**Implements:** the customer MongoDB connector (URI + db/collection preview
++ sync, read-only by default).
 
-The next sprint that touches this module is documented in the parent
-`CHANGELOG.md` and `src/docs/DECISIONS.md`.
+**Depends on:** the Connector Platform (Sprint 4) — the framework and
+sync engine exist; MongoDB is one new subclass registered at boot.

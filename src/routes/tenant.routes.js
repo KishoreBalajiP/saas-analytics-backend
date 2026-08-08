@@ -1,52 +1,60 @@
 /**
- * /api/v1/tenants routes - Tenant (organisation) management.
+ * /api/v1/tenants routes - Tenant (organisation) management (Sprint 3 - implemented).
  *
  * WHY IT EXISTS
  *   A Tenant is the unit of multi-tenancy, billing, and data scoping. The
- *   surface here is admin-shaped (list across all tenants) when invoked by
- *   a Platform Admin and tenant-shaped (one tenant only) when invoked by a
- *   Tenant Admin. Backed by `iam/tenants/`.
+ *   surface here is Platform-Admin shaped: create/list/detail/update,
+ *   lifecycle transitions (suspend/restore/disable/archive), onboarding,
+ *   members, billing, statistics and settings.
  *
- * RESPONSIBILITY (planned, NOT implemented)
- *   - POST   /                 - create tenant
- *   - GET    /                 - list tenants (Platform Admin only)
- *   - GET    /:id              - detail
- *   - PATCH  /:id              - profile / plan / status
- *   - POST   /:id/suspend      - block all access
- *   - POST   /:id/restore      - reverse suspend
- *   - GET    /:id/members      - users + scoped admins
- *   - GET    /:id/billing      - plan, invoices (Phase 3+)
- *   - GET    /:id/settings     - tenant settings (delegates to settings/)
+ * ENDPOINTS (mounted under /tenants)
+ *   - POST   /                 - create tenant (optionally onboard)
+ *   - GET    /                 - list tenants (paged, filtered)
+ *   - GET    /:id              - tenant detail
+ *   - PATCH  /:id              - update profile fields
+ *   - POST   /:id/suspend      - temporary block
+ *   - POST   /:id/restore      - re-open a suspended/disabled tenant
+ *   - POST   /:id/disable      - longer-term block
+ *   - POST   /:id/archive      - terminal read-only state
+ *   - POST   /:id/init         - run onboarding (owner, roles, settings)
+ *   - GET    /:id/members      - users with their roles
+ *   - GET    /:id/stats        - per-tenant activity statistics
+ *   - GET    /:id/billing      - billing facts
+ *   - GET    /:id/settings     - effective settings (grouped or all)
+ *   - PATCH  /:id/settings     - upsert tenant overrides
+ *   - POST   /:id/owner        - reassign the tenant owner
  *
- * HOW TO EXTEND (Phase 2)
- *   - All admin endpoints require adminAuth + modulePermission('tenants').
- *   - Mutations emit audit events AND cascade session revocation via
- *     `queues/connector.queue.js`-style job (or a new `tenant.queue.js`).
+ * MIDDLEWARE ORDER
+ *   adminAuth -> permission('iam.tenants', <action>) -> validate -> handler
+ *
+ * HOW TO EXTEND
+ *   - New lifecycle actions keep the same middleware order.
+ *   - `by` attribution comes from the token, never the body.
  */
 
 import { Router } from 'express';
-import asyncHandler from '../utils/asyncHandler.js';
+import { validate } from '../validators/index.js';
+import { adminAuth } from '../middleware/adminAuth.middleware.js';
+import { permission } from '../middleware/permission.middleware.js';
+import tenantValidator from '../validators/tenant.validator.js';
+import tenantController from '../controllers/tenant.controller.js';
 
 const router = Router();
 
-const notImplemented = (op) =>
-  asyncHandler(async (_req, res) => {
-    res.status(501).json({
-      success: false,
-      statusCode: 501,
-      message: `${op} is not implemented yet (Phase 1.2 architecture placeholder)`,
-      hint: 'See src/modules/iam/tenants/README.md',
-    });
-  });
-
-router.post('/', notImplemented('POST /tenants'));
-router.get('/', notImplemented('GET /tenants'));
-router.get('/:id', notImplemented('GET /tenants/:id'));
-router.patch('/:id', notImplemented('PATCH /tenants/:id'));
-router.post('/:id/suspend', notImplemented('POST /tenants/:id/suspend'));
-router.post('/:id/restore', notImplemented('POST /tenants/:id/restore'));
-router.get('/:id/members', notImplemented('GET /tenants/:id/members'));
-router.get('/:id/billing', notImplemented('GET /tenants/:id/billing'));
-router.get('/:id/settings', notImplemented('GET /tenants/:id/settings'));
+router.post('/', adminAuth, permission('iam.tenants', 'create'), validate(tenantValidator.createTenantSchema), tenantController.createTenant);
+router.get('/', adminAuth, permission('iam.tenants', 'view'), validate(tenantValidator.listTenantSchema), tenantController.listTenants);
+router.get('/:id', adminAuth, permission('iam.tenants', 'view'), tenantController.getTenant);
+router.patch('/:id', adminAuth, permission('iam.tenants', 'update'), validate(tenantValidator.updateTenantSchema), tenantController.updateTenant);
+router.post('/:id/suspend', adminAuth, permission('iam.tenants', 'suspend'), validate(tenantValidator.lifecycleSchema), tenantController.suspendTenant);
+router.post('/:id/restore', adminAuth, permission('iam.tenants', 'restore'), validate(tenantValidator.lifecycleSchema), tenantController.restoreTenant);
+router.post('/:id/disable', adminAuth, permission('iam.tenants', 'suspend'), validate(tenantValidator.lifecycleSchema), tenantController.disableTenant);
+router.post('/:id/archive', adminAuth, permission('iam.tenants', 'delete'), validate(tenantValidator.lifecycleSchema), tenantController.archiveTenant);
+router.post('/:id/init', adminAuth, permission('iam.tenants', 'create'), validate(tenantValidator.initializeSchema), tenantController.initializeTenant);
+router.get('/:id/members', adminAuth, permission('iam.tenants', 'view'), validate(tenantValidator.membersSchema), tenantController.getTenantMembers);
+router.get('/:id/stats', adminAuth, permission('iam.tenants', 'view'), tenantController.getTenantStats);
+router.get('/:id/billing', adminAuth, permission('iam.tenants', 'view'), tenantController.getTenantBilling);
+router.get('/:id/settings', adminAuth, permission('iam.tenants', 'view'), validate(tenantValidator.settingsGetSchema), tenantController.getTenantSettings);
+router.patch('/:id/settings', adminAuth, permission('iam.tenants', 'configure'), validate(tenantValidator.settingsUpdateSchema), tenantController.updateTenantSettings);
+router.post('/:id/owner', adminAuth, permission('iam.tenants', 'assign'), validate(tenantValidator.changeOwnerSchema), tenantController.changeTenantOwner);
 
 export default router;

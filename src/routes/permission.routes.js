@@ -1,49 +1,45 @@
 /**
- * /api/v1/permissions routes - Dynamic RBAC primitives.
+ * /api/v1/permissions routes - Dynamic permission catalogue (Sprint 2 - implemented).
  *
  * WHY IT EXISTS
- *   Permissions are the atomic, dynamic unit of authorisation in this
- *   system. Modules (e.g. `analytics`, `settings`) and actions (e.g.
- *   `view`, `export`) are data, not enums in code. Backed by `iam/
- *   permissions/`.
+ *   Permissions are data, not code. This surface manages the dynamic RBAC
+ *   primitives: modules, (module, action) permissions, and bulk seeding.
+ *   Backed by `services/permission.service.js`.
  *
- * RESPONSIBILITY (planned, NOT implemented)
- *   - GET    /modules                 - registered modules
- *   - POST   /modules                 - register a new module
- *   - GET    /modules/:key/actions    - actions for a module
- *   - GET    /                        - permissions list (filterable)
- *   - POST   /                        - create a (module, action) permission
- *   - POST   /bulk                    - bulk-create (idempotent)
- *   - DELETE /:id                     - revoke (only if no roles assigned)
+ * ENDPOINTS
+ *   - GET    /                  - list permissions (filter by module/action)
+ *   - POST   /                  - create a (module, action) permission
+ *   - DELETE /                  - soft-delete by key (body `{ permissionKey }`)
+ *   - GET    /modules           - list registered modules
+ *   - POST   /modules           - register a module (dotted keys allowed)
+ *   - GET    /modules/:key/actions - actions available on a module
+ *   - POST   /bulk              - bulk-create permissions (idempotent)
+ *
+ * MIDDLEWARE ORDER
+ *   adminAuth -> permission(<module.action>) -> validate -> handler
  *
  * HOW TO EXTEND
- *   - Permission key is `<module_key>.<action>`. Validator enforces the
- *     shape; service stores immutable documents.
- *   - Registering a new module invalidates the rbac cache
- *     (`src/cache/` key `iam:rbac:<scope>`).
+ *   - Keys MUST be `<module_key>.<action>`; enforced by validator + service.
+ *   - After any mutation the RBAC cache invalidates automatically.
  */
 
 import { Router } from 'express';
-import asyncHandler from '../utils/asyncHandler.js';
+import { validate } from '../validators/index.js';
+import { adminAuth } from '../middleware/adminAuth.middleware.js';
+import { permission } from '../middleware/permission.middleware.js';
+import permissionValidator from '../validators/permission.validator.js';
+import permissionController from '../controllers/permission.controller.js';
 
 const router = Router();
 
-const notImplemented = (op) =>
-  asyncHandler(async (_req, res) => {
-    res.status(501).json({
-      success: false,
-      statusCode: 501,
-      message: `${op} is not implemented yet (Phase 1.2 architecture placeholder)`,
-      hint: 'See src/modules/iam/permissions/README.md',
-    });
-  });
+router.get('/', adminAuth, permission('iam.permissions', 'view'), validate(permissionValidator.listSchema), permissionController.listPermissions);
+router.post('/', adminAuth, permission('iam.permissions', 'create'), validate(permissionValidator.createPermissionSchema), permissionController.createPermission);
+router.delete('/', adminAuth, permission('iam.permissions', 'delete'), validate(permissionValidator.deletePermissionSchema), permissionController.deletePermission);
 
-router.get('/modules', notImplemented('GET /permissions/modules'));
-router.post('/modules', notImplemented('POST /permissions/modules'));
-router.get('/modules/:key/actions', notImplemented('GET /permissions/modules/:key/actions'));
-router.get('/', notImplemented('GET /permissions'));
-router.post('/', notImplemented('POST /permissions'));
-router.post('/bulk', notImplemented('POST /permissions/bulk'));
-router.delete('/:id', notImplemented('DELETE /permissions/:id'));
+router.get('/modules', adminAuth, permission('iam.permissions', 'view'), validate(permissionValidator.listSchema), permissionController.listModules);
+router.post('/modules', adminAuth, permission('iam.permissions', 'create'), validate(permissionValidator.createModuleSchema), permissionController.createModule);
+router.get('/modules/:key/actions', adminAuth, permission('iam.permissions', 'view'), permissionController.getModuleActions);
+
+router.post('/bulk', adminAuth, permission('iam.permissions', 'create'), validate(permissionValidator.bulkCreateSchema), permissionController.bulkCreatePermissions);
 
 export default router;

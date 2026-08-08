@@ -27,10 +27,15 @@
 
 ## Current Status
 
-> **Status:** `Planned` — Sprint 1 ships `resolveTenant`; Sprint 2
-> ships `tenantIsolation`; the `tenantScope` plugin already exists
-> (Sprint 0).
-> **Sprint:** Sprints 1–2.
+> **Status:** ✅ Implemented — Sprint 3 ships the full tenant lifecycle
+> (pending → active via onboarding, suspend/restore/disable/archive with
+> session + RBAC-cache cascade), the auth login/refresh tenant-status gate,
+> tenant settings (effective inheritance + secret redaction + read-only
+> protection), the feature-flag catalogue with per-tenant rollout, and the
+> admin-gated `/api/v1/tenants/*` surface. `resolveTenant` and the
+> `tenantScope` plugin already existed (Sprint 0/1). `tenantIsolation`
+> remains a fail-closed stub (Sprint 2).
+> **Sprint:** Sprint 3 — Multi-Tenancy.
 > **Owner:** Engineering team.
 
 ## Business Perspective

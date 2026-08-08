@@ -1,5 +1,5 @@
 /**
- * Admin Controller (Sprint 1 - auth surface delegated).
+ * Admin Controller (Sprint 2 - implemented).
  *
  * PURPOSE
  *   HTTP-layer entry for the `/api/v1/admin` and `/api/v1/admin-auth`
@@ -9,25 +9,25 @@
  *   - /admin-auth handlers delegate to the real module controllers
  *     (`src/modules/iam/auth/`) - kept here as a compatibility alias so
  *     import paths documented in early phases keep working.
- *   - /admin CRUD handlers remain fail-closed `501` placeholders until the
- *     admin-management surface lands (Sprint 2).
+ *   - /admin handlers manage platform admins (list/create/detail/update),
+ *     lifecycle transitions (suspend/restore) and AdminRole grants.
  *
  * CODING GUIDELINES
  *   - All async handlers MUST be wrapped in `asyncHandler`.
  *   - Never call `res.json` directly; use `ApiResponse.<verb>(res, ...)`.
  *   - Handlers never touch repositories; the service layer does that.
+ *   - `by` attribution comes from the authenticated admin (never the body).
  */
 
 import asyncHandler from '../utils/asyncHandler.js';
 import ApiResponse from '../utils/ApiResponse.js';
+import adminService from '../services/admin.service.js';
+import auditLogService from '../services/auditLog.service.js';
 import adminAuthController from '../modules/iam/auth/auth.controller.js';
 import adminPasswordController from '../modules/iam/auth/password.controller.js';
 import mfaController from '../modules/iam/auth/mfa.controller.js';
 
-const notImplemented = (op) =>
-  asyncHandler(async (_req, res) => {
-    return ApiResponse.send(res, 501, null, `${op} is not implemented yet (Sprint 2 admin-management placeholder)`);
-  });
+const actor = (req) => req.admin?.id ?? null;
 
 // /admin-auth (real handlers from the auth module)
 export const adminLogin = adminAuthController.login;
@@ -40,15 +40,104 @@ export const adminMfaVerify = mfaController.verifyEnrollment;
 export const adminMe = adminAuthController.me;
 
 // /admin (admin management - Sprint 2)
-export const listAdmins = notImplemented('GET /admin/admins');
-export const createAdmin = notImplemented('POST /admin/admins');
-export const getAdmin = notImplemented('GET /admin/admins/:id');
-export const updateAdmin = notImplemented('PATCH /admin/admins/:id');
-export const suspendAdmin = notImplemented('POST /admin/admins/:id/suspend');
-export const restoreAdmin = notImplemented('POST /admin/admins/:id/restore');
-export const assignAdminRole = notImplemented('POST /admin/admins/:id/roles');
-export const revokeAdminRole = notImplemented('DELETE /admin/admins/:id/roles/:roleId');
-export const getAdminAudit = notImplemented('GET /admin/admins/:id/audit');
+
+/** GET /admin/admins - paginated admin list, filterable by status/type. */
+export const listAdmins = asyncHandler(async (req, res) => {
+  const { status, adminType, page, limit } = req.validated?.query ?? {};
+  const result = await adminService.list({
+    status,
+    adminType,
+    page: page ?? 1,
+    limit: limit ?? 20,
+  });
+  return ApiResponse.ok(res, result.docs, 'Admins fetched', {
+    page: result.page,
+    limit: result.limit,
+    total: result.total,
+    pages: result.pages,
+  });
+});
+
+/** POST /admin/admins - create + invite a platform admin. */
+export const createAdmin = asyncHandler(async (req, res) => {
+  const { email, password, name, adminType, tenantScope, status } = req.validated?.body ?? {};
+  const admin = await adminService.create({
+    email,
+    password,
+    name,
+    adminType,
+    tenantScope,
+    status,
+    by: actor(req),
+  });
+  return ApiResponse.created(res, admin, 'Admin created');
+});
+
+/** GET /admin/admins/:id - detail (secrets stripped by the service). */
+export const getAdmin = asyncHandler(async (req, res) => {
+  const admin = await adminService.getById({ id: req.params.id });
+  return ApiResponse.ok(res, admin, 'Admin fetched');
+});
+
+/** PATCH /admin/admins/:id - update profile / adminType / scope. */
+export const updateAdmin = asyncHandler(async (req, res) => {
+  const admin = await adminService.update({
+    id: req.params.id,
+    patch: req.validated?.body ?? {},
+    by: actor(req),
+  });
+  return ApiResponse.ok(res, admin, 'Admin updated');
+});
+
+/** POST /admin/admins/:id/suspend - block login and revoke sessions. */
+export const suspendAdmin = asyncHandler(async (req, res) => {
+  const admin = await adminService.suspend({ id: req.params.id, by: actor(req) });
+  return ApiResponse.ok(res, admin, 'Admin suspended');
+});
+
+/** POST /admin/admins/:id/restore - unblock a suspended admin. */
+export const restoreAdmin = asyncHandler(async (req, res) => {
+  const admin = await adminService.restore({ id: req.params.id, by: actor(req) });
+  return ApiResponse.ok(res, admin, 'Admin restored');
+});
+
+/** POST /admin/admins/:id/roles - grant a role (optionally tenant-scoped). */
+export const assignAdminRole = asyncHandler(async (req, res) => {
+  const { roleId, tenantId, expiresAt } = req.validated?.body ?? {};
+  const grant = await adminService.assignRole({
+    adminId: req.params.id,
+    roleId,
+    tenantId: tenantId ?? null,
+    expiresAt,
+    by: actor(req),
+  });
+  return ApiResponse.ok(res, grant, grant.alreadyAssigned ? 'Role already assigned' : 'Role assigned');
+});
+
+/** DELETE /admin/admins/:id/roles/:roleId - revoke a role grant. */
+export const revokeAdminRole = asyncHandler(async (req, res) => {
+  const result = await adminService.revokeRole({
+    adminId: req.params.id,
+    roleId: req.params.roleId,
+  });
+  return ApiResponse.ok(res, result, 'Role revoked');
+});
+
+/** GET /admin/admins/:id/audit - audit trail scoped to the admin. */
+export const getAdminAudit = asyncHandler(async (req, res) => {
+  const { page, limit } = req.validated?.query ?? {};
+  const result = await auditLogService.list({
+    actorId: req.params.id,
+    page: page ?? 1,
+    limit: limit ?? 20,
+  });
+  return ApiResponse.ok(res, result.docs, 'Admin audit fetched', {
+    page: result.page,
+    limit: result.limit,
+    total: result.total,
+    pages: result.pages,
+  });
+});
 
 export default {
   adminLogin, adminRefresh, adminLogout, adminForgotPassword, adminResetPassword,

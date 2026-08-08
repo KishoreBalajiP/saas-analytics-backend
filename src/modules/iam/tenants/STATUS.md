@@ -1,13 +1,22 @@
 # Module — Status
 
-**Sprint:** 0 (foundation)
-**Status:** 📝 Planned (Phase 2)
-**Implements:** architecture-only contracts
-**Real source files:** none yet
-**Hook points:** shared infrastructure (cache/queue/storage/email + Mongoose plugins) is in place for Sprint 1+
+**Sprint:** 3 — Multi-Tenancy
+**Status:** ✅ Implemented
+**Implements:** tenant lifecycle (create/list/detail/update), onboarding (owner + default roles + permissions + settings + feature flags), lifecycle transitions with session-cascade + auth-status gate, tenant members, statistics, settings (effective inheritance + secret redaction + read-only protection), billing, and the `/api/v1/tenants/*` admin-gated routes.
 
-Sprint 0 ships only the shared infrastructure this module will depend on.
-The module itself is still a README + 501 shell.
+**Real source files:**
 
-The next sprint that touches this module is documented in the parent
-`CHANGELOG.md` and `src/docs/DECISIONS.md`.
+- `src/models/Tenant.js` — lifecycle statuses + onboarding flags.
+- `src/repositories/tenant.repository.js`, `tenantStatistics.repository.js` — tenant-scoped data access (statistics aggregate over `User` / `Session` / `AuditLog` only).
+- `src/repositories/setting.repository.js`, `featureFlag.repository.js` — typed scoped settings + feature-flag catalogue.
+- `src/services/tenant.service.js` — orchestration facade.
+- `src/services/tenantInitialization.service.js` — idempotent onboarding sequence.
+- `src/services/tenantLifecycle.service.js` — suspend/restore/disable/archive with session + RBAC-cache cascade.
+- `src/services/tenantSettings.service.js` — effective inheritance (tenant > platform > default), secret redaction, read-only protection.
+- `src/services/setting.service.js`, `featureFlag.service.js` — settings + feature-flag business logic with cache invalidation.
+- `src/controllers/tenant.controller.js` — thin HTTP handlers.
+- `src/validators/tenant.validator.js` — request schemas.
+- `src/routes/tenant.routes.js` — admin-gated `/api/v1/tenants/*` surface.
+- `src/modules/iam/auth/auth.service.js` — tenant-status gate on login + refresh.
+
+**Verified:** 232 tests pass; `npm run ci:guards` green (5/5).

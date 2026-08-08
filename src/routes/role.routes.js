@@ -1,19 +1,22 @@
 /**
- * /api/v1/roles routes - Dynamic role management.
+ * /api/v1/roles routes - Dynamic role management (Sprint 2 - implemented).
  *
  * WHY IT EXISTS
  *   Roles in this system are *data*: Platform Admins compose them from
  *   dynamic permissions and assign them to actors (admins or users) via
- *   join rows (`AdminRole`, `UserRole`). Backed by `iam/roles/`.
+ *   join rows (`AdminRole`, `UserRole`). Backed by `services/role.service.js`.
  *
- * RESPONSIBILITY (planned, NOT implemented)
- *   - GET    /                  - list roles (filterable: platform | tenant)
- *   - POST   /                  - create role
- *   - GET    /:id               - role + permission set
- *   - PATCH  /:id               - rename / description
- *   - DELETE /:id               - delete (refuses if assigned)
- *   - POST   /:id/permissions   - assign permission(s)
- *   - DELETE /:id/permissions/:permId - revoke permission
+ * ENDPOINTS
+ *   - GET    /                      - list roles (filterable: platform | tenant)
+ *   - POST   /                      - create role
+ *   - GET    /:id                   - role + permission set
+ *   - PATCH  /:id                   - rename / description
+ *   - DELETE /:id                   - delete (refuses if assigned)
+ *   - POST   /:id/permissions       - grant a permission (by key)
+ *   - DELETE /:id/permissions       - revoke a permission (by key)
+ *
+ * MIDDLEWARE ORDER
+ *   adminAuth -> permission(<module.action>) -> validate -> handler
  *
  * HOW TO EXTEND
  *   - Role assignment NEVER edits a Permission; it edits the join row.
@@ -22,26 +25,20 @@
  */
 
 import { Router } from 'express';
-import asyncHandler from '../utils/asyncHandler.js';
+import { validate } from '../validators/index.js';
+import { adminAuth } from '../middleware/adminAuth.middleware.js';
+import { permission } from '../middleware/permission.middleware.js';
+import roleValidator from '../validators/role.validator.js';
+import roleController from '../controllers/role.controller.js';
 
 const router = Router();
 
-const notImplemented = (op) =>
-  asyncHandler(async (_req, res) => {
-    res.status(501).json({
-      success: false,
-      statusCode: 501,
-      message: `${op} is not implemented yet (Phase 1.2 architecture placeholder)`,
-      hint: 'See src/modules/iam/roles/README.md',
-    });
-  });
-
-router.get('/', notImplemented('GET /roles'));
-router.post('/', notImplemented('POST /roles'));
-router.get('/:id', notImplemented('GET /roles/:id'));
-router.patch('/:id', notImplemented('PATCH /roles/:id'));
-router.delete('/:id', notImplemented('DELETE /roles/:id'));
-router.post('/:id/permissions', notImplemented('POST /roles/:id/permissions'));
-router.delete('/:id/permissions/:permId', notImplemented('DELETE /roles/:id/permissions/:permId'));
+router.get('/', adminAuth, permission('iam.roles', 'view'), validate(roleValidator.listSchema), roleController.listRoles);
+router.post('/', adminAuth, permission('iam.roles', 'create'), validate(roleValidator.createRoleSchema), roleController.createRole);
+router.get('/:id', adminAuth, permission('iam.roles', 'view'), roleController.getRole);
+router.patch('/:id', adminAuth, permission('iam.roles', 'update'), validate(roleValidator.updateRoleSchema), roleController.updateRole);
+router.delete('/:id', adminAuth, permission('iam.roles', 'delete'), roleController.deleteRole);
+router.post('/:id/permissions', adminAuth, permission('iam.roles', 'assign'), validate(roleValidator.addPermissionSchema), roleController.addPermissionToRole);
+router.delete('/:id/permissions', adminAuth, permission('iam.roles', 'assign'), validate(roleValidator.removePermissionSchema), roleController.removePermissionFromRole);
 
 export default router;

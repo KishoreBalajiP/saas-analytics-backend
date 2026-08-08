@@ -39,7 +39,7 @@
 
 > **Status:** `Maintained` — every sprint closure PR updates the
 > matching sprint file and (when relevant) the matching phase file.
-> **Sprint:** Sprint 0 closed; Sprint 1 not yet opened.
+> **Sprint:** Sprint 3 closed; Sprint 4 (Connector Platform) in progress.
 > **Owner:** Engineering team.
 
 ---
@@ -67,10 +67,10 @@
 | [`sprint-0.md`](./sprint-0.md) | Shared implementation foundation |
 | [`sprint-1.md`](./sprint-1.md) | Authentication |
 | [`sprint-2.md`](./sprint-2.md) | IAM |
-| [`sprint-3.md`](./sprint-3.md) | RBAC |
-| [`sprint-4.md`](./sprint-4.md) | Master Data |
-| [`sprint-5.md`](./sprint-5.md) | Platform (Settings, Feature Flags, Notifications) |
-| [`sprint-6.md`](./sprint-6.md) | Connectors (CSV + Webhook) |
+| [`sprint-3.md`](./sprint-3.md) | Multi-Tenancy (tenant lifecycle, onboarding, settings, feature flags) |
+| [`sprint-4.md`](./sprint-4.md) | Connector Platform (CSV + Webhook connectors, sync engine) |
+| [`sprint-5.md`](./sprint-5.md) | Platform (settings surface, feature flags surface, notifications) |
+| [`sprint-6.md`](./sprint-6.md) | Master Data (countries, currencies, timezones, plans, languages) |
 | [`sprint-7.md`](./sprint-7.md) | Governance (Audit + Access + Compliance) |
 | [`sprint-8.md`](./sprint-8.md) | Monitoring + Support |
 | [`sprint-9.md`](./sprint-9.md) | Analytics + Embed |

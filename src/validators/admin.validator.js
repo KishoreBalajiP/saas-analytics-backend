@@ -1,28 +1,28 @@
 /**
- * Admin Validators (Sprint 1 - auth surface implemented).
+ * Admin Validators (Sprint 2 - implemented).
  *
  * PURPOSE
- *   Declarative request-shape schemas consumed by `validate(schema)`
- *   from `src/validators/index.js`. Wired into route files via
- *   `router.post('/path', validate(adminValidator.loginSchema), handler)`.
+ *   Declarative request-shape schemas consumed by `validate(schema)` from
+ *   `src/validators/index.js`. Auth schemas shipped in Sprint 1; the CRUD,
+ *   lifecycle and role-grant schemas land here in Sprint 2.
  *
- * RESPONSIBILITY (auth surface implemented, Sprint 1)
- *   - loginSchema           { email, password, mfaToken? }
- *   - refreshSchema         { refreshToken? }
- *   - logoutSchema          { refreshToken? }
- *   - forgotPasswordSchema  { email }
- *   - resetPasswordSchema   { token, newPassword }
- *   - mfaEnrollSchema       (no body - identity comes from the bearer)
- *   - mfaVerifySchema       { code }
- *   - createAdminSchema / updateAdminSchema / assignRoleSchema remain
- *     empty placeholders until the `/admin` CRUD surface lands (Sprint 2).
+ * RESPONSIBILITY
+ *   - loginSchema / refreshSchema / logoutSchema - admin auth surface
+ *   - forgotPasswordSchema / resetPasswordSchema - admin password flow
+ *   - mfaEnrollSchema / mfaVerifySchema          - admin MFA flow
+ *   - createAdminSchema / updateAdminSchema      - `/admin/admins` CRUD
+ *   - suspendSchema / restoreSchema              - lifecycle transitions
+ *   - assignRoleSchema / revokeRoleSchema        - AdminRole grants
  *
  * CODING GUIDELINES
- *   - Schemas follow the engine's shorthand (`'string|required'`) or
- *     rules object (`{ type: 'string', required: true, minLength: 8 }`).
- *   - Validation lives here only. Controllers stay trivial.
+ *   - `adminType` and statuses are validated against the model's canonical
+ *     enums (`models/Admin.js`) so the validator and the service never drift.
+ *   - `tenantScope` is an optional escalation scope for `support` admins;
+ *     omitting it (or passing `null`) means the platform scope.
  *   - All required fields MUST be enumerated; never permissive defaults.
  */
+
+import { ADMIN_TYPES } from '../models/Admin.js';
 
 /** Six-digit TOTP code. Optional on login (only required when MFA is on). */
 const mfaToken = { type: 'string', minLength: 6, maxLength: 6, pattern: '^\\d{6}$' };
@@ -93,23 +93,89 @@ export const mfaVerifySchema = {
 
 /** @type {import('../index.js').Schema} */
 export const createAdminSchema = {
-  body: {},
+  body: {
+    email: 'email|required',
+    password: { type: 'string', required: true, minLength: 8 },
+    name: { type: 'string', maxLength: 80 },
+    adminType: { type: 'string', oneOf: [...ADMIN_TYPES] },
+    tenantScope: { type: 'string', minLength: 1 },
+    status: { type: 'string', oneOf: ['pending', 'active'] },
+  },
   params: {},
   query: {},
 };
 
 /** @type {import('../index.js').Schema} */
 export const updateAdminSchema = {
-  body: {},
-  params: {},
+  body: {
+    name: { type: 'string', maxLength: 80 },
+    adminType: { type: 'string', oneOf: [...ADMIN_TYPES] },
+    tenantScope: { type: 'string', minLength: 1 },
+    locale: { type: 'string', minLength: 2, maxLength: 16 },
+    timezone: { type: 'string', minLength: 1, maxLength: 64 },
+    avatarUrl: { type: 'url' },
+  },
+  params: {
+    id: 'objectId|required',
+  },
+  query: {},
+};
+
+/** @type {import('../index.js').Schema} */
+export const suspendSchema = {
+  body: {
+    reason: { type: 'string', maxLength: 500 },
+  },
+  params: {
+    id: 'objectId|required',
+  },
+  query: {},
+};
+
+/** @type {import('../index.js').Schema} */
+export const restoreSchema = {
+  body: {
+    reason: { type: 'string', maxLength: 500 },
+  },
+  params: {
+    id: 'objectId|required',
+  },
   query: {},
 };
 
 /** @type {import('../index.js').Schema} */
 export const assignRoleSchema = {
+  body: {
+    roleId: 'objectId|required',
+    tenantId: { type: 'string', minLength: 1 },
+    expiresAt: { type: 'date' },
+  },
+  params: {
+    id: 'objectId|required',
+  },
+  query: {},
+};
+
+/** @type {import('../index.js').Schema} */
+export const revokeRoleSchema = {
+  body: {},
+  params: {
+    id: 'objectId|required',
+    roleId: 'objectId|required',
+  },
+  query: {},
+};
+
+/** @type {import('../index.js').Schema} */
+export const listSchema = {
   body: {},
   params: {},
-  query: {},
+  query: {
+    status: { type: 'string', oneOf: ['pending', 'active', 'suspended', 'locked'] },
+    adminType: { type: 'string', oneOf: [...ADMIN_TYPES] },
+    page: { type: 'integer', min: 1 },
+    limit: { type: 'integer', min: 1, max: 100 },
+  },
 };
 
 export default {
@@ -122,6 +188,10 @@ export default {
   mfaVerifySchema,
   createAdminSchema,
   updateAdminSchema,
+  suspendSchema,
+  restoreSchema,
   assignRoleSchema,
-  _meta: { phase: '1.2 - auth schemas implemented, CRUD schemas pending (Sprint 2)' },
+  revokeRoleSchema,
+  listSchema,
+  _meta: { phase: '2 - implemented' },
 };

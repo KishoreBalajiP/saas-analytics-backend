@@ -1,13 +1,16 @@
 # Module — Status
 
-**Sprint:** 0 (foundation)
-**Status:** 📝 Planned (Phase 2)
-**Implements:** architecture-only contracts
-**Real source files:** none yet
-**Hook points:** shared infrastructure (cache/queue/storage/email + Mongoose plugins) is in place for Sprint 1+
+**Sprint:** 4 — Connector Platform
+**Status:** 🕏 In Progress
 
-Sprint 0 ships only the shared infrastructure this module will depend on.
-The module itself is still a README + 501 shell.
+**Implements:** shared ingestion primitives — field mapping
+(`sourceField → targetField`), the sync engine (resolves a connector, runs
+its lifecycle, upserts rows idempotently), connector-level validators and
+errors.
 
-The next sprint that touches this module is documented in the parent
-`CHANGELOG.md` and `src/docs/DECISIONS.md`.
+**Real source files (in progress):**
+
+- `src/modules/connectors/shared/field-mapping.js`
+- `src/modules/connectors/shared/sync-engine.js`
+- `src/modules/connectors/shared/validators.js`
+- `src/modules/connectors/shared/errors.js`

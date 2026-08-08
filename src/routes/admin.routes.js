@@ -1,52 +1,48 @@
 /**
- * /api/v1/admin routes - Platform Admin CRUD + lifecycle.
+ * /api/v1/admin routes - Platform Admin CRUD + lifecycle (Sprint 2 - implemented).
  *
  * WHY IT EXISTS
  *   Admin Portal entry point for managing Platform Admins (super, platform,
- *   support). All endpoints pass through `adminAuth` + RBAC, and every
- *   mutation is captured by `audit.middleware.js`. Backed by `iam/admins/`.
+ *   support). Every mutation is captured by `audit.middleware.js`. Backed by
+ *   `services/admin.service.js`.
  *
- * RESPONSIBILITY (planned, NOT implemented)
- *   - GET    /admins                 - list (paged, filtered)
- *   - POST   /admins                 - create + invite
- *   - GET    /admins/:id             - detail (+ current roles)
- *   - PATCH  /admins/:id             - update profile / status
- *   - POST   /admins/:id/suspend     - block login
- *   - POST   /admins/:id/restore     - unblock
- *   - POST   /admins/:id/roles       - assign role (RBAC-gated)
- *   - DELETE /admins/:id/roles/:roleId - revoke role
- *   - GET    /admins/:id/audit       - per-admin audit trail
+ * ENDPOINTS (mounted under /admin)
+ *   - GET    /admins                      - list (paged, filtered)
+ *   - POST   /admins                      - create + invite
+ *   - GET    /admins/:id                  - detail (+ current roles)
+ *   - PATCH  /admins/:id                  - update profile / adminType / scope
+ *   - POST   /admins/:id/suspend          - block login
+ *   - POST   /admins/:id/restore          - unblock
+ *   - POST   /admins/:id/roles            - assign role (RBAC-gated)
+ *   - DELETE /admins/:id/roles/:roleId    - revoke role
+ *   - GET    /admins/:id/audit            - per-admin audit trail
  *
- * HOW TO EXTEND (Phase 2)
- *   - Final middleware order on every protected route:
- *     adminAuth -> rbac -> modulePermission('iam', 'view') ->
- *     permission(<action>) -> handler
- *   - Use `validators/admin.validator.js` schemas via `validate(...)` first.
+ * MIDDLEWARE ORDER
+ *   adminAuth -> permission('iam.admins', <action>) -> validate -> handler
+ *
+ * HOW TO EXTEND
+ *   - `/admin-auth/*` lives in `admin-auth.routes.js` (mounted separately);
+ *     this router owns only admin *management*.
+ *   - `by` attribution comes from the token, never the body.
  */
 
 import { Router } from 'express';
-import asyncHandler from '../utils/asyncHandler.js';
+import { validate } from '../validators/index.js';
+import { adminAuth } from '../middleware/adminAuth.middleware.js';
+import { permission } from '../middleware/permission.middleware.js';
+import adminValidator from '../validators/admin.validator.js';
+import adminController from '../controllers/admin.controller.js';
 
 const router = Router();
 
-const notImplemented = (op) =>
-  asyncHandler(async (_req, res) => {
-    res.status(501).json({
-      success: false,
-      statusCode: 501,
-      message: `${op} is not implemented yet (Phase 1.2 architecture placeholder)`,
-      hint: 'See src/modules/iam/admins/README.md',
-    });
-  });
-
-router.get('/admins', notImplemented('GET /admin/admins'));
-router.post('/admins', notImplemented('POST /admin/admins'));
-router.get('/admins/:id', notImplemented('GET /admin/admins/:id'));
-router.patch('/admins/:id', notImplemented('PATCH /admin/admins/:id'));
-router.post('/admins/:id/suspend', notImplemented('POST /admin/admins/:id/suspend'));
-router.post('/admins/:id/restore', notImplemented('POST /admin/admins/:id/restore'));
-router.post('/admins/:id/roles', notImplemented('POST /admin/admins/:id/roles'));
-router.delete('/admins/:id/roles/:roleId', notImplemented('DELETE /admin/admins/:id/roles/:roleId'));
-router.get('/admins/:id/audit', notImplemented('GET /admin/admins/:id/audit'));
+router.get('/admins', adminAuth, permission('iam.admins', 'view'), validate(adminValidator.listSchema), adminController.listAdmins);
+router.post('/admins', adminAuth, permission('iam.admins', 'create'), validate(adminValidator.createAdminSchema), adminController.createAdmin);
+router.get('/admins/:id', adminAuth, permission('iam.admins', 'view'), adminController.getAdmin);
+router.patch('/admins/:id', adminAuth, permission('iam.admins', 'update'), validate(adminValidator.updateAdminSchema), adminController.updateAdmin);
+router.post('/admins/:id/suspend', adminAuth, permission('iam.admins', 'suspend'), validate(adminValidator.suspendSchema), adminController.suspendAdmin);
+router.post('/admins/:id/restore', adminAuth, permission('iam.admins', 'restore'), validate(adminValidator.restoreSchema), adminController.restoreAdmin);
+router.post('/admins/:id/roles', adminAuth, permission('iam.admins', 'assign'), validate(adminValidator.assignRoleSchema), adminController.assignAdminRole);
+router.delete('/admins/:id/roles/:roleId', adminAuth, permission('iam.admins', 'assign'), validate(adminValidator.revokeRoleSchema), adminController.revokeAdminRole);
+router.get('/admins/:id/audit', adminAuth, permission('iam.admins', 'view'), validate(adminValidator.listSchema), adminController.getAdminAudit);
 
 export default router;

@@ -36,8 +36,9 @@
 
 ## Current Status
 
-> **Status:** `In Progress` — Sprint 0 complete; Sprints 1–9 planned.
-> **Sprint:** Between Sprint 0 (complete) and Sprint 1 (planned).
+> **Status:** `In Progress` — Sprint 0 complete; Sprints 1–3 complete;
+> Sprint 4 (Connector Platform) in progress; Sprints 5–9 planned.
+> **Sprint:** Sprint 3 (complete) → Sprint 4 (Connector Platform, in progress).
 > **Owner:** Engineering team.
 
 ## Business Perspective
@@ -60,14 +61,14 @@ Sprints 1–3 fill in the layers, Sprints 4–9 fill in the features.
 ```
 Sprint 0 (Foundation — utilities, drivers, plugins)
     └─ Sprint 1 (Authentication: User, Admin, Session, JWT, MFA)
-          └─ Sprint 2 (IAM: Tenant, Admin CRUD, User CRUD, lifecycle)
-                └─ Sprint 3 (RBAC: Module, Permission, Role, cache)
-                      ├─ Sprint 4 (Master Data: countries, currencies, ...)
-                      ├─ Sprint 5 (Platform: Settings, Feature Flags, Notifications)
-                      ├─ Sprint 6 (Connectors: CSV + Webhook)
-                      └─ Sprint 7 (Governance: Audit, Access, Compliance)
-                            ├─ Sprint 8 (Monitoring + Support)
-                            └─ Sprint 9 (Analytics + Embed)
+        └─ Sprint 2 (IAM: Tenant, Admin/Role/User CRUD, lifecycle, RBAC cache)
+            └─ Sprint 3 (Multi-Tenancy: tenant lifecycle, onboarding, settings, feature flags)
+                ├─ Sprint 4 (Connector Platform: CSV + Webhook connectors, sync engine)
+                ├─ Sprint 5 (Platform: Settings/Feature-flag surface, Notifications)
+                ├─ Sprint 6 (Master Data: countries, currencies, timezones, plans, languages)
+                └─ Sprint 7 (Governance: Audit, Access, Compliance)
+                    ├─ Sprint 8 (Monitoring + Support)
+                    └─ Sprint 9 (Analytics + Embed)
 ```
 
 ## Deliverables
@@ -75,15 +76,15 @@ Sprint 0 (Foundation — utilities, drivers, plugins)
 | Sprint | File | Status |
 | --- | --- | --- |
 | Sprint 0 | [`sprint-0.md`](./sprint-0.md) | ✅ Complete |
-| Sprint 1 | [`sprint-1.md`](./sprint-1.md) | 🕓 Planned |
-| Sprint 2 | [`sprint-2.md`](./sprint-2.md) | 🕓 Planned |
-| Sprint 3 | [`sprint-3.md`](./sprint-3.md) | 🕓 Planned |
-| Sprint 4 | [`sprint-4.md`](./sprint-4.md) | 🕓 Planned |
-| Sprint 5 | [`sprint-5.md`](./sprint-5.md) | 🕓 Planned |
-| Sprint 6 | [`sprint-6.md`](./sprint-6.md) | 🕓 Planned |
-| Sprint 7 | [`sprint-7.md`](./sprint-7.md) | 🕓 Planned |
-| Sprint 8 | [`sprint-8.md`](./sprint-8.md) | 🕓 Planned |
-| Sprint 9 | [`sprint-9.md`](./sprint-9.md) | 🕓 Planned |
+| Sprint 1 | [`sprint-1.md`](./sprint-1.md) | ✅ Complete |
+| Sprint 2 | [`sprint-2.md`](./sprint-2.md) | ✅ Complete |
+| Sprint 3 | [`sprint-3.md`](./sprint-3.md) | ✅ Complete |
+| Sprint 4 | [`sprint-4.md`](./sprint-4.md) | 🕒 In Progress (Connector Platform) |
+| Sprint 5 | [`sprint-5.md`](./sprint-5.md) | 🕒 Planned |
+| Sprint 6 | [`sprint-6.md`](./sprint-6.md) | 🕒 Planned (Master Data) |
+| Sprint 7 | [`sprint-7.md`](./sprint-7.md) | 🕒 Planned |
+| Sprint 8 | [`sprint-8.md`](./sprint-8.md) | 🕒 Planned |
+| Sprint 9 | [`sprint-9.md`](./sprint-9.md) | 🕒 Planned |
 
 ## Dependencies
 
@@ -143,9 +144,9 @@ end-to-end demo-ability.
 
 ## Key Takeaways
 
-- **Ten sprints, one vertical slice each.** Foundation → auth → IAM
-  → RBAC → master data → platform config → connectors → governance
-  → monitoring → analytics + embed.
+- **Ten sprints, one vertical slice each.** Foundation → auth → IAM/RBAC
+  → multi-tenancy → connectors → platform config → master data →
+  governance → monitoring → analytics + embed.
 - **Phase 2 is complete when the end-to-end demo works.** Not
   earlier.
 - **Sprint 0 is the only sprint that ships infrastructure only.**
@@ -172,14 +173,14 @@ end-to-end demo-ability.
   Sprint 1, and every later sprint assumes auth + RBAC + tenant
   isolation exist.
 
-- **"Five sprints?"** — We could merge Sprints 4+5 (master data +
-  platform config) and Sprints 7+8 (governance + monitoring) but
-  not the others. Auth + IAM + RBAC must be separate because each
-  ships a distinct primitive the next depends on.
+- **"Five sprints?"** — We could merge Sprints 5+6 (platform config +
+  master data) and Sprints 7+8 (governance + monitoring) but not the
+  others. Auth + IAM + RBAC + multi-tenancy must be separate because
+  each ships a distinct primitive the next depends on.
 
 ### Real-World Examples
 
-- A sprint implementer opens [`sprint-1.md`](./sprint-1.md), reads
+- A sprint implementer opens [`sprint-4.md`](./sprint-4.md), reads
   Scope and Deliverables, and starts the first ticket.
 - A PM reads the *Sprint Map* table and updates a public roadmap.
 
@@ -203,7 +204,7 @@ end-to-end demo-ability.
 
 ## Last Updated
 
-- **Sprint:** Sprint 0 close
+- **Sprint:** Sprint 3 close / Sprint 4 in progress
 - **Phase:** Phase 2 — Implementation
-- **Date:** 2026-08-05
-- **Author:** Documentation (Sprint 0)
+- **Date:** 2026-08-08
+- **Author:** Engineering (Sprint 3 close, Sprint 4 re-scope)

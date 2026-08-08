@@ -8,7 +8,7 @@
  *
  * RESPONSIBILITY (database access ONLY - no business logic)
  *   - create, findById, findByRefreshTokenHash, findActiveByRefreshTokenHash
- *   - touchLastUsed, revoke, revokeAllForActor, markExpired
+ *   - touchLastUsed, revoke, revokeAllForActor, revokeAllForTenant, markExpired
  *
  * CODING GUIDELINES
  *   - Reads return PLAIN objects (`.lean()`).
@@ -65,6 +65,24 @@ export const revokeAllForActor = async (actorId, reason) => {
   return res.modifiedCount;
 };
 
+/**
+ * Revoke every active session scoped to a tenant. The tenant-suspend
+ * cascade uses this so a suspended tenant cannot authenticate through any
+ * lingering session. Explicit `tenantId` filtering (defence in depth on
+ * top of the `tenantScope` plugin).
+ */
+export const revokeAllForTenant = async (tenantId, reason) => {
+  const res = await Session.updateMany(
+    { tenantId, status: 'active' },
+    { $set: { status: 'revoked', revokedAt: new Date(), revokedReason: reason ?? null } },
+  );
+  return res.modifiedCount;
+};
+
+/** Count active sessions in a tenant (used by tenant statistics). */
+export const countActiveForTenant = (tenantId) =>
+  Session.countDocuments({ tenantId, status: 'active' });
+
 /** Mark an active session expired (e.g. the TTL has not purged it yet). */
 export const markExpired = (sessionId) =>
   Session.findOneAndUpdate(
@@ -81,6 +99,8 @@ export default {
   touchLastUsed,
   revoke,
   revokeAllForActor,
+  revokeAllForTenant,
   markExpired,
+  countActiveForTenant,
   _meta: { leanReturns: true, tenancy: 'hybrid', refreshTokens: 'hashed-at-rest' },
 };

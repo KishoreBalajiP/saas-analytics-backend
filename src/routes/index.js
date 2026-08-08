@@ -38,10 +38,11 @@
  *   `src/modules/<name>/`, then add one `router.use('/<name>', ...)`
  *   line here.
  *
- * Phase 1.2 note: every Phase 1.2 route handler returns `501` (Not
- * Implemented) until the matching service/repo is wired up. Existing
- * tests only verify `/health` and unknown-route 404s, so the surface
- * expansion is non-breaking.
+ * Phase 1.2 note: auth, admin-auth, admin, roles, permissions, audit-logs
+ * and users are implemented (Sprint 2). The remaining Phase 1.2 route
+ * handlers still return `501` until their matching service/repo is wired
+ * up. Existing tests only verify `/health` and unknown-route 404s, so the
+ * surface expansion is non-breaking.
  */
 
 import { Router } from 'express';

@@ -45,25 +45,39 @@ Phase 4+.
 | --- | --- |
 | Current version | `1.0.0` |
 | Current phase | Phase 2 — Implementation |
-| Current sprint | Sprint 1 — Authentication (closing) |
-| Next sprint | Sprint 2 (planned) |
-| Current progress | ~35 % of Phase 2 |
-| Last completed milestone | Sprint 1 close — auth for both portals: login/refresh/logout, password reset, TOTP MFA, lockout (124 tests, 5/5 CI guards green) |
-| Next milestone | RBAC roles for `authorize(...)` + first post-auth feature sprint |
+| Current sprint | Sprint 3 — Multi-Tenancy (complete) |
+| Next sprint | Sprint 4 — Connector Platform (CSV + Webhook) |
+| Current progress | ~78 % of Phase 2 |
+| Last completed milestone | Sprint 3 close — multi-tenancy: tenant lifecycle, onboarding, auth gate, tenant settings, feature flags (232 tests, 5/5 CI guards green) |
+| Next milestone | Sprint 4 — Connector Platform (persisted connectors + CSV + inbound Webhook ingestion) |
 
-Facts as of Sprint 1 close:
+Facts as of Sprint 3 close:
 
-- Auth is fully shipped and integration-tested against `mongodb-memory-server`
-  for both portals (`/auth/*` + `/admin-auth/*`): login → me → logout, refresh
-  rotation with replay ⇒ whole-family revocation, MFA enrolment/verify with
-  real TOTP codes, password reset with no enumeration and session-family
-  revocation, account lockout.
+- Auth is fully shipped and integration-tested against
+  `mongodb-memory-server` for both portals (`/auth/*` + `/admin-auth/*`):
+  login → me → logout, refresh rotation with replay ⇒
+  whole-family revocation, MFA enrolment/verify with real TOTP codes,
+  password reset with no enumeration and session-family revocation,
+  account lockout. `authorize(...)` now resolves real RBAC roles (403
+  default-deny).
 - `PASSWORD_KDF` seam: Argon2id in production; `npm test` forces Node's
-  built-in scrypt (portable, no native binary); `npm run test:argon2` runs the
-  real Argon2id KDF. Refresh tokens are hashed deterministically (salt =
-  SHA-256 of the token) so session lookup-by-hash works.
-- `npm test` → 124 pass, 0 fail. `npm run ci:guards` → 5/5 green. `npm audit` → 0 vulnerabilities.
-- `authorize(...)` still fails closed (403) until RBAC roles land.
+  built-in scrypt (portable, no native binary); `npm run test:argon2`
+  runs the real Argon2id KDF. Refresh tokens are hashed
+  deterministically (salt = SHA-256(token)) so session lookup-by-hash
+  works.
+- Multi-tenancy ships the full tenant lifecycle (`pending`/`active`/
+  `suspended`/`disabled`/`archived`) with a login/refresh tenant-status
+  gate, idempotent onboarding (owner + 4 default roles + permissions +
+  platform settings + feature flags), tenant settings with effective
+  inheritance + secret redaction + read-only protection, and a
+  feature-flag catalogue with 4 rollout strategies.
+- `npm test` → 232 pass, 0 fail. `npm run ci:guards` → 5/5 green.
+  `npm audit` → 0 vulnerabilities.
+- The next work is the **Connector Platform** — persisted, tenant-scoped
+  connectors with encrypted `config`, the CSV and inbound Webhook
+  providers, the async sync engine, and the `/connectors/*` +
+  `/webhooks/*` surfaces. See [sprint-4.md](src/docs/phases/sprint-4.md)
+  and [backend/connectors.md](src/docs/backend/connectors.md).
 
 See [STATUS.md](src/docs/STATUS.md) for the canonical,
 daily-read state and the full shipped/stubbed/planned inventory.
@@ -103,8 +117,8 @@ JWT, not the `X-Tenant-Id` header.
 
 **Connector architecture** — `BaseConnector` contract (`connect`, `validate`,
 `preview`, `ingest`, `disconnect`) + `ConnectorRegistry`. Business code never
-imports a vendor SDK. Framework implemented; first providers (CSV, Webhook)
-planned for Sprint 6.
+imports a vendor SDK. Framework implemented; Sprint 4 ships the persistence
+layer + CSV and Webhook providers and the inbound `/webhooks/*` surface.
 
 **Infrastructure abstraction** — feature code only consumes service wrappers
 (`cache.service.js`, `queue.service.js`, `storage.service.js`,
@@ -219,7 +233,7 @@ Development (`src/docs/development/`):
 Planning and code references:
 
 - [src/docs/phases/README.md](src/docs/phases/README.md) — phase + sprint index
-- [src/docs/phases/sprint-1.md](src/docs/phases/sprint-1.md) — next sprint plan
+- [src/docs/phases/sprint-4.md](src/docs/phases/sprint-4.md) — current sprint plan (Connector Platform)
 - [src/docs/adr/README.md](src/docs/adr/README.md) — how to read/add ADRs
 - [src/docs/glossary/README.md](src/docs/glossary/README.md) — plain-English terms
 - [src/modules/README.md](src/modules/README.md) — feature module map
@@ -234,34 +248,20 @@ and are the contract + status for each module.
 
 ## 7. Current Priorities
 
-The last work was **Sprint 1 — Authentication** (closed). Both portals are
-live and integration-tested: `/auth/*` for tenant users and `/admin-auth/*`
-for platform admins, JWT access tokens (15 min) + rotating refresh tokens,
-account lockout, TOTP MFA for `super_admin`, real `authenticate` /
-`adminAuth` / `resolveTenant` middleware, rate-limited login, refresh-token
-family revocation on replay, and password reset that revokes the session
-family.
+The last work was **Sprint 3 — Multi-Tenancy** (closed): the full tenant
+lifecycle (provision → onboard → suspend/restore/disable/archive with session +
+RBAC-cache cascade), the login/refresh tenant-status gate, idempotent onboarding
+(owner + four default roles + permissions + platform settings + feature flags),
+tenant settings with effective inheritance + secret redaction + read-only
+protection, and the feature-flag catalogue with 4 rollout strategies. Sprints 0–3
+are complete (232 tests, 5/5 CI guards green).
 
-Sprint 1 closure state:
-
-1. `POST /admin-auth/login` → access token + refresh cookie ✅
-2. `POST /admin-auth/refresh` → rotated refresh token ✅
-3. `GET /admin-auth/me` → admin profile ✅
-4. `POST /admin-auth/logout` → revoke session ✅
-5. The same flow for `/auth/*` ✅
-6. MFA enrolment + verify with real TOTP codes ✅
-7. Account lockout after N failures ✅
-8. KDF seam (`PASSWORD_KDF=argon2|scrypt`) + deterministic refresh-token
-   hashing (salt = SHA-256(token)) ✅
-
-Models added: `User`, `Admin`, `Tenant`, `Session`, `LoginAttempt` (all with
-the shared plugin set). Suite is 124 tests (scrypt mode), green; run the
-real KDF with `npm run test:argon2`.
-
-**Next up: Sprint 2 — IAM** (tenant / admin / user lifecycle CRUD), then
-Sprint 3 (RBAC roles for `authorize(...)`, which currently fails closed).
-See [sprint-2.md](src/docs/phases/sprint-2.md). Do not start later sprints
-(connectors, analytics, governance) — they are planned, not open.
+The next work is **Sprint 4 — Connector Platform (CSV + Webhook)**: persisted,
+tenant-scoped connectors with encrypted `config`, the CSV and inbound Webhook
+providers, the async sync engine, and the `/connectors/*` + `/webhooks/*`
+surfaces. See [sprint-4.md](src/docs/phases/sprint-4.md). Do not start later
+sprints (Master Data, governance, analytics, embed) — they are planned, not
+open; Master Data moved to Sprint 6 when Connectors were pulled forward.
 
 ---
 

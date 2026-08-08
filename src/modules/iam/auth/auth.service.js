@@ -34,6 +34,7 @@ import { hash as hashPassword, verify as verifyPassword } from '../../../utils/p
 import { sign as signJwt, parseExpiresIn, JWT_AUDIENCES } from '../../../utils/jwt.js';
 import userRepository from '../../../repositories/user.repository.js';
 import adminRepository from '../../../repositories/admin.repository.js';
+import tenantRepository from '../../../repositories/tenant.repository.js';
 import sessionRepository from '../../../repositories/session.repository.js';
 import loginAttemptRepository from '../../../repositories/loginAttempt.repository.js';
 import sessionService from './session.service.js';
@@ -143,6 +144,22 @@ export async function login({
 
   const actorId = String(account._id);
 
+  // Tenant gate: only `active` tenants may authenticate. A missing tenant
+  // stays generic (no enumeration); a blocked tenant is explicit (the
+  // user already knows which tenant they are logging into).
+  if (portal === 'user') {
+    const tenant = await findTenantOrNull(tenantId);
+    if (!tenant) {
+      await dummyVerify(password);
+      await recordAttempt({ ...attemptMeta, actorId: null, success: false, reason: 'unknown_tenant' });
+      throw ApiError.unauthorized(INVALID_CREDENTIALS);
+    }
+    if (tenant.status !== 'active') {
+      await recordAttempt({ ...attemptMeta, actorId, success: false, reason: 'tenant_not_active' });
+      throw ApiError.forbidden('Tenant is not active');
+    }
+  }
+
   if (account.status === 'suspended') {
     await recordAttempt({ ...attemptMeta, actorId, success: false, reason: 'suspended' });
     throw ApiError.forbidden('Account is suspended');
@@ -249,6 +266,16 @@ export async function refresh({ refreshToken, device, ip, userAgent }) {
   if (!account || account.status === 'suspended') {
     await sessionRepository.revokeAllForActor(session.actorId, 'actor_invalid');
     throw ApiError.unauthorized('Session revoked');
+  }
+
+  // Tenant gate on refresh: a suspended/disabled/archived tenant must not
+  // be able to keep sessions alive, even if the account is still active.
+  if (portal === 'user' && session.tenantId) {
+    const tenant = await findTenantOrNull(session.tenantId);
+    if (!tenant || tenant.status !== 'active') {
+      await sessionRepository.revokeAllForActor(session.actorId, 'tenant_inactive');
+      throw ApiError.unauthorized('Session revoked');
+    }
   }
 
   const newRefreshToken = sessionService.generateRefreshToken();
@@ -389,6 +416,20 @@ function buildActorSummary(account) {
 function isLockedOut(account) {
   const until = account.lockedUntil ? new Date(account.lockedUntil).getTime() : 0;
   return until > Date.now();
+}
+
+/**
+ * Look up a tenant for the auth gates. A malformed tenant id (not a valid
+ * ObjectId) must be treated as "tenant unknown" - the user-facing failure
+ * stays generic - never crash into a CastError 500.
+ */
+async function findTenantOrNull(tenantId) {
+  try {
+    return await tenantRepository.findById(tenantId);
+  } catch (err) {
+    if (err?.name === 'CastError') return null;
+    throw err;
+  }
 }
 
 /**

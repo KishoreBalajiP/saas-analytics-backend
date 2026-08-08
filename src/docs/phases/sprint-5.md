@@ -91,7 +91,9 @@ and `feature-flag:<key>`.
 
 ## Dependencies
 
-- Sprint 3 (RBAC) + Sprint 0 (email service).
+- Sprint 3 (Multi-Tenancy: tenant settings + feature flags already
+  ship the engine) + Sprint 4 (Connector Platform) + Sprint 0 (email
+  service).
 
 ## Testing
 
@@ -179,8 +181,8 @@ Sprint 5 the platform is configurable.
 ## Related Documents
 
 - [`phase-2.md`](./phase-2.md) — phase
-- [`sprint-4.md`](./sprint-4.md) — previous
-- [`sprint-6.md`](./sprint-6.md) — next
+- [`sprint-4.md`](./sprint-4.md) — previous (Connector Platform)
+- [`sprint-6.md`](./sprint-6.md) — next (Master Data)
 
 ## Last Updated
 

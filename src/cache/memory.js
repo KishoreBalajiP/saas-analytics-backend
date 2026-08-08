@@ -149,6 +149,11 @@ export function createMemoryCache(config = {}) {
       const entry = store.get(fullKey);
       if (entry) return entry.value;
       const value = await fn();
+      // Match the Redis driver's semantics: a `null`/`undefined` miss is NOT
+      // memoized, so a later write for the same key is picked up immediately.
+      // Only cache concrete values (including empty arrays / empty Sets, which
+      // are truthy and legitimate cache hits).
+      if (value === null || value === undefined) return value;
       const effectiveTtl = ttlSec === undefined ? null : ttlSec;
       const expiresAt = Number.isInteger(effectiveTtl) && effectiveTtl > 0
         ? Date.now() + effectiveTtl * 1000

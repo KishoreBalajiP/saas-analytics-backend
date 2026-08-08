@@ -5,13 +5,12 @@
  *   Stable data-access surface for Platform Admins. Sprint 1 implements the
  *   auth surface; the CRUD surface stays fail-closed until Sprint 2.
  *
- * RESPONSIBILITY (implemented, Sprint 1 auth)
+ * RESPONSIBILITY (implemented)
  *   - findById, findByEmail, findByEmailForAuth
  *   - update, incrementFailedAttempts, resetFailedAttempts, setLockedUntil,
  *     touchLastLogin, updateMfa
- *
- * RESPONSIBILITY (planned, still stubbed for Sprint 2)
- *   - list, create, suspend, restore, listRolesForAdmin, assignRole, revokeRole
+ *   - list, create, suspend, restore
+ *   - listRolesForAdmin, assignRole, revokeRole
  *
  * CODING GUIDELINES
  *   - Reads return PLAIN objects (`.lean()`).
@@ -23,7 +22,8 @@
  */
 
 import { Admin } from '../models/Admin.js';
-import { notImplementedStub } from '../utils/stubs.js';
+import { AdminRole } from '../models/AdminRole.js';
+import { Role } from '../models/Role.js';
 
 /** Fields required by the admin login path. */
 const AUTH_PROJECTION =
@@ -82,14 +82,90 @@ export const updateMfa = (id, { mfaSecret = null, mfaEnabled } = {}) => {
   );
 };
 
-// --- Sprint 2 CRUD surface (stubbed, fail-closed) -------------------------
-export const list = notImplementedStub('admin.repository', 'list');
-export const create = notImplementedStub('admin.repository', 'create');
-export const suspend = notImplementedStub('admin.repository', 'suspend');
-export const restore = notImplementedStub('admin.repository', 'restore');
-export const listRolesForAdmin = notImplementedStub('admin.repository', 'listRolesForAdmin');
-export const assignRole = notImplementedStub('admin.repository', 'assignRole');
-export const revokeRole = notImplementedStub('admin.repository', 'revokeRole');
+// --- Sprint 2 CRUD surface (implemented) ----------------------------------
+/** Paginated admin list, filterable by status and/or adminType. */
+export const list = async ({ filter = {}, page = 1, limit = 20 } = {}) => {
+  const result = await Admin.paginate(filter, {
+    page,
+    limit,
+    lean: true,
+    sort: { createdAt: -1 },
+  });
+  return {
+    docs: result.docs,
+    total: result.totalDocs,
+    page: result.page,
+    limit: result.limit,
+    pages: result.totalPages,
+  };
+};
+
+/** Create an admin. `data` must already carry the password hash. */
+export const create = async (data) => {
+  const doc = new Admin(data);
+  await doc.save();
+  return doc.toObject();
+};
+
+/** Suspend an admin (status -> `suspended`). Returns the updated doc. */
+export const suspend = (id, by) =>
+  Admin.findByIdAndUpdate(
+    id,
+    { $set: { status: 'suspended', updatedBy: by ?? null } },
+    { new: true, runValidators: true, lean: true },
+  );
+
+/** Restore a suspended admin (status -> `active`). Returns the updated doc. */
+export const restore = (id, by) =>
+  Admin.findByIdAndUpdate(
+    id,
+    { $set: { status: 'active', updatedBy: by ?? null } },
+    { new: true, runValidators: true, lean: true },
+  );
+
+/** List every role grant for an admin, joined with the Role row. */
+export const listRolesForAdmin = async (adminId) => {
+  const grants = await AdminRole.find({ adminId }).lean();
+  if (grants.length === 0) return [];
+  const roleIds = [...new Set(grants.map((g) => g.roleId))];
+  const roles = await Role.find({ _id: { $in: roleIds } }).lean();
+  const byId = new Map(roles.map((r) => [r._id.toString(), r]));
+  return grants
+    .map((g) => {
+      const role = byId.get(g.roleId.toString());
+      return role
+        ? {
+            roleId: g.roleId,
+            role: { name: role.name, level: role.level, isSystem: role.isSystem },
+            tenantId: g.tenantId,
+            grantedBy: g.grantedBy,
+            grantedAt: g.grantedAt,
+            expiresAt: g.expiresAt,
+          }
+        : null;
+    })
+    .filter(Boolean);
+};
+
+/**
+ * Grant a role to an admin (platform when `tenantId` is null, or scoped
+ * to a support tenant). Returns the new grant row, or `null` when the
+ * (adminId, roleId, tenantId) triple already exists.
+ */
+export const assignRole = async (adminId, roleId, { by = null, tenantId = null, expiresAt = null } = {}) => {
+  try {
+    const doc = new AdminRole({ adminId, roleId, tenantId, grantedBy: by, expiresAt });
+    await doc.save();
+    return doc.toObject();
+  } catch (err) {
+    if (err?.code === 11000) return null;
+    throw err;
+  }
+};
+
+/** Revoke a role grant. Returns the number of rows removed. */
+export const revokeRole = (adminId, roleId, { tenantId = null } = {}) =>
+  AdminRole.deleteOne({ adminId, roleId, tenantId }).then((r) => r.deletedCount);
 
 export default {
   findById,
@@ -108,5 +184,5 @@ export default {
   listRolesForAdmin,
   assignRole,
   revokeRole,
-  _meta: { leanReturns: true, tenancy: 'platform', stubbed: ['list', 'create', 'suspend', 'restore', 'listRolesForAdmin', 'assignRole', 'revokeRole'] },
+  _meta: { leanReturns: true, tenancy: 'platform' },
 };

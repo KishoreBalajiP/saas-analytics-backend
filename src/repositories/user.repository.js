@@ -9,6 +9,7 @@
  *   - findById, findByEmail, findByEmailForAuth
  *   - update, incrementFailedAttempts, resetFailedAttempts, setLockedUntil,
  *     touchLastLogin
+ *   - create, suspend, restore
  *   - softDelete, list (paginated)
  *
  * CODING GUIDELINES
@@ -70,6 +71,35 @@ export const softDelete = async (id, by) => {
   return doc ? doc.toObject() : null;
 };
 
+/**
+ * Create a user (e.g. via invitation). `data` must carry `tenantId` and
+ * `email`; the service decides initial status and password hash.
+ */
+export const create = async (data) => {
+  const doc = new User(data);
+  await doc.save();
+  return doc.toObject();
+};
+
+/** Suspend a user inside a tenant. Returns the updated doc or null. */
+export const suspend = (id, tenantId, by) =>
+  User.findOneAndUpdate(
+    { _id: id, tenantId },
+    { $set: { status: 'suspended', updatedBy: by ?? null } },
+    { new: true, runValidators: true, lean: true },
+  );
+
+/** Restore a suspended user inside a tenant. Returns the updated doc or null. */
+export const restore = (id, tenantId, by) =>
+  User.findOneAndUpdate(
+    { _id: id, tenantId },
+    { $set: { status: 'active', updatedBy: by ?? null } },
+    { new: true, runValidators: true, lean: true },
+  );
+
+/** Count non-deleted users in a tenant (used by tenant statistics). */
+export const countByTenant = (tenantId) => User.countDocuments({ tenantId });
+
 /** Paginated tenant-scoped list. `filter` is merged with the tenant scope. */
 export const list = async ({ tenantId, filter = {}, page = 1, limit = 20 } = {}) => {
   const result = await User.paginate(
@@ -96,5 +126,9 @@ export default {
   touchLastLogin,
   softDelete,
   list,
+  create,
+  suspend,
+  restore,
+  countByTenant,
   _meta: { leanReturns: true, tenancy: 'tenant', lockout: 'atomic-persisted' },
 };

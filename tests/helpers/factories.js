@@ -35,6 +35,7 @@ import '../../src/models/Permission.js';
 import '../../src/models/Module.js';
 import '../../src/models/Session.js';
 import '../../src/models/Setting.js';
+import '../../src/models/FeatureFlag.js';
 import '../../src/models/AuditLog.js';
 
 /**
@@ -144,6 +145,16 @@ export const factories = Object.freeze({
     value: true,
     scope: 'platform',
     isSecret: false,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  })),
+  featureFlag: defineFactory('FeatureFlag', () => ({
+    key: `flag-${shortToken(8).toLowerCase()}`,
+    name: 'Test flag',
+    type: 'boolean',
+    defaultValue: false,
+    enabled: true,
+    rollout: { strategy: 'all', tenantIds: [], percentage: 100, attributeRules: [] },
     createdAt: new Date(),
     updatedAt: new Date(),
   })),

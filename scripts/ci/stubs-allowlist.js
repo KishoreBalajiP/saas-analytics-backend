@@ -11,38 +11,23 @@ export default [
   // Helper that builds the stubs themselves - exempt.
   'src/utils/stubs.js',
 
-  // Phase 2 middleware stubs (replaced in subsequent sprints)
+  // Phase 2 middleware (accessLog + compliance land in a later sprint)
   'src/middleware/accessLog.middleware.js',
-  'src/middleware/audit.middleware.js',
   'src/middleware/compliance.middleware.js',
-  'src/middleware/modulePermission.middleware.js',
-  'src/middleware/permission.middleware.js',
-  'src/middleware/rbac.middleware.js',
-  'src/middleware/tenantIsolation.middleware.js',
 
   // Phase 2 repositories
   'src/repositories/accessLog.repository.js',
-  'src/repositories/admin.repository.js',
-  'src/repositories/auditLog.repository.js',
   'src/repositories/compliance.repository.js',
   'src/repositories/masterData.repository.js',
-  'src/repositories/permission.repository.js',
-  'src/repositories/role.repository.js',
-  'src/repositories/setting.repository.js',
 
   // Phase 2 services
   'src/services/accessLog.service.js',
-  'src/services/admin.service.js',
-  'src/services/auditLog.service.js',
   'src/services/compliance.service.js',
   'src/services/dashboard.service.js',
   'src/services/masterData.service.js',
   'src/services/monitoring.service.js',
   'src/services/notification.service.js',
-  'src/services/permission.service.js',
   'src/services/report.service.js',
-  'src/services/role.service.js',
-  'src/services/setting.service.js',
   'src/services/support.service.js',
 
   // Phase 2 controllers

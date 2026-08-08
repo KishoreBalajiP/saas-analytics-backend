@@ -40,8 +40,8 @@
 
 ## Current Status
 
-> **Status:** `In Progress` — Phase 2 (Sprints 0–1 complete; Sprints 2–9 planned).
-> **Sprint:** Sprint 1 (✅ complete) → Sprint 2 (🕓 planned).
+> **Status:** `In Progress` — Phase 2 (Sprints 0–3 complete; Sprint 4 — Connector Platform — in progress; Sprints 5–9 planned).
+> **Sprint:** Sprint 3 (✅ complete) → Sprint 4 — Connector Platform (🕏 in progress).
 > **Owner:** Engineering team.
 
 ## Business Perspective
@@ -50,7 +50,7 @@ The roadmap exists to convert the [business vision](./02-project-vision.md) into
 
 1. **Foundation before features.** Phase 1 ships the architecture; Sprint 0 ships the implementation foundation. No user-visible feature ships until both are in place.
 2. **Tenant isolation first, RBAC second, business features third.** Phase 2 / Sprints 1–3 establish who is allowed to do what before any business endpoint ships.
-3. **Connectors after data model, dashboards after connectors.** Sprints 6 and 9 depend on Sprints 2–5 being solid, because dashboards show data that connectors ingested.
+3. **Connectors first, dashboards after connectors.** Dashboards (Sprint 9) depend on the Connector Platform (Sprint 4) having ingested data, which depends on sprints 1–4 being solid (auth, IAM/RBAC, multi-tenancy + the connector framework from Phase 1.1).
 
 The roadmap is *not* a contract with a customer; it is a planning
 instrument for the team. When reality diverges, the roadmap updates —
@@ -121,7 +121,7 @@ The detailed per-sprint criteria live in
 | **1** | Production Backend Foundation | `Completed` | ✅ | [`ARCHITECTURE.md`](./ARCHITECTURE.md), [repo-root `README.md`](../../README.md) |
 | **1.1** | Connector & Infrastructure Architecture | `Completed` | ✅ | [`src/connectors/`](../../src/connectors/) |
 | **1.2** | Platform Management Architecture | `Completed` | ✅ | [`src/modules/`](../../src/modules/) |
-| **2** | Implementation (Sprints 0–9) | `In Progress` | Sprints 0–1 ✅; Sprints 2–9 🕓 | [`phases/sprint-0.md`](./phases/sprint-0.md) → [`phases/sprint-9.md`](./phases/sprint-9.md) |
+| **2** | Implementation (Sprints 0-9) | `In Progress` | Sprints 0-3 ✅; Sprint 4 🕑 In Progress (Connector Platform); Sprints 5-9 🕑 Planned | [`phases/sprint-0.md`](./phases/sprint-0.md) → [`phases/sprint-9.md`](./phases/sprint-9.md) |
 | **3** | Enterprise Features | `Future` | — | [`DECISIONS.md` "Postponed Decisions"](./DECISIONS.md#postponed-decisions-phase-3) |
 | **4** | Advanced Enterprise | `Future` | — | (planned) |
 | **5** | Mobile Apps & SDKs | `Future` | — | (planned) |
@@ -317,15 +317,15 @@ Phase 1, Phase 1.1, Phase 1.2.
 
 ```
 Sprint 0 (Foundation — shared utilities, drivers, plugins)
-    └─ Sprint 1 (Authentication)
-          └─ Sprint 2 (IAM)
-                └─ Sprint 3 (RBAC)
-                      ├─ Sprint 4 (Master Data)
-                      ├─ Sprint 5 (Platform: Settings, Feature Flags, Notifications)
-                      ├─ Sprint 6 (Connectors: CSV + Webhook)
-                      └─ Sprint 7 (Governance: Audit + Access + Compliance)
-                            ├─ Sprint 8 (Monitoring + Support)
-                            └─ Sprint 9 (Analytics + Embed)
+    └── Sprint 1 (Authentication)
+        └── Sprint 2 (IAM + RBAC)
+            └── Sprint 3 (Multi-Tenancy)
+                ├── Sprint 4 (Connector Platform: CSV + Webhook)
+                ├── Sprint 5 (Platform: Settings / Feature Flags surface, Notifications)
+                ├── Sprint 6 (Master Data: countries, currencies, ...)
+                └── Sprint 7 (Governance: Audit + Access + Compliance)
+                    ├── Sprint 8 (Monitoring + Support)
+                    └── Sprint 9 (Analytics + Embed)
 ```
 
 ### Completion Criteria
@@ -338,9 +338,7 @@ Sprint 0 (Foundation — shared utilities, drivers, plugins)
 
 ### Current Status
 
-`In Progress`. Sprints 0–1 are ✅ complete (see
-[`STATUS.md`](./STATUS.md#what-is-shipped-today-sprint-1)). Sprints
-2–9 are 🕓 planned (see [`phases/`](./phases/README.md)).
+`In Progress`. Sprints 0-3 are ✅ complete (see [`STATUS.md`](./STATUS.md)). Sprints 4-9 are 🕑 planned (see [`phases/`](./phases/README.md)).
 
 ### Expected Outcome
 
@@ -607,16 +605,16 @@ them in mind.
 ## Summary
 
 The roadmap is seven phases deep and three years wide. Phase 1 and
-Phase 1.1 and Phase 1.2 are complete; Phase 2 is in flight (Sprints 0–1
-done, Sprints 2–9 planned); Phase 3+ is future. The order is
-non-negotiable: foundation, then auth, then RBAC, then business
-features, then enterprise, then mobile/AI/white-label. Every
-deliverable is traceable back to a sprint plan in `phases/`.
+Phase 1.1 and Phase 1.2 are complete; Phase 2 is in flight (Sprints 0-3
+done, Sprint 4 in progress, Sprints 5-9 planned); Phase 3+ is future. The order is
+non-negotiable: foundation, then auth, then IAM/RBAC, then multi-tenancy, then
+connectors, platform config, master data, governance, monitoring, and
+analytics + embed. Every deliverable is traceable back to a sprint plan in `phases/`.
 
 ## Key Takeaways
 
 - **Three phases complete, one in flight, four future.**
-- **Sprints 0–1 are the two completed sprints of ten** in Phase 2.
+- **Sprints 0-3 are the four completed sprints of ten** in Phase 2
 - **Phase 3+ items already have hooks in the code** (KMS swap,
   audit events, public compliance endpoint shape). They are not
   rewrites; they are slot-fills.
@@ -704,7 +702,7 @@ deliverable is traceable back to a sprint plan in `phases/`.
 
 ## Last Updated
 
-- **Sprint:** Sprint 1 close
+- **Sprint:** Sprint 3 close / Sprint 4 (Connector Platform) in progress
 - **Phase:** Phase 2 — Implementation
-- **Date:** 2026-08-06
-- **Author:** Engineering (Sprint 1)
+- **Date:** 2026-08-08
+- **Author:** Engineering (Sprint 3 close, Sprint 4 re-scope)

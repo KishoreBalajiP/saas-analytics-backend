@@ -7,6 +7,142 @@ here. Dates are ISO 8601.
 
 ## [Unreleased] - Phase 2
 
+### Sprint 3 — Multi-Tenancy (close: 2026-08-07)
+
+Sprint 3 ships the tenant as a first-class lifecycle object: provision,
+onboard, suspend/restore/disable/archive (with a session + RBAC-cache
+cascade), a login/refresh tenant-status gate, tenant settings with
+effective inheritance + secret redaction, and a feature-flag catalogue.
+Suite grew 218 → 232 tests.
+
+#### Added (models)
+
+- `src/models/Setting.js` — real schema (`SCOPES`, `TYPES`, soft-delete,
+  `tenantScope({ optional: true })`, paginate, optimistic-concurrency,
+  audit).
+- `src/models/FeatureFlag.js` — real schema (`ROLLOUT_STRATEGIES`,
+  `VALUE_TYPES`, audit, soft-delete, paginate, optimistic-concurrency).
+- `src/models/Tenant.js` — extended with lifecycle (`pending`/`active`/
+  `suspended`/`disabled`/`archived`), `onboardingStatus`, `ownerId`,
+  lifecycle timestamps + reasons, immutable `slug`.
+
+#### Added (repositories)
+
+- `src/repositories/setting.repository.js` — coerce, upsert-key, list.
+- `src/repositories/featureFlag.repository.js` — enabled lookup + CRUD.
+- `src/repositories/tenantStatistics.repository.js` — tenant activity.
+- `src/repositories/tenant.repository.js` — lifecycle + counts.
+
+#### Added (services)
+
+- `src/services/tenant.service.js` — facade: create/list/get/update,
+  lifecycle, initialize, statistics, settings, members, billing,
+  `changeOwner`.
+- `src/services/tenantInitialization.service.js` — idempotent onboarding
+  (modules + permissions + platform settings + feature flags + the four
+  default roles `Owner`/`Admin`/`Manager`/`Viewer` + owner user), flips
+  `pending → active`/`ready`.
+- `src/services/tenantLifecycle.service.js` — suspend/restore/disable/
+  archive with the status graph, session revocation
+  (`revokeAllForTenant`) and RBAC-cache invalidation.
+- `src/services/tenantSettings.service.js` — grouped effective settings,
+  idempotent platform-default seed, tenant override upsert, read-only +
+  unknown-key rejection.
+- `src/services/setting.service.js` — typed values, `platform` + `tenant`
+  scopes, secret redaction, effective inheritance (tenant > platform >
+  default), cache key `settings:<scope>:<holder>:<key>` (TTL 60s) with
+  per-key invalidation.
+- `src/services/featureFlag.service.js` — default catalogue seed,
+  rollout strategies (`all`/`tenantId`/`percentage`/`attribute`),
+  deterministic bucketing, cached enabled-catalogue
+  (`feature-flag:enabled`, TTL 60s).
+- `src/services/tenantStatistics.service.js` — aggregates over
+  `User`/`Session`/`AuditLog` only.
+- `src/modules/iam/auth/auth.service.js` — **tenant-status gate**: login
+  rejects unknown/malformed tenant ids generically and returns 403 for
+  non-`active` tenants; refresh revokes the session family when the
+  tenant is inactive.
+
+#### Added (routes / controller / validator)
+
+- `src/controllers/tenant.controller.js` + `src/validators/tenant.validator.js`
+  — thin handlers + create/list/update/lifecycle/initialize/members/
+  settings/owner schemas.
+- `src/routes/tenant.routes.js` — real, admin-gated `POST/GET/PATCH/...`
+  `/api/v1/tenants/*` behind `adminAuth` + `permission('iam.tenants',
+  <action>)`.
+
+#### Fixed (cache incident)
+
+- `src/cache/memory.js` `getOrSet` no longer memoizes `null`/`undefined`
+  misses (matching Redis semantics) — a missing tenant setting override
+  was cached negatively and later ignored until TTL expiry.
+- `tenantSettings.updateGroup` now invalidates the `resolveEffective`
+  cache per overridden key on write.
+
+#### Added (testing)
+
+- `tests/tenants/tenant.integration.test.js` (13 tests) — create/detail/
+  list, status-rejection, onboarding + owner login + role seeding,
+  idempotent re-init, suspend → login 403 + session cascade, restore,
+  disable/archive + terminal 409, members, settings inheritance +
+  redaction + read-only rejection, feature-flag rollout, stats + billing,
+  changeOwner.
+- `tests/services/setting.service.test.js` (10 tests) — coercion,
+  redaction, inheritance, cache invalidation, read-only protection.
+
+#### Added (documentation)
+
+- `src/docs/backend/multi-tenancy.md` updated to `Implemented`;
+  `src/docs/phases/sprint-3.md` DoD checked; `STATUS.md` + module
+  READMEs/STATUS updated for the sprint close.
+
+### Sprint 2 — IAM: Admins, Tenants, Users + RBAC (close: 2026-08-07)
+
+Sprint 2 turns the platform *organisational*: Platform Admins manage
+admins/tenants/users, dynamic RBAC ships (modules, permissions, roles),
+and the permission/role/admin/tenant middleware becomes real. Suite grew
+124 → 218 tests.
+
+#### Added (models)
+
+- `src/models/Module.js`, `src/models/Permission.js`, `src/models/Role.js`,
+  `src/models/RolePermission.js`, `src/models/UserRole.js`,
+  `src/models/AdminRole.js` — the RBAC model set, all with the shared
+  plugin set. `src/models/AuditLog.js` — the Sprint 7 consumer's source.
+
+#### Added (services + cache)
+
+- `src/services/permission.service.js`, `src/services/role.service.js`,
+  `src/services/admin.service.js`, `src/services/auditLog.service.js`,
+  `src/services/user.service.js`.
+- `src/services/rbac.cache.service.js` — resolved-permission set cached at
+  `iam:rbac:<scope>` (5-min TTL, invalidated on write); default deny.
+- System roles seeded (`Owner`/`Admin`/`Manager`/`Viewer` permission keys).
+
+#### Added (middleware, real)
+
+- `src/middleware/permission.middleware.js` — `<module>.<action>` guard,
+  cached 60s, invalidated on write.
+- `src/middleware/rbac.middleware.js`, `src/middleware/modulePermission.middleware.js`,
+  `src/middleware/audit.middleware.js` — real enforcement replacing the
+  fail-closed stubs; `src/middleware/tenantIsolation.middleware.js` real.
+
+#### Added (routes / controllers / validators)
+
+- `/roles/*`, `/permissions/*`, `/admin/admins/*`, `/users/*`,
+  `/tenants/:tenantId/users/*`, `/audit-logs/*` — real, admin-gated,
+  validated; `src/controllers/{role,permission,admin,user,auditLog}.controller.js`,
+  `src/validators/{role,permission,admin,user}.validator.js`.
+
+#### Added (testing)
+
+- `tests/routes/rbac.integration.test.js` (8 tests), `tests/rbac/`
+  (services.integration, 7 tests), `tests/middleware/rbac.middleware.test.js`
+  (4 tests), `tests/middleware/auth.test.js` (11 tests),
+  `tests/validators/rbac.test.js` (8 tests) — permission resolution, RBAC
+  cache, `permission`/`denyIf` enforcement, gates.
+
 ### Sprint 1 — Authentication (close: 2026-08-06)
 
 Sprint 1 ships the first user-visible feature: login, refresh, logout and

@@ -23,7 +23,7 @@
  * INDEXES
  *   - unique(tenantId, email)
  *   - { status: 1, lastLoginAt: -1 }
- *   - unique sparse { ssoProvider: 1, ssoSubject: 1 }
+ *   - unique partial { ssoProvider: 1, ssoSubject: 1 } (SSO rows only)
  */
 
 import mongoose from 'mongoose';
@@ -61,8 +61,15 @@ const userSchema = new mongoose.Schema(
 userSchema.index({ tenantId: 1, email: 1 }, { unique: true });
 // Common list/filter path.
 userSchema.index({ status: 1, lastLoginAt: -1 });
-// Lookup of SSO-linked users; sparse so password-only users are omitted.
-userSchema.index({ ssoProvider: 1, ssoSubject: 1 }, { unique: true, sparse: true });
+// Lookup of SSO-linked users. A PARTIAL index, not a plain sparse index:
+// Mongoose writes `default: null` for password-only users, and sparse
+// indexes only skip documents where the field is *missing* - a `null`
+// value is still indexed, so two password users would collide on the
+// unique key. The partial filter restricts the index to SSO rows only.
+userSchema.index(
+  { ssoProvider: 1, ssoSubject: 1 },
+  { unique: true, partialFilterExpression: { ssoSubject: { $type: 'string' } } },
+);
 
 userSchema.plugin(tenantScope);
 userSchema.plugin(softDelete);

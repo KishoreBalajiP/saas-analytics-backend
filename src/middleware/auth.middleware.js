@@ -31,6 +31,8 @@
 import ApiError from '../utils/ApiError.js';
 import { verify as verifyJwt, JwtError, JWT_AUDIENCES } from '../utils/jwt.js';
 import sessionRepository from '../repositories/session.repository.js';
+import roleService from '../services/role.service.js';
+import { getActor } from './actor.js';
 
 const BEARER_RE = /^Bearer\s+([^\s]+)$/i;
 
@@ -117,16 +119,30 @@ export const optionalAuthenticate = authenticateToken({
  * Restrict a route to one or more roles.
  * Usage: `router.post('/', authorize('owner', 'admin'), ctrl.create)`.
  *
- * NOTE: roles are not embedded in access tokens yet (RBAC ships in Sprint
- * 3), so until a role source exists this fails CLOSED with 403.
+ * Roles are NOT embedded in access tokens; the actor's role names are
+ * resolved from the cached RBAC role set via `role.service#resolveActorRoles`
+ * (fails closed with 403 for identities without any role).
  *
  * @param {...string} allowedRoles
  * @returns {import('express').RequestHandler}
  */
 export function authorize(...allowedRoles) {
-  return (req, _res, next) => {
-    const roles = req.user?.roles ?? req.actor?.roles ?? null;
-    if (!Array.isArray(roles) || roles.length === 0) {
+  return async (req, _res, next) => {
+    const actor = getActor(req);
+    if (!actor) {
+      return next(ApiError.forbidden('Role information is not available for this identity'));
+    }
+    let roles;
+    try {
+      roles = await roleService.resolveActorRoles({
+        actorType: actor.type,
+        actorId: actor.id,
+        tenantId: actor.tenantId,
+      });
+    } catch (err) {
+      return next(err);
+    }
+    if (roles.length === 0) {
       return next(ApiError.forbidden('Role information is not available for this identity'));
     }
     if (!allowedRoles.some((role) => roles.includes(role))) {

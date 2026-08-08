@@ -24,14 +24,15 @@
 
 | Reader | What they get |
 | --- | --- |
-| **Sprint 6 implementer** | Has the framework deep-dive. |
+| **Sprint 4 implementer** | Has the framework deep-dive. |
 | **Future connector author** | Has the lifecycle + registry contract. |
 
 ## Current Status
 
-> **Status:** `Planned` — framework in place (Phase 1.1); Sprint 6
-> ships the first two providers (CSV + Webhook).
-> **Sprint:** Sprint 6 (first providers); Phase 3 (Sheets, MongoDB).
+> **Status:** `In Progress` — framework in place (Phase 1.1); Sprint 4 ships
+> the persistence layer + the CSV and Webhook providers and the inbound
+> `/webhooks/*` surface.
+> **Sprint:** Sprint 4 (CSV + Webhook). Google Sheets / MongoDB → Phase 3.
 > **Owner:** Engineering team.
 
 ## Business Perspective
@@ -62,20 +63,20 @@ async work.
 ┌──────────────────────────┐
 │  src/modules/            │  concrete providers
 │  connectors/             │
-│  ├── csv/                │  Sprint 6
-│  ├── webhook/            │  Sprint 6
+│  ├── csv/                │  Sprint 4
+│  ├── webhook/            │  Sprint 4
+│  ├── shared/             │  field-mapping, sync-engine,
+│  │                       │  validators, errors
 │  ├── google-sheets/      │  Phase 3
-│  ├── mongodb/            │  Phase 3
-│  └── shared/             │  field-mapping, sync-engine,
-│                          │  validators, errors
+│  └── mongodb/            │  Phase 3
 └──────────────────────────┘
 
-                  ▲
-                  │ enqueue
-                  ▼
+                   ▲
+                   │ enqueue
+                   ▼
 ┌──────────────────────────┐
 │  queues/connector.queue  │  Sprint 0 driver
-│  (BullMQ / in-memory)    │  Sprint 6 consumer
+│  (BullMQ / in-memory)    │  Sprint 4 consumer
 └──────────────────────────┘
 ```
 
@@ -96,7 +97,7 @@ Plus: `testConnection()` is a convenience that calls
 
 ## Real-world Examples
 
-### CSV connector (Sprint 6)
+### CSV connector (Sprint 4)
 
 ```js
 import { CsvConnector } from './modules/connectors/csv/csv.connector.js';
@@ -111,7 +112,7 @@ await c.validate();
 const preview = await c.preview({ limit: 10 });
 ```
 
-### Webhook connector (Sprint 6)
+### Webhook connector (Sprint 4)
 
 ```js
 import { WebhookConnector } from './modules/connectors/webhook/webhook.connector.js';
@@ -163,7 +164,7 @@ The connector:
 ## Summary
 
 The connector framework is `BaseConnector` + `ConnectorRegistry`. The
-first two providers (CSV + Webhook) ship in Sprint 6. Adding a new
+first two providers (CSV + Webhook) ship in Sprint 4. Adding a new
 provider is one new class registered at boot.
 
 ## Key Takeaways
@@ -193,7 +194,7 @@ provider is one new class registered at boot.
 
 ## Related Documents
 
-- [`../phases/sprint-6.md`](../phases/sprint-6.md) — first providers
+- [`../phases/sprint-4.md`](../phases/sprint-4.md) — first providers
 - [`../../connectors/README.md`](../../../src/connectors/README.md) — framework
 - [`../../modules/connectors/`](../../../src/modules/connectors/) — concrete providers
 - [`05-user-journey.md`](../05-user-journey.md) — Manager + Tenant Admin use connectors
@@ -202,6 +203,6 @@ provider is one new class registered at boot.
 
 - **Sprint:** Sprint 0 close
 - **Phase:** Phase 2 — Implementation
-- **Sprint planned:** Sprint 6
-- **Date:** 2026-08-05
-- **Author:** Documentation (Sprint 0)
+- **Sprint:** Sprint 4 (CSV + Webhook)
+- **Date:** 2026-08-08
+- **Author:** Engineering (Sprint 4)

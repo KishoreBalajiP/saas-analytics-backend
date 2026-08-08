@@ -168,12 +168,12 @@ about half a day.
 | [Phase 1.2](./phases/phase-1.2.md) | Platform management architecture (complete) |
 | [Phase 2](./phases/phase-2.md) | Implementation — Sprints 0–9 (in progress) |
 | [Sprint 0](./phases/sprint-0.md) | Shared implementation foundation (complete) |
-| [Sprint 1](./phases/sprint-1.md) | Authentication (planned) |
-| [Sprint 2](./phases/sprint-2.md) | IAM — admins, tenants, users (planned) |
-| [Sprint 3](./phases/sprint-3.md) | RBAC — roles, permissions, modules (planned) |
-| [Sprint 4](./phases/sprint-4.md) | Master Data (planned) |
-| [Sprint 5](./phases/sprint-5.md) | Platform: settings, feature flags, notifications (planned) |
-| [Sprint 6](./phases/sprint-6.md) | Connectors: CSV + Webhook (planned) |
+| [Sprint 1](./phases/sprint-1.md) | Authentication (complete) |
+| [Sprint 2](./phases/sprint-2.md) | IAM — admins, tenants, users, RBAC (complete) |
+| [Sprint 3](./phases/sprint-3.md) | Multi-Tenancy — tenant lifecycle, onboarding, settings, feature flags (complete) |
+| [Sprint 4](./phases/sprint-4.md) | Connector Platform — CSV + Webhook connectors, sync engine (in progress) |
+| [Sprint 5](./phases/sprint-5.md) | Platform: settings surface, feature flags surface, notifications (planned) |
+| [Sprint 6](./phases/sprint-6.md) | Master Data — countries, currencies, timezones, plans, languages (planned) |
 | [Sprint 7](./phases/sprint-7.md) | Governance: audit, access, compliance (planned) |
 | [Sprint 8](./phases/sprint-8.md) | Monitoring + Support (planned) |
 | [Sprint 9](./phases/sprint-9.md) | Analytics + Embed (planned) |

@@ -26,12 +26,12 @@
 ## Current Status
 
 > **Status:** `Maintained` — the file is updated as part of every sprint
-> closure PR. The state it describes: Sprint 0 ✅, Sprint 1 ✅ (closing),
-> Sprints 2–9 🕓 planned.
-> **Sprint:** Sprint 1 — Authentication (closing).
+> closure PR. The state it describes: Sprint 0 ✅, Sprint 1 ✅,
+> Sprint 2 ✅, Sprint 3 ✅ (Multi-Tenancy). Sprints 4–9 🕓 planned.
+> **Sprint:** Sprint 3 — Multi-Tenancy (complete).
 > **Owner:** Engineering team.
 >
-> Last updated: **Sprint 1 close** — see [CHANGELOG.md](../../CHANGELOG.md)
+> Last updated: **Sprint 3 close** — see [CHANGELOG.md](../../CHANGELOG.md)
 > at the repo root for the entry-by-entry record.
 
 ---
@@ -45,22 +45,22 @@
 | Question | Answer |
 | --- | --- |
 | **Current Phase** | Phase 2 — Implementation |
-| **Current Sprint** | Sprint 1 — Authentication (✅ implemented, closing). Sprints 2–9 planned. |
-| **Current Goal** | Close Sprint 1 cleanly. Auth for both portals is implemented and integration-tested; the remaining closure items are RBAC roles for `authorize(...)` and CI coverage tooling. The next commit should open Sprint 2 — IAM. |
-| **Current Progress (%)** | **~35 %** of Phase 2 complete. Sprint 0 (foundation) and Sprint 1 (auth) are the two finished sprints of ten. |
-| **Last Completed Milestone** | Sprint 1 close — authentication for both portals: login/refresh/logout, password reset, TOTP MFA, lockout, refresh rotation. See [Sprint 1](./phases/sprint-1.md). |
-| **Next Deliverable** | Sprint 2 — IAM (admins, tenants, users, lifecycle). Concretely: platform admins can CRUD tenants and tenant users via real `/tenants/*`, `/admin/admins/*` and `/tenants/:id/users/*` routes. |
-| **Current Blockers** | **None known.** 124 tests pass, CI green, `npm audit` clean. |
-| **Definition of Done (current sprint)** | *(Sprint 1)* ✅ All deliverables merged, 124 tests green (scrypt + argon2), CI green, status docs updated. *(Sprint 2)* 🕓 See [Sprint 2](./phases/sprint-2.md) — to be opened when work begins. |
-| **Last Updated** | Sprint 1 close. This file is updated as part of every sprint closure PR. |
+| **Current Sprint** | Sprint 3 — Multi-Tenancy (✅ implemented). Sprints 0–3 complete; Sprints 4–9 planned. |
+| **Current Goal** | Sprint 3 closes the tenant lifecycle: provisioning, onboarding, suspend/restore/disable/archive with session + cache cascade, the login/refresh tenant-status gate, tenant settings (inheritance + redaction + read-only), feature flags, and the admin-gated `/tenants/*` surface. |
+| **Current Progress (%)** | **~65 %** of Phase 2 complete. Sprints 0–1 (foundation + auth) and Sprints 2–3 (IAM + multi-tenancy) are the four finished sprints of ten. |
+| **Last Completed Milestone** | Sprint 3 close — multi-tenancy: tenant lifecycle, onboarding, auth gate, tenant settings, feature flags, statistics, members, billing, `/tenants/*` API. See [Sprint 3](./phases/sprint-3.md). |
+| **Next Deliverable** | Sprint 4 — Connector Platform (CSV + Webhook connectors, sync engine, inbound webhook surface). |
+| **Current Blockers** | **None known.** 232 tests pass, CI green, `npm audit` clean. |
+| **Definition of Done (current sprint)** | *(Sprint 3)* ✅ All deliverables merged, 232 tests green, CI green, status docs updated. *(Sprint 4)* 🕓 See [Sprint 4](./phases/sprint-4.md). |
+| **Last Updated** | Sprint 3 close. This file is updated as part of every sprint closure PR. |
 
 ### What You Should Be Doing Right Now
 
 | If you are… | Do this |
 | --- | --- |
-| **About to start Sprint 2** | Read [Sprint 2 plan](./phases/sprint-2.md) end-to-end, then [Multi-Tenancy reference](./backend/multi-tenancy.md) and the IAM module READMEs. Open the sprint branch. |
+| **About to start Sprint 4** | Read [Sprint 4 plan](./phases/sprint-4.md) end-to-end, then [Connector deep-dive](./backend/connectors.md) and the connectors module READMEs. Open the sprint branch. |
 | **Reviewing a PR** | Run `npm run ci:guards` and `npm test` locally. Check that any new route has an auth middleware (CI guard will flag it). Check that the matching entry in `STATUS.md` was updated. |
-| **Debugging a flaky test** | Run the affected file with `node --test tests/<path>.test.js`. Tests use `mongodb-memory-server`; the first run downloads a MongoDB binary (~80 MB). `npm test` runs in scrypt KDF mode; `npm run test:argon2` exercises real Argon2id. |
+| **Debugging a flaky test** | Run the affected file with `node scripts/ci/run-tests.js tests/<path>.test.js` (this sets `PASSWORD_KDF=scrypt`, portable on Windows). Tests use `mongodb-memory-server`; the first run downloads a MongoDB binary (~80 MB). `npm run test:argon2` exercises the real Argon2id KDF on CI (Linux). |
 | **Looking up an architectural rule** | The rule lives in the repo-root `README.md` (Architecture Rules) and in [`ARCHITECTURE.md`](./ARCHITECTURE.md); it is enforced by a CI guard under `scripts/ci/`. |
 | **Reporting status** | Cite this file. Do not paraphrase "what's done" — copy the row from the relevant table. |
 
@@ -85,13 +85,13 @@ Before opening your first PR of the day, confirm:
 | Field | Value |
 | --- | --- |
 | **Phase** | Phase 2 — Implementation |
-| **Current sprint** | Sprint 1 (authentication for both portals) — **closing** |
-| **Next sprint** | Sprint 2 — IAM |
+| **Current sprint** | Sprint 3 — Multi-Tenancy (✅ complete) |
+| **Next sprint** | Sprint 4 — Connector Platform |
 | **Repository version** | `1.0.0` |
-| **Tests** | 124 pass, 0 fail |
+| **Tests** | 232 pass, 0 fail |
 | **CI guards** | 5 / 5 green |
 | **`npm audit`** | 0 vulnerabilities |
-| **Production features shipped** | 1 of ~30 (auth) |
+| **Production features shipped** | 3 of ~30 (auth, IAM, multi-tenancy) |
 
 ---
 
@@ -114,38 +114,56 @@ guess what is real:
 
 ```
 Phase 1.x  ✅ ── Architecture locked (Express / Mongoose / Socket.IO /
-                  Pino / Helmet / rate-limit / connector framework /
-                  error envelope / WS rooms / scheduler / validators /
-                  queue + storage + cache + encryption *contracts*).
-                  Every business endpoint returns 501.
+                 Pino / Helmet / rate-limit / connector framework /
+                 error envelope / WS rooms / scheduler / validators /
+                 queue + storage + cache + encryption *contracts*).
+                 Every business endpoint returns 501.
 
 Sprint 0   ✅ ── Shared implementation foundation.
-                  Real utilities (jwt, password, encryption, id,
-                  idempotency). Real cache (memory + Redis). Real
-                  queue (in-memory + BullMQ). Real storage (local +
-                  S3). Real email transport. Real Mongoose plugin set
-                  (tenantScope, softDelete, paginate,
-                  optimisticConcurrency, audit). Real idempotency
-                  middleware. Real CI guardrails. 73 tests pass.
+                 Real utilities (jwt, password, encryption, id,
+                 idempotency). Real cache (memory + Redis). Real
+                 queue (in-memory + BullMQ). Real storage (local +
+                 S3). Real email transport. Real Mongoose plugin set
+                 (tenantScope, softDelete, paginate,
+                 optimisticConcurrency, audit). Real idempotency
+                 middleware. Real CI guardrails. 73 tests pass.
 
 Sprint 1   ✅ ── Authentication for both portals.
-                  Real User / Admin / Tenant / Session / LoginAttempt
-                  models + repositories. Real auth service (login /
-                  refresh / logout / password reset), TOTP MFA for
-                  super_admin, account lockout, refresh-token rotation
-                  with family revocation. Real authenticate / adminAuth /
-                  resolveTenant middleware. Real /auth/* and
-                  /admin-auth/* routes. KDF seam (Argon2id / scrypt).
-                  124 tests pass incl. end-to-end integration.
+                 Real User / Admin / Tenant / Session / LoginAttempt
+                 models + repositories. Real auth service (login /
+                 refresh / logout / password reset), TOTP MFA for
+                 super_admin, account lockout, refresh-token rotation
+                 with family revocation. Real authenticate / adminAuth /
+                 resolveTenant middleware. Real /auth/* and
+                 /admin-auth/* routes. KDF seam (Argon2id / scrypt).
+                 124 tests pass incl. end-to-end integration.
 
-Sprint 2   🕓 ── IAM: tenant / admin / user lifecycle CRUD.
+Sprint 2   ✅ ── IAM: admins, tenants, users lifecycle + RBAC.
+                 Real Module / Permission / Role / RolePermission /
+                 UserRole / AdminRole models. Real permission + role
+                 services, permission/admin/tenant middleware. Real
+                 /roles, /permissions, /admin/admins, /audit-logs,
+                 /users, /tenants/:id/users routes. System roles seeded.
+                 218 tests pass.
 
-…          ── Sprints 3 → 9: see [Sprint Log](#sprint-log).
+Sprint 3   ✅ ── Multi-Tenancy: tenant lifecycle + onboarding +
+                 auth gate + tenant settings + feature flags.
+                 Real Tenant / Setting / FeatureFlag models. Tenant,
+                 tenantInitialization, tenantLifecycle, tenantSettings,
+                 tenantStatistics, setting and featureFlag services.
+                 Admin-gated /api/v1/tenants/*; login/refresh tenant-
+                 status gate. Session + RBAC-cache cascade on lifecycle.
+                 Effective settings inheritance + secret redaction +
+                 read-only protection; per-key cache invalidation.
+                 Feature-flag catalogue + per-tenant rollout. 232 tests
+                 pass.
+
+…          ── Sprints 4 → 9: see [Sprint Log](#sprint-log).
 
 Phase 3+   🔮 ── Enterprise: KMS, WebAuthn, multi-region, SIEM,
-                  hash-chain audit, cold archival, PDF/XLSX
-                  reports, Google Sheets connector, MongoDB
-                  connector, OAuth/SAML SSO, SCIM 2.0.
+                 hash-chain audit, cold archival, PDF/XLSX
+                 reports, Google Sheets connector, MongoDB
+                 connector, OAuth/SAML SSO, SCIM 2.0.
 ```
 
 ---
@@ -157,7 +175,7 @@ Phase 3+   🔮 ── Enterprise: KMS, WebAuthn, multi-region, SIEM,
 | 1 | Production Backend Foundation | ✅ Implemented | `app.js`, `server.js`, `config/`, error envelope, request id, rate limiter, validators, websocket bootstrap, scheduler, queue + storage + cache + encryption contracts |
 | 1.1 | Connector & Infrastructure Architecture | ✅ Implemented | `connectors/BaseConnector`, registry, fail-closed driver stubs |
 | 1.2 | Platform Management Architecture | ✅ Implemented | All route shells + middleware stubs returning 501 |
-| 2 | Implementation (Sprints 0–9) | 🟡 Partial | Sprints 0–1 complete; Sprints 2–9 planned |
+| 2 | Implementation (Sprints 0–9) | 🟡 Partial | Sprints 0–3 complete (auth, IAM, multi-tenancy); Sprints 4–9 planned |
 | 3 | Enterprise Features | 🔮 Future | KMS, WebAuthn, multi-region, SIEM |
 | 4 | (reserved) | 🔮 Future | |
 | 5 | (reserved) | 🔮 Future | |
@@ -175,12 +193,12 @@ Detailed per-sprint plans live under
 | Sprint | Scope | Status | Tests Added |
 | --- | --- | --- | --- |
 | [Sprint 0](./phases/sprint-0.md) | Shared implementation foundation (utilities, cache, queue, storage, email, plugins, idempotency, CI) | ✅ **Complete** | 73 |
-| [Sprint 1](./phases/sprint-1.md) | Authentication (User, Admin, MFA, refresh) | ✅ **Complete (closing)** | 51 (124 total) |
-| [Sprint 2](./phases/sprint-2.md) | IAM (admins, tenants, users, lifecycle) | 🕓 Planned | — |
-| [Sprint 3](./phases/sprint-3.md) | RBAC (modules, permissions, roles) | 🕓 Planned | — |
-| [Sprint 4](./phases/sprint-4.md) | Master Data (countries, currencies, timezones, plans, languages) | 🕓 Planned | — |
+| [Sprint 1](./phases/sprint-1.md) | Authentication (User, Admin, MFA, refresh) | ✅ **Complete** | 51 (124 total) |
+| [Sprint 2](./phases/sprint-2.md) | IAM (admins, tenants, users, RBAC, audit) | ✅ **Complete** | 94 (218 total) |
+| [Sprint 3](./phases/sprint-3.md) | Multi-Tenancy (tenant lifecycle, onboarding, auth gate, settings, feature flags) | ✅ **Complete** | 23 (232 total) |
+| [Sprint 4](./phases/sprint-4.md) | Connector Platform (CSV + Webhook connectors, sync engine, inbound webhook surface) | 🕓 Planned | — |
 | [Sprint 5](./phases/sprint-5.md) | Platform: settings, feature flags, notifications | 🕓 Planned | — |
-| [Sprint 6](./phases/sprint-6.md) | Connectors: CSV + Webhook | 🕓 Planned | — |
+| [Sprint 6](./phases/sprint-6.md) | Master Data (countries, currencies, timezones, plans, languages) | 🕓 Planned | — |
 | [Sprint 7](./phases/sprint-7.md) | Governance: audit, access, compliance | 🕓 Planned | — |
 | [Sprint 8](./phases/sprint-8.md) | Monitoring + Support | 🕓 Planned | — |
 | [Sprint 9](./phases/sprint-9.md) | Analytics + Embed | 🕓 Planned | — |
@@ -234,11 +252,11 @@ See [`DECISIONS.md` ADR-007](./DECISIONS.md#adr-007-five-shared-mongoose-plugins
 | --- | --- | --- |
 | [`idempotency`](../../src/middleware/idempotency.middleware.js) | ✅ Implemented | Cached outcome replay + in-flight coalescing + fail-closed |
 | [`authenticate`, `optionalAuthenticate`](../../src/middleware/auth.middleware.js) | ✅ Implemented | JWT verify + session liveness check |
-| [`authorize`](../../src/middleware/auth.middleware.js) | 🟡 Partial | Fails closed (403) until RBAC roles land (Sprint 3) |
+| [`authorize`](../../src/middleware/auth.middleware.js) | ✅ Implemented | Dynamic RBAC; default-deny via `permission` middleware (Sprint 2) |
 | [`adminAuth`, `adminAuthOptional`](../../src/middleware/adminAuth.middleware.js) | ✅ Implemented | JWT verify + MFA-aware admin sessions |
 | [`resolveTenant`](../../src/middleware/tenant.middleware.js) | ✅ Implemented | `X-Tenant-Id` header → JWT `tenantId` claim (subdomain parser is Phase 4+) |
 | [`tenantIsolation`](../../src/middleware/tenantIsolation.middleware.js) | ⛔ Fail-closed stub | Sprint 2 |
-| [`rbac`, `permission`, `modulePermission`](../../src/middleware/) | ⛔ Fail-closed stubs | Sprint 3 |
+| [`permission`, `denyIf`](../../src/middleware/permission.middleware.js) | ✅ Implemented | `<module>.<action>` guard, cached 60s, invalidated on write (Sprint 2) |
 | [`audit`, `accessLog`](../../src/middleware/) | ⛔ Fail-closed stubs | Sprint 7 |
 | [`compliance.*`](../../src/middleware/compliance.middleware.js) | ⛔ Fail-closed stub | Sprint 7 |
 
@@ -253,7 +271,7 @@ See [`DECISIONS.md` ADR-007](./DECISIONS.md#adr-007-five-shared-mongoose-plugins
 
 ### CI Guardrails
 
-Wired to `npm run ci:guards`. All green as of Sprint 0 close.
+Wired to `npm run ci:guards`. All green as of Sprint 3 close.
 
 | Guard | What it fails on | Script |
 | --- | --- | --- |
@@ -272,9 +290,15 @@ auth-flow.integration.test.js             12 tests  (both portals, refresh repla
 admin-auth-mfa.integration.test.js         6 tests  (MFA two-step + real TOTP, login with code)
 password-reset-session.integration.test.js 3 tests  (no enumeration, reset revokes sessions)
 session-lifecycle.integration.test.js      7 tests  (deterministic lookup, rotate, revoke-all)
+routes/rbac.integration.test.js            8 tests  (roles/permissions/admins/audit-logs/users gates)
+rbac/services.integration.test.js          7 tests  (permission resolution + RBAC cache)
 middleware/auth.test.js                   11 tests  (authenticate / adminAuth / optional*)
-models/plugins.test.js                     8 tests
+middleware/rbac.middleware.test.js        4 tests  (permission / denyIf enforcement)
 validators/auth.test.js                    9 tests  (Sprint 1 auth/admin validator schemas)
+validators/rbac.test.js                    8 tests  (roles/permissions/admins schemas)
+models/plugins.test.js                     8 tests
+tenants/tenant.integration.test.js          13 tests (Sprint 3 lifecycle + onboarding + settings + flags)
+services/setting.service.test.js          10 tests (coercion, redaction, inheritance, cache, read-only)
 utils/password.test.js                    10 tests  (KDF seam: scrypt + argon2)
 utils/jwt.test.js                         10 tests
 utils/idempotency.test.js                  7 tests
@@ -286,7 +310,7 @@ storage/local.test.js                      6 tests
 services/email.test.js                     3 tests
 health.test.js                             2 tests
 ─────────────────────────────────────────────────────
-TOTAL                                    124 tests
+TOTAL                                    232 tests
 ```
 
 `npm test` runs the suite in scrypt KDF mode (portable); `npm run
@@ -303,19 +327,13 @@ real handler.
 
 | Surface | Where it lives | Owning Sprint |
 | --- | --- | --- |
-| `/tenants/*` | [`src/routes/tenant.routes.js`](../../src/routes/tenant.routes.js) | [Sprint 2](./phases/sprint-2.md) |
-| `/admin/admins/*` | [`src/routes/admin.routes.js`](../../src/routes/admin.routes.js) | [Sprint 2](./phases/sprint-2.md) |
-| `/tenants/:id/users/*` | [`src/routes/user.routes.js`](../../src/routes/user.routes.js) | [Sprint 2](./phases/sprint-2.md) |
-| `/roles/*` | [`src/routes/role.routes.js`](../../src/routes/role.routes.js) | [Sprint 3](./phases/sprint-3.md) |
-| `/permissions/*` | [`src/routes/permission.routes.js`](../../src/routes/permission.routes.js) | [Sprint 3](./phases/sprint-3.md) |
 | `/master-data/*` | [`src/routes/master-data.routes.js`](../../src/routes/master-data.routes.js) | [Sprint 4](./phases/sprint-4.md) |
 | `/settings/*` | [`src/routes/settings.routes.js`](../../src/routes/settings.routes.js) | [Sprint 5](./phases/sprint-5.md) |
 | `/feature-flags/*` | [`src/routes/feature-flag.routes.js`](../../src/routes/feature-flag.routes.js) | [Sprint 5](./phases/sprint-5.md) |
 | `/notifications/*` | [`src/routes/notification.routes.js`](../../src/routes/notification.routes.js) | [Sprint 5](./phases/sprint-5.md) |
 | `/email-templates/*` | [`src/routes/email-template.routes.js`](../../src/routes/email-template.routes.js) | [Sprint 5](./phases/sprint-5.md) |
-| `/connectors/*` | [`src/routes/connector.routes.js`](../../src/routes/connector.routes.js) | [Sprint 6](./phases/sprint-6.md) |
-| `/webhooks/*` | [`src/routes/webhook.routes.js`](../../src/routes/webhook.routes.js) | [Sprint 6](./phases/sprint-6.md) |
-| `/audit-logs/*` | [`src/routes/audit-log.routes.js`](../../src/routes/audit-log.routes.js) | [Sprint 7](./phases/sprint-7.md) |
+| `/connectors/*` | [`src/routes/connector.routes.js`](../../src/routes/connector.routes.js) | [Sprint 4](./phases/sprint-4.md) |
+| `/webhooks/*` | [`src/routes/webhook.routes.js`](../../src/routes/webhook.routes.js) | [Sprint 4](./phases/sprint-4.md) |
 | `/access-logs/*` | [`src/routes/access-log.routes.js`](../../src/routes/access-log.routes.js) | [Sprint 7](./phases/sprint-7.md) |
 | `/compliance/*` | [`src/routes/compliance.routes.js`](../../src/routes/compliance.routes.js) | [Sprint 7](./phases/sprint-7.md) |
 | `/monitoring/*` | [`src/routes/monitoring.routes.js`](../../src/routes/monitoring.routes.js) | [Sprint 8](./phases/sprint-8.md) |
@@ -346,36 +364,43 @@ features land. See [DECISIONS.md](./DECISIONS.md) "Postponed Decisions".
 
 ## Next Milestone
 
-**Sprint 2 — IAM (admins, tenants, users, lifecycle).**
+**Sprint 4 — Connector Platform (CSV + Webhook).**
 
-Concretely: by the end of Sprint 2 a developer can, against a real
+Concretely: by the end of Sprint 4 a developer can, against a real
 `mongodb-memory-server` database:
 
-1. `POST /tenants` — create a tenant (platform admin).
-2. `POST /admin/admins` — invite a platform admin.
-3. `POST /tenants/:id/users` — invite a tenant user.
-4. `GET /tenants/:id/users` — list tenant users.
-5. Deactivate / reactivate a user or admin (lifecycle).
+1. `POST /connectors` — create a tenant-scoped CSV connector (config
+   encrypted at rest).
+2. `POST /connectors/:id/upload` — upload a CSV, which enqueues a sync.
+3. Consumer ingests the file → rows land in MongoDB (idempotent on
+   replay).
+4. `POST /webhooks/:webhookToken` — inbound webhook with a valid
+   HMAC-SHA256 signature → 200, ingested; invalid signature → 401.
 
-The same auth middleware from Sprint 1 guards every route; `resolveTenant`
-already scopes reads per tenant.
+The same auth + RBAC middleware from Sprints 1–3 guards every admin
+surface; `resolveTenant` scopes connectors per tenant; `X-Idempotency-Key`
+protects every mutation.
 
-The Definition of Done for Sprint 2 lives in
-[`phases/sprint-2.md`](./phases/sprint-2.md).
+The Definition of Done for Sprint 4 lives in
+[`phases/sprint-4.md`](./phases/sprint-4.md).
 
-### Sprint 1 retro notes (closed)
+### Sprint 3 retro notes (closed)
 
-- **Went well:** KDF seam (`PASSWORD_KDF=argon2|scrypt`) unblocked the
-  Argon2 native-binary crash on some machines; deterministic refresh-token
-  hashing (salt = SHA-256(token)) made lookup-by-hash reliable; end-to-end
-  integration tests caught real contract bugs (cookie parsing, replay family
-  revocation, lockout persistence).
-- **Watch out:** the `argon2` native binary crashes some Windows setups
-  (`exitCode 3221225477`) — always run the full suite under `npm test`
-  (scrypt) and the real KDF via `npm run test:argon2`.
-- **Deferred to next sprints:** RBAC roles for `authorize(...)` (Sprint 3),
-  CI coverage tooling for the 90 % DoD gate, backup codes / WebAuthn /
-  SSO (Phase 3).
+- **Went well:** the tenant lifecycle held up under integration testing
+  (13 tests); onboarding idempotency, settings inheritance + secret
+  redaction, and the login/refresh tenant-status gate all landed as
+  designed. The negative-cache incident (`getOrSet` memoising `null`)
+  was caught by the setting-service tests and fixed in
+  `src/cache/memory.js`.
+- **Watch out:** sprint-planning docs and code had drifted — Sprint 3's
+  RBAC scope had already shipped inside Sprint 2, and the `sprint-2.md`
+  / `phase-2.md` files were never refreshed at the Sprint 2 close. The
+  sprint doc discipline (update the sprint file in the closing PR) must
+  be honoured going forward.
+- **Deferred to later sprints:** Master Data (originally Sprint 4)
+  moved to [Sprint 6](./phases/sprint-6.md) when the Connector Platform
+  was prioritised into Sprint 4; Google Sheets / MongoDB connectors and
+  outbound webhook notifications remain Phase 3.
 
 ---
 
@@ -466,7 +491,9 @@ single document updated as part of every sprint closure PR.
 
 ## Last Updated
 
-- **Sprint:** Sprint 1 close
+- **Sprint:** Sprint 3 close
 - **Phase:** Phase 2 — Implementation
+- **Date:** 2026-08-08
+- **Author:** Engineering (Sprint 3 close, Sprint 4 re-scope)
 - **Date:** 2026-08-06
 - **Author:** Engineering (Sprint 1)

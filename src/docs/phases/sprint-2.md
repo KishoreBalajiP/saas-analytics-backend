@@ -31,9 +31,17 @@
 
 ## Current Status
 
-> **Status:** `Planned`.
-> **Sprint:** Sprint 2.
+> **Status:** `✅ Complete`.
+> **Sprint:** Sprint 2 — IAM + RBAC.
 > **Owner:** Engineering team.
+> **Tests:** 218 pass (`npm run ci:guards` green 5/5).
+> **Real source files:** `src/models/{Module,Permission,Role,RolePermission,UserRole,AdminRole}.js`,
+> `src/repositories/{admin,role,permission,user,auditLog}.repository.js`,
+> `src/services/{permission,role,admin,auditLog,user,rbac.cache}.service.js`,
+> `src/middleware/{permission,rbac,modulePermission,tenantIsolation,audit}.js`,
+> `src/routes/{role,permission,admin,user,tenant,audit-log}.routes.js`,
+> `src/validators/{role,permission,admin,user}.validator.js`. See
+> [`STATUS.md`](../STATUS.md) for the canonical summary.
 
 ## Business Perspective
 
@@ -203,8 +211,8 @@ Sprint 2 the platform is organisational.
 
 ## Last Updated
 
-- **Sprint:** Sprint 0 close
+- **Sprint:** Sprint 2 close (✅ Complete)
 - **Phase:** Phase 2 — Implementation
-- **Sprint planned:** Sprint 2
-- **Date:** 2026-08-05
+- **Date:** 2026-08-07
+- **Author:** Engineering (Sprint 2)
 - **Author:** Documentation (Sprint 0)
