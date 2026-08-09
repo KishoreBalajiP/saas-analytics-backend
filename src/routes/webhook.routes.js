@@ -1,24 +1,27 @@
 /**
- * Webhook routes (shell).
+ * /api/v1/webhooks routes (Sprint 4 - implemented).
  *
  * WHY IT EXISTS
- *   Reserve the `/webhooks` surface for the future webhook feature (inbound
- *   provider events like Google Sheets / Stripe, and outbound notifications).
+ *   Public inbound surface for provider webhooks. There is NO tenant auth
+ *   here - external systems cannot hold JWTs. Trust is established purely by
+ *   the HMAC-SHA256 signature the service verifies against the connector's
+ *   decrypted `signingSecret` (fail closed: 401 on any mismatch).
  *
- * RESPONSIBILITY
- *   None yet - router is intentionally empty (404 until implemented).
+ * ENDPOINTS
+ *   - POST /:webhookToken    - receive + verify + enqueue a provider event
  *
- * HOW TO EXTEND
- *   Build the feature under `src/modules/alerts/` or a dedicated webhook
- *   module. Inbound webhooks need signature verification middleware (never
- *   trust them without validating the provider signature) and often a raw
- *   body parser - plan for `express.raw()` here rather than json().
+ * SECURITY NOTES
+ *   - The raw body parser is mounted in `app.js` BEFORE `express.json`, so
+ *     `req.body` is the exact Buffer the signature was computed over.
+ *   - Responses are 202 (accepted for async processing) or 401/422.
+ *   - Never log webhook payloads or signatures.
  */
 
 import { Router } from 'express';
+import webhookController from '../controllers/webhook.controller.js';
 
 const router = Router();
 
-// Webhook endpoints will be registered here.
+router.post('/:webhookToken', webhookController.receive);
 
 export default router;

@@ -62,6 +62,15 @@ function toApiError(err) {
     return ApiError.badRequest('Unsupported content encoding');
   }
 
+  // Connector errors (`ConnectorError` and subclasses from
+  // `modules/connectors/shared/errors.js`) carry their own status + code.
+  if (err?.isOperational === true && Number.isInteger(err?.statusCode)) {
+    return new ApiError(err.statusCode, err.message, {
+      code: err.code ?? 'CONNECTOR_ERROR',
+      errors: Array.isArray(err.details) ? err.details : err.details ?? undefined,
+    });
+  }
+
   // Unknown error - do not leak internal details to clients.
   return ApiError.internal();
 }

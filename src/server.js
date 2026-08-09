@@ -28,6 +28,7 @@ import {
 } from './config/database.js';
 import { initSocket, getIO } from './websocket/index.js';
 import { initScheduler, stopScheduler } from './jobs/scheduler.js';
+import { registerConnectorConsumer } from './queues/connector.queue.js';
 
 const server = http.createServer(app);
 const io = initSocket(server);
@@ -47,6 +48,14 @@ function start() {
     connectDatabase().then((dbConnected) => {
       if (!dbConnected) {
         logger.warn('Running in DEGRADED mode: database is unavailable');
+      }
+      // Start the connector sync worker (in-memory queue in dev; BullMQ on
+      // Redis). Registered after DB connect so the worker can read records.
+      try {
+        registerConnectorConsumer();
+        logger.info('Connector sync consumer registered');
+      } catch (err) {
+        logger.error({ err: { message: err.message } }, 'Failed to register connector consumer');
       }
       initScheduler();
     });

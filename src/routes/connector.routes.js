@@ -1,34 +1,52 @@
 /**
- * Connector routes (shell).
+ * /api/v1/connectors routes (Sprint 4 - implemented).
  *
  * WHY IT EXISTS
- *   Reserve the `/connectors` surface for the future connectors feature. A
- *   "connector" is the generic abstraction for any external data source the
- *   platform can ingest (CSV, Google Sheets, Webhooks, MongoDB, PostgreSQL,
- *   MySQL, REST APIs, GraphQL, Snowflake, BigQuery). Connector implementations
- *   live under `src/connectors/` and `src/modules/connectors/`; this file only
- *   owns the HTTP surface.
+ *   HTTP surface for the connector feature: tenant-scoped CRUD, config
+ *   validation, registered-type catalogue, ingested-row listing and CSV
+ *   preview/sync (file upload). Backed by `services/connector.service.js`.
  *
- * RESPONSIBILITY
- *   None yet - router is intentionally empty (404 until implemented).
+ * ENDPOINTS
+ *   - GET    /types                    - registered connector types/capabilities
+ *   - GET    /                         - list connectors (paginated, filterable)
+ *   - POST   /                         - create (config validated + encrypted)
+ *   - GET    /:connectorId             - detail
+ *   - PATCH  /:connectorId             - update (type immutable)
+ *   - DELETE /:connectorId             - soft delete
+ *   - POST   /:connectorId/validate    - validate stored config (no ingest)
+ *   - GET    /:connectorId/rows        - ingested rows (paginated)
+ *   - POST   /:connectorId/preview     - CSV header/sample preview (multipart `file`)
+ *   - POST   /:connectorId/sync        - enqueue CSV sync (multipart `file`)
  *
- * HOW TO EXTEND
- *   Build the feature under `src/modules/connectors/` and wire endpoints:
- *   ```
- *   router.use(authenticate, resolveTenant);
- *   router.post('/', validateRequest(createConnectorSchema), connectorController.create);
- *   router.post('/:connectorId/validate', connectorController.validate);
- *   router.post('/:connectorId/preview', connectorController.preview);
- *   router.post('/:connectorId/sync', connectorController.triggerSync);
- *   router.delete('/:connectorId', connectorController.delete);
- *   ```
- *   File uploads (multer, for CSV) should live under the module too.
+ * MIDDLEWARE ORDER
+ *   authenticate -> resolveTenant -> permission('connectors', <action>) -> handler
+ *
+ * SECURITY NOTES
+ *   - `config` is encrypted at rest; only a redacted summary is returned.
+ *   - `/types` is registered before `/:connectorId` so `types` is never
+ *     treated as an id.
  */
 
 import { Router } from 'express';
+import { authenticate } from '../middleware/auth.middleware.js';
+import { resolveTenant } from '../middleware/tenant.middleware.js';
+import { permission } from '../middleware/permission.middleware.js';
+import { upload } from '../middleware/upload.middleware.js';
+import connectorController from '../controllers/connector.controller.js';
 
 const router = Router();
 
-// Connector endpoints will be registered here.
+router.use(authenticate, resolveTenant);
+
+router.get('/types', permission('connectors', 'view'), connectorController.listTypes);
+router.get('/', permission('connectors', 'view'), connectorController.list);
+router.post('/', permission('connectors', 'create'), connectorController.create);
+router.get('/:connectorId', permission('connectors', 'view'), connectorController.getById);
+router.patch('/:connectorId', permission('connectors', 'update'), connectorController.update);
+router.delete('/:connectorId', permission('connectors', 'delete'), connectorController.remove);
+router.post('/:connectorId/validate', permission('connectors', 'view'), connectorController.validate);
+router.get('/:connectorId/rows', permission('connectors', 'view'), connectorController.listRows);
+router.post('/:connectorId/preview', permission('connectors', 'preview'), upload.single('file'), connectorController.previewCsv);
+router.post('/:connectorId/sync', permission('connectors', 'sync'), upload.single('file'), connectorController.syncCsv);
 
 export default router;

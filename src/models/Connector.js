@@ -42,8 +42,11 @@ const connectorSchema = new mongoose.Schema(
     status: { type: String, enum: [...CONNECTOR_STATUSES], default: 'active', index: true },
     // Encrypted envelope of the connector config (credentials, endpoints...).
     config: { type: String, default: null },
-    // Public, URL-safe token addressing the inbound webhook route (webhook type).
-    webhookToken: { type: String, default: null, unique: true, sparse: true, index: true },
+    // Public, URL-safe token addressing the inbound webhook route (webhook
+    // type). `default: undefined` (rather than null) keeps the field ABSENT
+    // for non-webhook connectors so the sparse unique index never indexes a
+    // null and CSV connectors cannot collide on `webhookToken: null`.
+    webhookToken: { type: String, default: undefined, unique: true, sparse: true, index: true },
     // Plain (non-secret) field mapping { sourceField: 'source', targetField: 'target' } or array.
     fieldMapping: { type: mongoose.Schema.Types.Mixed, default: {} },
     // Last ingestion bookkeeping.

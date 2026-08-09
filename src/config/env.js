@@ -217,6 +217,22 @@ const config = Object.freeze({
     timezone: str('SCHEDULER_TIMEZONE', 'UTC'),
   },
 
+  connectors: {
+    // Max CSV upload size in bytes (multer memory storage caps this).
+    csvMaxUploadBytes: num('CONNECTOR_CSV_MAX_UPLOAD_MB', 10) * 1024 * 1024,
+    // Connector sync queue sizing.
+    queue: {
+      concurrency: num('CONNECTOR_QUEUE_CONCURRENCY', 5),
+      attempts: num('CONNECTOR_QUEUE_ATTEMPTS', 5),
+      backoffMs: num('CONNECTOR_QUEUE_BACKOFF_MS', 2000),
+    },
+    // Default webhook signature tolerance (seconds) when a connector does
+    // not set `toleranceSeconds` in its own config.
+    webhookToleranceSeconds: num('WEBHOOK_TOLERANCE_SECONDS', 300),
+    // Encryption context scoping secrets per tenant + purpose.
+    encryptionPurpose: str('CONNECTOR_ENCRYPTION_PURPOSE', 'connector'),
+  },
+
   jobs: {
     sheetSync: {
       cron: str('JOB_SHEET_SYNC_CRON', '0 */6 * * *'),

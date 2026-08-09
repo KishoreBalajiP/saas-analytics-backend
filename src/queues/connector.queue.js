@@ -1,31 +1,34 @@
 /**
- * Connector sync queue contract.
+ * Connector sync queue contract (Sprint 4 - implemented).
  *
  * WHY IT EXISTS
- *   Connector ingestion (preview, ingest, full sync) can be large and slow;
- *   it must run through a queue, not inline in an HTTP request. This module
- *   documents that queue's contract and registers its consumer.
- *
- * RESPONSIBILITY
- *   - Define the queue name and the exact message shape.
- *   - Define sane defaults (retries, backoff, concurrency).
- *   - Provide the consumer registration point (fail-closed stub for now).
+ *   Connector ingestion (CSV stream-parse, webhook record batches) must run
+ *   through a queue, not inline in an HTTP request. This module owns the
+ *   queue handle and its consumer: the consumer resolves the connector via
+ *   `ConnectorRegistry`, runs the shared sync engine and persists
+ *   `ConnectorRow`s idempotently.
  *
  * MESSAGE SHAPE (documented, not enforced):
  *   {
  *     connectorId,    // persisted connector record id
  *     tenantId,       // owning tenant (scoping + audit)
  *     jobType,        // 'preview' | 'ingest' | 'sync'
- *     payload,        // connector-specific options (fieldMapping, since, ...)
+ *     payload,        // CSV: { buffer, filename } (base64) |
+ *                     // webhook: { records: Array }
  *     idempotencyKey, // dedupe on retry - derived from connectorId+jobType+cursor
  *   }
+ *
+ * HOW TO EXTEND
+ *   Future providers keep the same contract; only `payload` differs. The
+ *   worker handler lives in `services/connector.service.js#processSyncMessage`
+ *   and is wired here to avoid feature code touching the queue internals.
  */
 
 import { QUEUE_NAMES } from './constants.js';
 import { createQueue } from './index.js';
 
-const QUEUE_NAME = QUEUE_NAMES.CONNECTOR_SYNC;
-const DEFAULT_OPTIONS = Object.freeze({
+export const QUEUE_NAME = QUEUE_NAMES.CONNECTOR_SYNC;
+export const DEFAULT_OPTIONS = Object.freeze({
   concurrency: 5,
   attempts: 5,
   backoffMs: 2000,
@@ -45,15 +48,45 @@ export function getQueue() {
 }
 
 /**
- * Register the consumer that will process connector sync messages. The
- * Sprint 0 implementation is a fail-closed placeholder; Sprint 6 wires the
- * real handler that resolves the connector via `ConnectorRegistry`.
- *
- * @param {Function} [_handler] - future: async ({ io }, message) => result
- * @throws {Error} always in Sprint 0.
+ * Feature-code facade for enqueueing connector sync work.
+ * Imported by `services/connector.service.js`.
  */
-export async function registerConsumer(_handler) {
-  throw new Error(`queue "${QUEUE_NAME}".registerConsumer is not implemented yet (Phase 2 - Sprint 6)`);
+export const connectorQueue = {
+  get name() {
+    return QUEUE_NAME;
+  },
+  async enqueue(data, options) {
+    return getQueue().enqueue(data, options);
+  },
+  async schedule(data, delayMs, options) {
+    return getQueue().schedule(data, delayMs, options);
+  },
+  getQueue,
+};
+
+/**
+ * Register the connector sync consumer. The default handler loads the
+ * service lazily (avoids a module-load cycle between service -> queue ->
+ * service) and runs the provider pipeline.
+ *
+ * @param {Function} [handler] - override for tests: async (job) => result.
+ * @returns {Function} the registered handler.
+ */
+export function registerConsumer(handler) {
+  const actual =
+    typeof handler === 'function'
+      ? handler
+      : async (job) => {
+          const { processSyncMessage } = await import('../services/connector.service.js');
+          return processSyncMessage(job);
+        };
+
+  const queue = getQueue();
+  if (typeof queue.consume !== 'function') {
+    throw new Error(`Queue "${QUEUE_NAME}" has no consumer surface`);
+  }
+  queue.consume(actual);
+  return actual;
 }
 
 export default Object.freeze({
@@ -62,5 +95,9 @@ export default Object.freeze({
     'Runs connector lifecycle jobs (preview, ingest, full sync) off the HTTP hot path.',
   defaultOptions: DEFAULT_OPTIONS,
   getQueue,
+  connectorQueue,
   registerConsumer,
 });
+
+/** Alias used by `server.js` boot wiring. */
+export const registerConnectorConsumer = registerConsumer;

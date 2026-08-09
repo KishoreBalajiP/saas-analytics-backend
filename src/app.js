@@ -60,6 +60,12 @@ app.use(cors(corsConfig));
 
 // 4. Cookie + body parsing. Body size is bounded via env (`REQUEST_BODY_LIMIT`).
 app.use(cookieParser());
+// Inbound webhooks are verified with an HMAC over the RAW request bytes, so
+// the webhook surface is buffered untouched BEFORE the JSON parser. This
+// middleware runs first for `/api/v1/webhooks/*`, sets `req.body` to a
+// Buffer and marks the request as parsed, which makes the `express.json`
+// below skip it for webhook calls (exact bytes preserved for signing).
+app.use(`${env.app.apiPrefix}/webhooks`, express.raw({ type: '*/*' }));
 app.use(express.json({ limit: env.app.bodyLimit, strict: true }));
 app.use(express.urlencoded({ extended: true, limit: env.app.bodyLimit }));
 

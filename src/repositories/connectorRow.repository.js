@@ -53,15 +53,18 @@ export const upsertRows = async (connectorId, tenantId, rows) => {
   const ops = rows.map((row) => ({
     updateOne: {
       filter: { connectorId: cid, tenantId, sourceRowId: row.sourceRowId },
+      // `data` lives in `$set` only: MongoDB rejects writing the same path
+      // from both `$set` and `$setOnInsert`, and `data` is refreshed on
+      // every match anyway.
       update: {
-        $setOnInsert: { data: row.data, tenantId },
         $set: { data: row.data, ingestedAt: new Date() },
+        $setOnInsert: { tenantId },
       },
       upsert: true,
     },
   }));
   const res = await ConnectorRow.bulkWrite(ops, { ordered: false });
-  return { upserted: res.upsertedCount, matched: res.nMatched };
+  return { upserted: res.upsertedCount, matched: res.matchedCount };
 };
 
 /** Delete all rows for a connector (used on hard connector removal). */
