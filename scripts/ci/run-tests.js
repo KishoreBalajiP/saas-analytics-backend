@@ -37,7 +37,11 @@ const testArgs =
   kdfIndex === -1 ? args : args.filter((_, i) => i !== kdfIndex && i !== kdfIndex + 1);
 const child = spawn(
   process.execPath,
-  ['--test', ...(testArgs.length > 0 ? testArgs : ['tests/'])],
+  // No explicit path: Node's test runner auto-discovers `*.test.js` files
+  // recursively from the project root. Passing a directory (e.g. `tests/`)
+  // is rejected by Node >= 22 (`Cannot find module '<dir>'`), so when no
+  // explicit test files are requested we let the runner discover them.
+  ['--test', ...testArgs],
   { stdio: 'inherit', env: process.env, cwd: process.cwd() },
 );
 

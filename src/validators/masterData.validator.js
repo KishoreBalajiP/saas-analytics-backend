@@ -1,26 +1,54 @@
 /**
- * Master Data Validators (architecture placeholder).
+ * Master Data Validators (Sprint 5 - implemented).
  *
  * PURPOSE
- *   Declarative schemas for the `/master-data/:catalogue` surface.
- *   `catalogue` is a path param that selects the underlying collection.
+ *   Declarative schemas for the `/api/v1/master-data` surface. `catalogue`
+ *   selects the partition; the same catalogue string is constrained here so
+ *   path traversal / stray keys never reach the repository.
  *
- * RESPONSIBILITY (planned, NO validation logic yet)
- *   - createItemSchema    { values: json, locale? }
- *   - updateItemSchema    { patch: json, version: number }
+ * RESPONSIBILITY
+ *   - listSchema     GET  /:catalogue                        (page, limit, locale, search)
+ *   - createSchema   POST /:catalogue                        (body + catalogue param)
+ *   - updateSchema   PATCH /:catalogue/:id                   (id param; body is free-form patch)
  *
- * PHASE 1.2 STATUS
- *   Empty schemas; engine accepts any payload.
+ * CODING GUIDELINES
+ *   - `catalogue` MUST match `/^[a-z0-9_]+$/` to keep it index-safe.
+ *   - `id` MUST be a 24-hex ObjectId; the validator rejects garbage early so
+ *     the repository can assume a valid id.
  */
 
-/** @type {import('../index.js').Schema} */
-export const createItemSchema = { body: {}, params: {}, query: {} };
+const CATALOGUE_RE = /^[a-z0-9_]+$/;
 
-/** @type {import('../index.js').Schema} */
-export const updateItemSchema = { body: {}, params: {}, query: {} };
+export const listSchema = {
+  params: { catalogue: { type: 'string', required: true, pattern: CATALOGUE_RE } },
+  query: {
+    page: { type: 'integer', min: 1 },
+    limit: { type: 'integer', min: 1, max: 100 },
+    locale: { type: 'string' },
+    search: { type: 'string' },
+  },
+};
+
+export const createSchema = {
+  params: { catalogue: { type: 'string', required: true, pattern: CATALOGUE_RE } },
+  body: {
+    code: { type: 'string', required: true, maxLength: 60 },
+    name: { type: 'string', required: true, maxLength: 120 },
+    locale: { type: 'string' },
+    data: { type: 'object' },
+    isSystem: { type: 'boolean' },
+  },
+};
+
+export const updateSchema = {
+  params: {
+    catalogue: { type: 'string', required: true, pattern: CATALOGUE_RE },
+    id: { type: 'objectId', required: true },
+  },
+};
 
 export default {
-  createItemSchema,
-  updateItemSchema,
-  _meta: { phase: '1.2 - placeholder schemas' },
+  listSchema,
+  createSchema,
+  updateSchema,
 };

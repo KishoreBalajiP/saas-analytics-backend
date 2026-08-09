@@ -1,49 +1,47 @@
 /**
- * /api/v1/master-data routes - Global catalogue (admin write/read) and a
- * separate cached read surface for the Tenant Portal / Mobile App / Embed.
+ * /api/v1/master-data routes (Sprint 5 - implemented).
  *
  * WHY IT EXISTS
- *   Master data (countries, currencies, plans, themes, ...) is the lookup
- *   catalogue every other module depends on. Centralising CRUD here means
- *   the catalogue has exactly one write surface and one cached read
- *   surface. Backed by `platform/master-data/`.
+ *   Central catalogue for the reference data every module depends on
+ *   (countries, currencies, plans, themes, ...). One write surface, one cached
+ *   read surface.
  *
- * RESPONSIBILITY (planned, NOT implemented)
- *   - GET    /:catalogue             - list (admin or tenant-cached read)
- *   - GET    /:catalogue/:id         - detail
- *   - POST   /:catalogue             - create
- *   - PATCH  /:catalogue/:id         - update (optimistic concurrency)
- *   - DELETE /:catalogue/:id         - delete (refuses if system-bound)
- *   - POST   /:catalogue/import      - CSV import (via `connectors/csv/`)
- *   - POST   /:catalogue/export      - export to storage
+ * ENDPOINTS
+ *   - GET    /:catalogue          list (public, cached)
+ *   - GET    /:catalogue/:id      detail (public, cached)
+ *   - POST   /:catalogue          create (admin only)
+ *   - PATCH  /:catalogue/:id      update (admin only)
+ *   - DELETE /:catalogue/:id      delete (admin only, refuses system-bound 409)
+ *   - POST   /:catalogue/import   CSV import (admin only, 501)
+ *   - POST   /:catalogue/export   export (admin only, 501)
  *
- * HOW TO EXTEND
- *   - Admin endpoints require modulePermission('master_data', <action>).
- *   - Tenant-visible endpoints are read-only and hit the cache first.
- *   - Optimistic concurrency via `If-Match` on updates (Phase 2).
+ * MIDDLEWARE ORDER
+ *   reads    : optionalAuthenticate  -> handler
+ *   writes+  : adminAuth            -> handler
+ *
+ * SECURITY
+ *   - Reads are intentionally public (reference data); writes require a
+ *     platform admin. `validate()` guards the `catalogue` param so path
+ *     traversal / stray keys never reach the repository.
+ *   - `/:catalogue/import` and `/:catalogue/export` are POST routes; they do
+ *     not collide with `/:catalogue/:id` because of the different HTTP verb.
  */
 
 import { Router } from 'express';
-import asyncHandler from '../utils/asyncHandler.js';
+import { validate } from '../validators/index.js';
+import { optionalAuthenticate } from '../middleware/auth.middleware.js';
+import { adminAuth } from '../middleware/adminAuth.middleware.js';
+import masterDataValidator from '../validators/masterData.validator.js';
+import masterDataController from '../controllers/masterData.controller.js';
 
 const router = Router();
 
-const notImplemented = (op) =>
-  asyncHandler(async (_req, res) => {
-    res.status(501).json({
-      success: false,
-      statusCode: 501,
-      message: `${op} is not implemented yet (Phase 1.2 architecture placeholder)`,
-      hint: 'See src/modules/platform/master-data/README.md',
-    });
-  });
-
-router.get('/:catalogue', notImplemented('GET /master-data/:catalogue'));
-router.get('/:catalogue/:id', notImplemented('GET /master-data/:catalogue/:id'));
-router.post('/:catalogue', notImplemented('POST /master-data/:catalogue'));
-router.patch('/:catalogue/:id', notImplemented('PATCH /master-data/:catalogue/:id'));
-router.delete('/:catalogue/:id', notImplemented('DELETE /master-data/:catalogue/:id'));
-router.post('/:catalogue/import', notImplemented('POST /master-data/:catalogue/import'));
-router.post('/:catalogue/export', notImplemented('POST /master-data/:catalogue/export'));
+router.get('/:catalogue', optionalAuthenticate, validate(masterDataValidator.listSchema), masterDataController.listCatalogue);
+router.get('/:catalogue/:id', optionalAuthenticate, masterDataController.getItem);
+router.post('/:catalogue', adminAuth, validate(masterDataValidator.createSchema), masterDataController.createItem);
+router.patch('/:catalogue/:id', adminAuth, validate(masterDataValidator.updateSchema), masterDataController.updateItem);
+router.delete('/:catalogue/:id', adminAuth, masterDataController.deleteItem);
+router.post('/:catalogue/import', adminAuth, masterDataController.importCsv);
+router.post('/:catalogue/export', adminAuth, masterDataController.exportCatalogue);
 
 export default router;

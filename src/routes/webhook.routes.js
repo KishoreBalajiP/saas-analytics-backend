@@ -22,6 +22,13 @@ import webhookController from '../controllers/webhook.controller.js';
 
 const router = Router();
 
-router.post('/:webhookToken', webhookController.receive);
+// Public inbound surface — authenticated by HMAC-SHA256 signature against the
+// connector's decrypted `signingSecret`, NOT by a tenant JWT. External
+// providers cannot hold tokens, so this route is intentionally unauthenticated
+// and is exempt from the `ci:routes-exempt` auth check (see controller).
+router.post(
+  '/:webhookToken', // ci:routes-exempt: public inbound webhook, HMAC-signed by connector secret
+  webhookController.receive,
+);
 
 export default router;

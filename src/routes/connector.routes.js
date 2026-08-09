@@ -36,17 +36,20 @@ import connectorController from '../controllers/connector.controller.js';
 
 const router = Router();
 
-router.use(authenticate, resolveTenant);
-
-router.get('/types', permission('connectors', 'view'), connectorController.listTypes);
-router.get('/', permission('connectors', 'view'), connectorController.list);
-router.post('/', permission('connectors', 'create'), connectorController.create);
-router.get('/:connectorId', permission('connectors', 'view'), connectorController.getById);
-router.patch('/:connectorId', permission('connectors', 'update'), connectorController.update);
-router.delete('/:connectorId', permission('connectors', 'delete'), connectorController.remove);
-router.post('/:connectorId/validate', permission('connectors', 'view'), connectorController.validate);
-router.get('/:connectorId/rows', permission('connectors', 'view'), connectorController.listRows);
-router.post('/:connectorId/preview', permission('connectors', 'preview'), upload.single('file'), connectorController.previewCsv);
-router.post('/:connectorId/sync', permission('connectors', 'sync'), upload.single('file'), connectorController.syncCsv);
+// Auth + tenant resolution are inlined per route (in this exact order) so that:
+//   (a) the `ci:check-routes` guard can see an auth guard on every endpoint, and
+//   (b) middleware order is preserved: `authenticate` attaches `req.user`,
+//       `resolveTenant` then reads `req.user.tenantId` (JWT claim) as a fallback
+//       to the `X-Tenant-Id` header.
+router.get('/types', authenticate, resolveTenant, permission('connectors', 'view'), connectorController.listTypes);
+router.get('/', authenticate, resolveTenant, permission('connectors', 'view'), connectorController.list);
+router.post('/', authenticate, resolveTenant, permission('connectors', 'create'), connectorController.create);
+router.get('/:connectorId', authenticate, resolveTenant, permission('connectors', 'view'), connectorController.getById);
+router.patch('/:connectorId', authenticate, resolveTenant, permission('connectors', 'update'), connectorController.update);
+router.delete('/:connectorId', authenticate, resolveTenant, permission('connectors', 'delete'), connectorController.remove);
+router.post('/:connectorId/validate', authenticate, resolveTenant, permission('connectors', 'view'), connectorController.validate);
+router.get('/:connectorId/rows', authenticate, resolveTenant, permission('connectors', 'view'), connectorController.listRows);
+router.post('/:connectorId/preview', authenticate, resolveTenant, permission('connectors', 'preview'), upload.single('file'), connectorController.previewCsv);
+router.post('/:connectorId/sync', authenticate, resolveTenant, permission('connectors', 'sync'), upload.single('file'), connectorController.syncCsv);
 
 export default router;

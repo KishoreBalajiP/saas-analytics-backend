@@ -58,6 +58,9 @@ import webhookRoutes from './webhook.routes.js';
 // Phase 1.1 - retained
 import connectorRoutes from './connector.routes.js';
 
+// Phase 5 - analytics
+import analyticsRoutes from './analytics.routes.js';
+
 // Phase 1.2 - platform management surface
 import adminAuthRoutes from './admin-auth.routes.js';
 import adminRoutes from './admin.routes.js';
@@ -84,6 +87,7 @@ router.use('/health', healthRoutes);
 router.use('/auth', authRoutes);
 router.use('/users', userRoutes);
 router.use('/connectors', connectorRoutes);
+router.use('/analytics', analyticsRoutes);
 router.use('/embed', embedRoutes);
 router.use('/webhooks', webhookRoutes);
 
