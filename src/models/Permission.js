@@ -37,7 +37,7 @@ export const MODEL_NAME = 'Permission';
 /** Platform-defined action catalogue (uniform across every module). */
 export const CANONICAL_ACTIONS = Object.freeze([
   'view', 'create', 'update', 'delete', 'export',
-  'approve', 'suspend', 'restore', 'assign', 'configure',
+  'approve', 'suspend', 'restore', 'assign', 'configure', 'evaluate',
 ]);
 
 const permissionSchema = new mongoose.Schema(

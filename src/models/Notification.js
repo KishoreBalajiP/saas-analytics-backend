@@ -1,39 +1,53 @@
 /**
- * Notification (architecture placeholder - NO schema).
+ * Notification (Sprint 7 - implemented).
  *
  * PURPOSE
- *   In-app / push / email / webhook notification record. Dispatched by
- *   `services/notification.service.js`.
+ *   The in-app notification inbox plus an audit record of dispatched emails.
+ *   Alert delivery writes one document per recipient/channel so the Tenant
+ *   Portal can render an inbox, unread badges, and mark-as-read state.
  *
- * PLANNED FIELDS
- *   _id, tenantId,
- *   actorId (recipient), actorType: 'user' | 'admin',
- *   channel: 'in_app' | 'email' | 'push' | 'webhook',
- *   templateKey,                            // ref: master_data.notification_templates
- *   data: json,                             // template variables
- *   priority: 'low' | 'normal' | 'high',
- *   status: 'queued' | 'delivered' | 'failed' | 'read',
- *   readAt?, deliveredAt?, failedReason?,
- *   groupKey?,                              // collapse duplicates
- *   createdAt
- *
- * PLANNED INDEXES
- *   - { tenantId: 1, actorId: 1, status: 1, createdAt: -1 }
- *   - { tenantId: 1, status: 1, readAt: 1 } (inbox)
+ * PLUGINS
+ *   tenantScope, softDelete, paginate, audit (module `notifications`).
  */
 
-export const MODEL_NAME = 'Notification';
-export const CHANNELS = Object.freeze([
-  'in_app', 'email', 'push', 'webhook',
-]);
-export const PRIORITIES = Object.freeze(['low', 'normal', 'high']);
-export const STATUSES = Object.freeze(['queued', 'delivered', 'failed', 'read']);
+import mongoose from 'mongoose';
+import { tenantScope, softDelete, paginate, audit } from './plugins/index.js';
 
-export default Object.freeze({
-  name: MODEL_NAME,
-  channels: CHANNELS,
-  priorities: PRIORITIES,
-  statuses: STATUSES,
-  schemaImplemented: false,
-  seeAlso: ['src/modules/platform/notifications/README.md'],
-});
+export const MODEL_NAME = 'Notification';
+
+const relatedResourceSchema = new mongoose.Schema(
+  {
+    type: { type: String, default: null },
+    id: { type: String, default: null },
+  },
+  { _id: false },
+);
+
+const notificationSchema = new mongoose.Schema(
+  {
+    tenantId: { type: String, required: true, index: true },
+    recipientId: { type: String, default: null, index: true },
+    recipientEmail: { type: String, default: null },
+    channel: { type: String, enum: ['in_app', 'email'], default: 'in_app' },
+    type: { type: String, default: 'system' },
+    title: { type: String, required: true },
+    body: { type: String, default: '' },
+    data: { type: mongoose.Schema.Types.Mixed, default: null },
+    read: { type: Boolean, default: false, index: true },
+    readAt: { type: Date, default: null },
+    relatedResource: { type: relatedResourceSchema, default: null },
+  },
+  { timestamps: true },
+);
+
+notificationSchema.index({ tenantId: 1, recipientId: 1, read: 1 });
+notificationSchema.index({ tenantId: 1, recipientEmail: 1, read: 1 });
+
+notificationSchema.plugin(tenantScope);
+notificationSchema.plugin(softDelete);
+notificationSchema.plugin(paginate);
+notificationSchema.plugin(audit, { module: 'notifications' });
+
+export const NotificationSchema = notificationSchema;
+export const Notification = mongoose.model(MODEL_NAME, notificationSchema);
+export default Notification;

@@ -71,7 +71,7 @@ hiring a data team.
 | 9 | Run a report | Tenant Member | The manager schedules a weekly CSV report by email. | [Sprint 9](./phases/sprint-9.md) |
 | 10 | Share an embed | Tenant Member | The manager embeds a chart in the company's intranet. | [Sprint 9](./phases/sprint-9.md) |
 | 11 | Receive an alert | Tenant Member | When an anomaly fires, the manager gets an in-app + email notification. | [Sprint 5](./phases/sprint-5.md) + [Phase 3](./03-product-roadmap.md#phase-3--enterprise-features-future) |
-| 12 | Govern | Platform Admin | The Platform Admin audits every mutation across tenants via `/audit-logs`. | [Sprint 7](./phases/sprint-7.md) |
+| 12 | Govern | Platform Admin | The Platform Admin audits every mutation across tenants via `/audit-logs`. | [Sprint 8](./phases/sprint-8.md) (originally Sprint 7 — re-scoped; see [sprint-7.md](./phases/sprint-7.md)) |
 
 > **Today:** every numbered step above returns `501`. See
 > [`STATUS.md`](./STATUS.md) for the current shipping state. This
@@ -314,7 +314,7 @@ backend persists it. Every save emits:
 | **Inventing a self-service signup in a spec** | The current flow is *Platform Admin creates tenant* (Sprint 2). There is no self-signup until Phase 4+. Specs that assume otherwise will collide with `tenantScope`. |
 | **Adding a "user can do anything" capability** | The platform is RBAC-first; the flow enforces `permission(module, action)` on every mutation. A blanket bypass would defeat `tenantIsolation`. |
 | **Treating the embed widget as a backdoor** | The embed token is signed, short-lived, scoped to one dashboard, and revoked the moment the source dashboard is deleted. Embed is for *display*, not *data exfiltration*. |
-| **Skipping the audit-log step** | Sprint 7 ships governance as a first-class feature, not an afterthought. Every mutation in the flow above must emit an `audit` event. |
+| **Skipping the audit-log step** | The `audit` plugin (Sprint 0) emits an event on every save; Sprint 8 wires the consumer that persists `AuditLog` rows (originally Sprint 7 — re-scoped; see [sprint-7.md](./phases/sprint-7.md)). Every mutation in the flow above must emit an `audit` event. |
 | **Reading this as a sales pitch** | It is an engineering reference. The flow is grounded in real route files, real middleware order, and real sprint plans. |
 
 ---

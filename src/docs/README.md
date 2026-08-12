@@ -171,11 +171,11 @@ about half a day.
 | [Sprint 1](./phases/sprint-1.md) | Authentication (complete) |
 | [Sprint 2](./phases/sprint-2.md) | IAM — admins, tenants, users, RBAC (complete) |
 | [Sprint 3](./phases/sprint-3.md) | Multi-Tenancy — tenant lifecycle, onboarding, settings, feature flags (complete) |
-| [Sprint 4](./phases/sprint-4.md) | Connector Platform — CSV + Webhook connectors, sync engine (in progress) |
-| [Sprint 5](./phases/sprint-5.md) | Platform: settings surface, feature flags surface, notifications (planned) |
-| [Sprint 6](./phases/sprint-6.md) | Master Data — countries, currencies, timezones, plans, languages (planned) |
-| [Sprint 7](./phases/sprint-7.md) | Governance: audit, access, compliance (planned) |
-| [Sprint 8](./phases/sprint-8.md) | Monitoring + Support (planned) |
+| [Sprint 4](./phases/sprint-4.md) | Connector Platform — CSV + Webhook connectors, sync engine (complete; see STATUS.md) |
+| [Sprint 5](./phases/sprint-5.md) | Analytics Engine + Master Data (complete; re-scoped — see STATUS.md) |
+| [Sprint 6](./phases/sprint-6.md) | Dashboards & Widgets (complete; re-scoped — see STATUS.md) |
+| [Sprint 7](./phases/sprint-7.md) | Reports, Alerts, Notifications & Scheduling (✅ complete; re-scoped from Governance — see STATUS.md and the sprint doc) |
+| [Sprint 8](./phases/sprint-8.md) | Monitoring + Support + Governance surfaces (planned) |
 | [Sprint 9](./phases/sprint-9.md) | Analytics + Embed (planned) |
 | [Phase 3](./phases/phase-3.md) | Enterprise features (future) |
 | [Phase 4](./phases/phase-4.md) | KMS, WebAuthn, multi-region (future) |

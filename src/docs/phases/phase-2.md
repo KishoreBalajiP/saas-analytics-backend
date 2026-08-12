@@ -36,9 +36,10 @@
 
 ## Current Status
 
-> **Status:** `In Progress` — Sprint 0 complete; Sprints 1–6 complete;
-> Sprint 7 (Governance) planned; Sprints 8–9 planned.
-> **Sprint:** Sprint 6 (complete — Dashboards & Widgets) → Sprint 7 (Governance, planned).
+> **Status:** `In Progress` — Sprints 0–7 complete (Sprint 7 re-scoped
+> to Reports, Alerts, Notifications & Scheduling); Sprints 8–9 planned.
+> **Sprint:** Sprint 7 close — Reports, Alerts, Notifications &
+> Scheduling (✅ complete).
 > **Owner:** Engineering team.
 
 ## Business Perspective
@@ -66,9 +67,9 @@ Sprint 0 (Foundation — utilities, drivers, plugins)
                 ├─ Sprint 4 (Connector Platform: CSV + Webhook connectors, sync engine)
                 ├─ Sprint 5 (Analytics Engine + Master Data: query engine, reference catalogue)
                 ├─ Sprint 6 (Dashboards & Widgets: authoring, lifecycle, sharing, execution, cache)
-                └─ Sprint 7 (Governance: Audit, Access, Compliance)
-                    ├─ Sprint 8 (Monitoring + Support)
-                    └─ Sprint 9 (Reports + Embed)
+                ├─ Sprint 7 (Reports, Alerts, Notifications & Scheduling — re-scoped from Governance; ✅ complete)
+                ├─ Sprint 8 (Monitoring + Support + Governance surfaces)
+                └─ Sprint 9 (Analytics + Embed)
 ```
 
 ## Deliverables
@@ -82,8 +83,8 @@ Sprint 0 (Foundation — utilities, drivers, plugins)
 | Sprint 4 | [`sprint-4.md`](./sprint-4.md) | ✅ Complete (Connector Platform) |
 | Sprint 5 | [`sprint-5.md`](./sprint-5.md) | ✅ Complete (Analytics Engine + Master Data) |
 | Sprint 6 | [`sprint-6.md`](./sprint-6.md) | ✅ Complete (Dashboards & Widgets) |
-| Sprint 7 | [`sprint-7.md`](./sprint-7.md) | 🕒 Planned |
-| Sprint 8 | [`sprint-8.md`](./sprint-8.md) | 🕒 Planned |
+| Sprint 7 | [`sprint-7.md`](./sprint-7.md) | ✅ Complete (Reports, Alerts, Notifications & Scheduling — re-scoped from Governance) |
+| Sprint 8 | [`sprint-8.md`](./sprint-8.md) | 🕒 Planned (Monitoring + Support + Governance surfaces) |
 | Sprint 9 | [`sprint-9.md`](./sprint-9.md) | 🕒 Planned |
 
 ## Dependencies
@@ -98,8 +99,11 @@ A user can:
    report → embed widget → revoke their session,
 2. Every business endpoint has `authenticate` (or `adminAuth`) +
    `resolveTenant` + `tenantIsolation` + `rbac`/`permission` middleware,
-3. Every mutation emits an audit event consumed by the Sprint 7
-   audit pipeline,
+3. Every mutation emits an `audit` plugin event (Sprint 0). Sprint 7
+   ships Reports / Alerts / Notifications on top of the engine;
+   the audit-event *consumer* that persists `AuditLog` rows is
+   planned for Sprint 8 (originally planned for Sprint 7 — see
+   [sprint-7.md](./sprint-7.md) for the re-scope note),
 4. 90 %+ test coverage on the touched surfaces,
 5. `npm run ci:guards` passes; `npm audit` reports 0 vulnerabilities.
 
@@ -131,7 +135,7 @@ step ties to a sprint here.
 | --- | --- |
 | **Implementing a feature in the wrong sprint.** | The order is part of the design; reordering breaks the dependency graph. |
 | **Marking Phase 2 complete before Sprint 9 ships.** | Phase 2 is "until a user can do the whole flow end to end"; missing any step breaks the criterion. |
-| **Skipping the audit middleware on a "trivial" mutation.** | Sprint 7 wires governance; if a mutation does not emit an audit event, the audit log is incomplete. |
+| **Skipping the audit middleware on a "trivial" mutation.** | The `audit` plugin emits the event; Sprint 8 wires the consumer that persists `AuditLog` rows. If a mutation does not emit an audit event the log will be incomplete. |
 
 ---
 
@@ -204,7 +208,7 @@ end-to-end demo-ability.
 
 ## Last Updated
 
-- **Sprint:** Sprint 6 close / Sprint 7 planned
+- **Sprint:** Sprint 7 close (Reports, Alerts, Notifications & Scheduling; re-scoped from Governance)
 - **Phase:** Phase 2 — Implementation
 - **Date:** 2026-08-12
 - **Author:** Engineering (Sprint 6 close, Sprint 5–6 re-scope)

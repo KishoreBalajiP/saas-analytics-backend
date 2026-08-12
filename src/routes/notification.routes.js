@@ -1,47 +1,34 @@
-/**
- * /api/v1/notifications routes - User inbox + administrative broadcasting.
+﻿/**
+ * /api/v1/notifications routes (Sprint 7 - implemented).
  *
- * WHY IT EXISTS
- *   A unified surface for in-app/email/push/webhook notifications. User
- *   inbox endpoints serve the Tenant Portal / Mobile App; admin
- *   broadcasting is platform-scoped. Backed by `platform/notifications/`.
- *
- * RESPONSIBILITY (planned, NOT implemented)
- *   - GET    /                      - inbox for the current user
- *   - GET    /unread-count          - cheap badge value
- *   - POST   /:id/read              - mark read
- *   - POST   /read-all              - mark all read
- *   - DELETE /:id                   - delete (soft) from inbox
- *   - POST   /admin/broadcast       - admin cross-tenant broadcast (Phase 4+)
- *   - GET    /admin/preferences/:userId  - notification preferences
- *
- * HOW TO EXTEND
- *   - User endpoints filter by `actorId = req.actor.id`.
- *   - WebSocket emits `notification:new` on `user:<actorId>` room on each
- *     in-app notification (see `src/websocket/rooms.js`).
+ * ENDPOINTS (all tenant + actor scoped; inbox is always the calling user)
+ *   - GET    /                      inbox list          notifications.view
+ *   - GET    /unread-count          badge               notifications.view
+ *   - GET    /preferences           preferences         notifications.view
+ *   - POST   /preferences           update preferences  notifications.update
+ *   - POST   /read-all              mark all read       notifications.update
+ *   - POST   /:id/read              mark read           notifications.update
+ *   - DELETE /:id                   soft-delete         notifications.delete
  */
 
 import { Router } from 'express';
-import asyncHandler from '../utils/asyncHandler.js';
+import { authenticate } from '../middleware/auth.middleware.js';
+import { resolveTenant } from '../middleware/tenant.middleware.js';
+import { permission } from '../middleware/permission.middleware.js';
+import { validate } from '../validators/index.js';
+import notificationValidator from '../validators/notification.validator.js';
+import notificationController from '../controllers/notification.controller.js';
 
 const router = Router();
 
-const notImplemented = (op) =>
-  asyncHandler(async (_req, res) => {
-    res.status(501).json({
-      success: false,
-      statusCode: 501,
-      message: `${op} is not implemented yet (Phase 1.2 architecture placeholder)`,
-      hint: 'See src/modules/platform/notifications/README.md',
-    });
-  });
+const guarded = (action, ...mw) => [authenticate, resolveTenant, permission('notifications', action), ...mw];
 
-router.get('/', notImplemented('GET /notifications'));
-router.get('/unread-count', notImplemented('GET /notifications/unread-count'));
-router.post('/:id/read', notImplemented('POST /notifications/:id/read'));
-router.post('/read-all', notImplemented('POST /notifications/read-all'));
-router.delete('/:id', notImplemented('DELETE /notifications/:id'));
-router.post('/admin/broadcast', notImplemented('POST /notifications/admin/broadcast'));
-router.get('/admin/preferences/:userId', notImplemented('GET /notifications/admin/preferences/:userId'));
+router.get('/', guarded('view', validate(notificationValidator.listSchema)), notificationController.listInbox);
+router.get('/unread-count', guarded('view'), notificationController.getUnreadCount);
+router.get('/preferences', guarded('view'), notificationController.getPreferences);
+router.post('/preferences', guarded('update', validate(notificationValidator.preferencesSchema)), notificationController.updatePreferences);
+router.post('/read-all', guarded('update'), notificationController.markAllRead);
+router.post('/:id/read', guarded('update', validate(notificationValidator.idSchema)), notificationController.markRead);
+router.delete('/:id', guarded('delete', validate(notificationValidator.idSchema)), notificationController.removeInbox);
 
 export default router;

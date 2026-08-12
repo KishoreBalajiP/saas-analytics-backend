@@ -52,8 +52,8 @@
 | CSV OOM | `/connectors/csv` | Stream-parse with backpressure | Sprint 6 |
 | Secret leak at rest | connector `config`, refresh tokens | `utils/encryption.js` AES-256-GCM envelope | Sprint 0 |
 | Secret leak in logs | Pino logs | Redaction paths in `config/env.js` | Sprint 0 |
-| Response body leak | access log | Capture size only, never body | Sprint 7 |
-| Audit-log gap | every mutation | `audit` plugin emits on every save | Sprint 0 + Sprint 7 |
+| Response body leak | access log | Capture size only, never body | Sprint 8 (originally Sprint 7; re-scoped — see `phases/sprint-7.md`) |
+| Audit-log gap | every mutation | `audit` plugin emits on every save | Sprint 0 + Sprint 8 (consumer that persists `AuditLog` rows was originally Sprint 7; re-scoped — see `phases/sprint-7.md`) |
 | Hash-chain tamper | audit log | Sequential IDs in MVP; hash-chain in Phase 3 | Phase 3 |
 | Impersonation abuse | `/support/*` | Mandatory reason + daily cap + double log | Sprint 8 |
 
@@ -95,8 +95,9 @@
 - **System roles immutable.**
 
 ### Audit + access logs
-- **Audit:** `audit` plugin emits on every save; Sprint 7 consumer
-  persists.
+- **Audit:** `audit` plugin emits on every save; Sprint 8 consumer
+  persists `AuditLog` rows (originally Sprint 7 — re-scoped; see
+  `phases/sprint-7.md`).
 - **Access:** middleware captures status + size, never body.
 - **Sensitive fields:** stripped before persistence.
 

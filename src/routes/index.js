@@ -1,4 +1,4 @@
-/**
+﻿/**
  * API route aggregator.
  *
  * WHY IT EXISTS
@@ -78,6 +78,7 @@ import notificationRoutes from './notification.routes.js';
 import emailTemplateRoutes from './email-template.routes.js';
 import dashboardRoutes from './dashboard.routes.js';
 import reportRoutes from './report.routes.js';
+import alertRoutes from './alert.routes.js';
 import supportRoutes from './support.routes.js';
 
 const router = Router();
@@ -109,6 +110,7 @@ router.use('/notifications', notificationRoutes);
 router.use('/email-templates', emailTemplateRoutes);
 router.use('/dashboards', dashboardRoutes);
 router.use('/reports', reportRoutes);
+router.use('/alerts', alertRoutes);
 router.use('/support', supportRoutes);
 
 export default router;

@@ -26,9 +26,11 @@ import anomalyJob from './anomaly.job.js';
 import sheetSyncJob from './sheetSync.job.js';
 import emailJob from './email.job.js';
 import cleanupJob from './cleanup.job.js';
+import reportScheduleJob from './reportSchedule.job.js';
+import alertEvalJob from './alertEval.job.js';
 
 /** All background jobs known to the platform. */
-const jobs = [sheetSyncJob, emailJob, cleanupJob, anomalyJob];
+const jobs = [sheetSyncJob, emailJob, cleanupJob, anomalyJob, reportScheduleJob, alertEvalJob];
 
 /** name -> cron task handle, for stop() on shutdown. */
 const scheduledTasks = new Map();

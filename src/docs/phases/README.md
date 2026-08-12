@@ -39,7 +39,7 @@
 
 > **Status:** `Maintained` — every sprint closure PR updates the
 > matching sprint file and (when relevant) the matching phase file.
-> **Sprint:** Sprints 0–6 closed (through Dashboards & Widgets); Sprint 7 (Governance) planned.
+> **Sprint:** Sprints 0–7 closed (Sprint 7 delivered Reports, Alerts, Notifications & Scheduling — re-scoped from the original Governance plan); Sprints 8–9 planned.
 > **Owner:** Engineering team.
 
 ---

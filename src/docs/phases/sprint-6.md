@@ -31,7 +31,7 @@
 
 | Reader | What they get |
 | --- | --- |
-| **Sprint 7 implementer** | Knows the dashboards surface + engine execution contract. |
+| **Sprint 7 implementer** | Knows the dashboards surface + engine execution contract. (Sprint 7 was re-scoped from Governance to Reports/Alerts/Notifications/Scheduling; see [`phases/sprint-7.md`](./sprint-7.md).) |
 | **Tech lead** | Has the delivered dashboard/widget inventory. |
 
 ## Current Status

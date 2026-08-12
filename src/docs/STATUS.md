@@ -29,11 +29,12 @@
 > closure PR. The state it describes: Sprint 0 ✅, Sprint 1 ✅,
 > Sprint 2 ✅, Sprint 3 ✅ (Multi-Tenancy), Sprint 4 ✅ (Connector
 > Platform), Sprint 5 ✅ (Analytics Engine + Master Data), Sprint 6 ✅
-> (Dashboards & Widgets). Sprints 7–9 🕓 planned.
-> **Sprint:** Sprint 6 — Dashboards & Widgets (complete).
+> (Dashboards & Widgets), **Sprint 7 ✅ (Reports, Alerts, Notifications &
+> Scheduling)**. Sprint 8–9 🕓 planned.
+> **Sprint:** Sprint 7 — Reports, Alerts, Notifications & Scheduling (complete).
 > **Owner:** Engineering team.
 >
-> Last updated: **Sprint 6 close** — see [CHANGELOG.md](../../CHANGELOG.md)
+> Last updated: **Sprint 7 close** — see [CHANGELOG.md](../../CHANGELOG.md)
 > at the repo root for the entry-by-entry record.
 
 ---
@@ -47,20 +48,20 @@
 | Question | Answer |
 | --- | --- |
 | **Current Phase** | Phase 2 — Implementation |
-| **Current Sprint** | Sprint 6 — Dashboards & Widgets (✅ implemented). Sprints 0–6 complete; Sprints 7–9 planned. |
-| **Current Goal** | Sprint 6 ships tenant-scoped dashboards and widgets on top of the analytics engine: dashboard CRUD + lifecycle (publish, duplicate, share, soft-delete), widget CRUD for six types (kpi, table, bar, line, area, pie), widget + dashboard execution with the date-range presets (`last_7_days`, `last_30_days`, …) and cache hit/miss, all behind `dashboards.*` RBAC. |
-| **Current Progress (%)** | **~75 %** of Phase 2 complete. Sprints 0–1 (foundation + auth), Sprints 2–3 (IAM + multi-tenancy), Sprint 4 (connectors), Sprint 5 (analytics engine + master data) and Sprint 6 (dashboards) are the seven finished sprints of ten. |
-| **Last Completed Milestone** | Sprint 6 close — dashboards + widgets: dashboard CRUD/lifecycle, widget CRUD (6 types), widget + dashboard execution with presets + cache, sharing, RBAC `dashboards.*` + `analytics.view` gate. See [Sprint 6](./phases/sprint-6.md). |
-| **Next Deliverable** | Sprint 7 — Governance (audit, access, compliance). |
-| **Current Blockers** | **None known.** 353 tests pass, CI green, `npm audit` clean. |
-| **Definition of Done (current sprint)** | *(Sprint 6)* ✅ All deliverables merged, 353 tests green, CI green, status docs updated. *(Sprint 7)* 🕓 See [Sprint 7](./phases/sprint-7.md). |
-| **Last Updated** | Sprint 6 close. This file is updated as part of every sprint closure PR. |
+| **Current Sprint** | Sprint 7 — Reports, Alerts, Notifications & Scheduling (✅ implemented). Sprints 0–7 complete; Sprints 8–9 planned. |
+| **Current Goal** | Sprint 7 ships tenant-scoped scheduled reports (JSON/CSV/XLSX via the real analytics engine, off the HTTP hot path), threshold-based alerts evaluated through the same engine (event history + cooldown/dedup + notification dispatch), and the user-facing notification inbox — all behind existing `reports.*` / `alerts.*` / `notifications.*` RBAC with `resolveTenant` isolation. |
+| **Current Progress (%)** | **~80 %** of Phase 2 complete. Sprints 0–1 (foundation + auth), Sprints 2–3 (IAM + multi-tenancy), Sprint 4 (connectors), Sprint 5 (analytics engine + master data), Sprint 6 (dashboards) and Sprint 7 (reports/alerts/notifications/scheduling) are the eight finished sprints of ten. |
+| **Last Completed Milestone** | Sprint 7 close — reports (CRUD + scheduled run + JSON/CSV/XLSX export + history), alerts (CRUD + real-engine evaluation + events + cooldown + notifications), notifications inbox (list/read/delete/preferences). 367 tests pass, CI green, `npm audit` clean. See [Sprint 7](./phases/sprint-7.md). |
+| **Next Deliverable** | Sprint 8 — Monitoring + Support (🕓 planned). |
+| **Current Blockers** | **None known.** 367 tests pass, CI green, `npm audit` clean. |
+| **Definition of Done (current sprint)** | ✅ All deliverables merged, 367 tests green, CI green (5/5), `npm audit` 0 vulnerabilities, status docs updated. |
+| **Last Updated** | Sprint 7 close. This file is updated as part of every sprint closure PR. |
 
 ### What You Should Be Doing Right Now
 
 | If you are… | Do this |
 | --- | --- |
-| **About to start Sprint 7** | Read [Sprint 7 plan](./phases/sprint-7.md) end-to-end, then the governance module READMEs. Open the sprint branch. |
+| **About to start Sprint 8** | Read [Sprint 8 plan](./phases/sprint-8.md) end-to-end, then the monitoring/support module READMEs. Sprint 8 also picks up the originally-planned Governance surfaces from Sprint 7 (`/access-logs/*`, `/compliance/*`, the `AuditLog` consumer) and the scheduler tick for `runDue` / `evaluateDue`. Open the sprint branch. |
 | **Reviewing a PR** | Run `npm run ci:guards` and `npm test` locally. Check that any new route has an auth middleware (CI guard will flag it). Check that the matching entry in `STATUS.md` was updated. |
 | **Debugging a flaky test** | Run the affected file with `node scripts/ci/run-tests.js tests/<path>.test.js` (this sets `PASSWORD_KDF=scrypt`, portable on Windows). Tests use `mongodb-memory-server`; the first run downloads a MongoDB binary (~80 MB). `npm run test:argon2` exercises the real Argon2id KDF on CI (Linux). |
 | **Looking up an architectural rule** | The rule lives in the repo-root `README.md` (Architecture Rules) and in [`ARCHITECTURE.md`](./ARCHITECTURE.md); it is enforced by a CI guard under `scripts/ci/`. |
@@ -87,13 +88,13 @@ Before opening your first PR of the day, confirm:
 | Field | Value |
 | --- | --- |
 | **Phase** | Phase 2 — Implementation |
-| **Current sprint** | Sprint 6 — Dashboards & Widgets (✅ complete) |
-| **Next sprint** | Sprint 7 — Governance |
+| **Current sprint** | Sprint 7 — Reports, Alerts, Notifications & Scheduling (✅ complete) |
+| **Next sprint** | Sprint 8 — Monitoring + Support (🕓 planned) |
 | **Repository version** | `1.0.0` |
-| **Tests** | 353 pass, 0 fail |
+| **Tests** | 367 pass, 0 fail |
 | **CI guards** | 5 / 5 green |
 | **`npm audit`** | 0 vulnerabilities |
-| **Production features shipped** | 7 of ~30 (auth, IAM, multi-tenancy, connectors, analytics engine, master data, dashboards) |
+| **Production features shipped** | 10 of ~30 (auth, IAM, multi-tenancy, connectors, analytics engine, master data, dashboards, reports, alerts, notifications) |
 
 ---
 
@@ -193,8 +194,8 @@ Sprint 6   ✅ ── Dashboards & Widgets: tenant-scoped dashboard +
                  dashboard/widget, 400 foreign/deleted dataset). Real
                  /dashboards/* surface behind authenticate +
                  resolveTenant + permission('dashboards', ...); running
-                 a widget additionally requires analytics.view. 353
-                 tests pass.
+                 a widget additionally requires analytics.view. 367
+                 tests pass (353 through Sprint 6 + 14 in Sprint 7).
 
 …          ── Sprints 7 → 9: see [Sprint Log](#sprint-log).
 
@@ -237,19 +238,22 @@ Detailed per-sprint plans live under
 | [Sprint 4](./phases/sprint-4.md) | Connector Platform (CSV + Webhook connectors, sync engine, inbound webhook surface) | ✅ **Complete** | 53 (285 total) |
 | [Sprint 5](./phases/sprint-5.md) | Analytics Engine + Master Data (query engine, query history, exports, reference catalogue) | ✅ **Complete** | 40 (325 total) |
 | [Sprint 6](./phases/sprint-6.md) | Dashboards & Widgets (authoring, lifecycle, sharing, execution, cache) | ✅ **Complete** | 28 (353 total) |
-| [Sprint 7](./phases/sprint-7.md) | Governance: audit, access, compliance | 🕓 Planned | — |
+| [Sprint 7](./phases/sprint-7.md) | Reports, Alerts, Notifications & Scheduling (scheduled report generation via the real analytics engine + JSON/CSV/XLSX export, threshold alerts evaluated through the engine with event history + cooldown + notification dispatch, notification inbox, tenant-scoped scheduling) | ✅ **Complete** | 14 (367 total) |
 | [Sprint 8](./phases/sprint-8.md) | Monitoring + Support | 🕓 Planned | — |
 | [Sprint 9](./phases/sprint-9.md) | Analytics + Embed | 🕓 Planned | — |
 
 > **Sprint re-scope note:** the plan documents for Sprints 5–6 predate the
 > delivery. Sprint 5 shipped the **Analytics Engine + Master Data** (the
 > settings/feature-flags/notifications surfaces listed in the old plan
-> stayed fail-closed stubs; settings + feature flags themselves already
-> shipped inside Sprint 3's `/tenants/*` surface). Sprint 6 shipped
+> stayed fail-closed stubs at the time; settings + feature flags themselves
+> already shipped inside Sprint 3's `/tenants/*` surface). Sprint 6 shipped
 > **Dashboards & Widgets**, not Master Data — Master Data moved earlier
-> (Sprint 5) once the analytics engine existed to consume it. The
-> `sprint-5.md` / `sprint-6.md` plan files are the source of truth for
-> *planned* scope; this log records *delivered* scope.
+> (Sprint 5) once the analytics engine existed to consume it. Sprint 7 then
+> delivered **Reports, Alerts, Notifications & Scheduling** — the
+> notifications surface is now fully implemented (in-app inbox + preferences,
+> tenant/actor-scoped), and reports + alerts run on the real analytics
+> engine. The `sprint-*.md` plan files are the source of truth for *planned*
+> scope; this log records *delivered* scope.
 
 ---
 
@@ -344,9 +348,23 @@ See [`DECISIONS.md` ADR-007](./DECISIONS.md#adr-007-five-shared-mongoose-plugins
 | Execution | Widget/dashboard execution delegates to the analytics engine; date presets (`last_7_days`, `last_30_days`, …); per-query cache with `updatedAt` revision so edits bust the cache; fail-closed (404 unknown dashboard/widget, 400 foreign/deleted dataset) | [`dashboard.routes.js`](../../src/routes/dashboard.routes.js) |
 | Routes (real) | [`/dashboards/*`](../../src/routes/dashboard.routes.js) — full surface incl. `/:id/execute` + `/:id/widgets/:widgetId/execute`; `permission('dashboards', …)` + `analytics.view` required to run a widget | [`dashboard.routes.js`](../../src/routes/dashboard.routes.js) |
 
+### Reports, Alerts & Notifications (Sprint 7)
+
+| Component | Implementation | Docs |
+| --- | --- | --- |
+| Report models | [`Report`](../../src/models/Report.js) (status draft/published, source `widget`/`query`, schedule cron, `nextRunAt`, `runs[]` history) | [`analytics/reports/STATUS.md`](../../src/modules/analytics/reports/STATUS.md) |
+| Report service + run | [`report.service.js`](../../src/services/report.service.js) — `create`/`update`/`list`/`get`/`remove`/`run`/`exportReport`/`processRun`/`runDue`. `run` enqueues an `ANALYTICS_JOBS` message; the worker executes off the HTTP path via the real analytics engine and stores the artefact. JSON/CSV/XLSX serialisation of flattened connector rows. `sanitizeReportQuery` preserves `datasetId`. | [`report.service.js`](../../src/services/report.service.js) |
+| Report routes | [`/reports/*`](../../src/routes/report.routes.js) — full surface incl. `/:id/run`, `/:id/export?format=`; `permission('reports', …)`. Raw Mongo operators / `$where` / `$expr` rejected by the validator. | [`report.routes.js`](../../src/routes/report.routes.js) |
+| Alert models | [`AlertRule`](../../src/models/AlertRule.js) (threshold + `datasetId`, schedule, `lastTriggeredAt`/`nextEvaluationAt`, `enabled`, `recipients`) + [`AlertEvent`](../../src/models/AlertEvent.js) (event history; `paginate` plugin) | [`alerts/STATUS.md`](../../src/modules/alerts/STATUS.md) |
+| Alert service + evaluation | [`alert.service.js`](../../src/services/alert.service.js) — `create`/`update`/`list`/`get`/`remove`/`evaluate`/`evaluateDue`/`runDue`. `evaluate` runs the **real analytics engine** (`engine.queryRows`) against the alert's dataset/query, applies the threshold condition, records an `AlertEvent` and dispatches a notification on trigger. Disabled alerts never trigger; cooldown deduplicates. `sanitizeAlertQuery` preserves `datasetId`. | [`alert.service.js`](../../src/services/alert.service.js) |
+| Alert routes | [`/alerts/*`](../../src/routes/alert.routes.js) — full surface incl. `/:id/evaluate`, `/:id/events`; `permission('alerts', …)`. | [`alert.routes.js`](../../src/routes/alert.routes.js) |
+| Notification model + service | [`Notification`](../../src/models/Notification.js) + [`notification.service.js`](../../src/services/notification.service.js) + [`notification.repository.js`](../../src/repositories/notification.repository.js) — tenant/actor-scoped inbox, unread-count, mark-read, soft-delete, preferences. | [`platform/notifications/STATUS.md`](../../src/modules/platform/notifications/STATUS.md) |
+| Notification routes | [`/notifications/*`](../../src/routes/notification.routes.js) — inbox, unread-count, mark-read (single + all), delete, preferences; `permission('notifications', …)`. | [`notification.routes.js`](../../src/routes/notification.routes.js) |
+| Scheduling | `report.service.runDue` / `alert.service.runDue` + `evaluateDue` enqueue due work; `analytics.worker.js` processes report + alert job types. `tenantInitialization.service.js` seeds `reports.*` / `alerts.*` / `notifications.*` RBAC. | [`tenantInitialization.service.js`](../../src/services/tenantInitialization.service.js) |
+
 ### CI Guardrails
 
-Wired to `npm run ci:guards`. All green as of Sprint 6 close.
+Wired to `npm run ci:guards`. All green as of Sprint 7 close (5/5).
 
 | Guard | What it fails on | Script |
 | --- | --- | --- |
@@ -402,8 +420,12 @@ dashboards/dashboard.service.test.js       9 tests  (Sprint 6 dashboard CRUD/lif
 dashboards/widget.service.test.js          8 tests  (Sprint 6 widget CRUD + six types)
 dashboards/dashboard.execution.test.js     7 tests  (executeWidget/viewDashboard, cache, isolation, fail-closed)
 dashboards/dashboard.routes.integration.test.js   4 tests  (HTTP end-to-end + RBAC 401/403)
+reports/report.routes.integration.test.js          3 tests  (CRUD, RBAC 401/403, tenant isolation, run, JSON/CSV export, security)
+alerts/alert.routes.integration.test.js            5 tests  (CRUD, RBAC 401/403, evaluation → event + notification, datasetId contract, disabled guard)
+alerts/alert.scheduler.test.js                     4 tests  (evaluateDue + runDue, disabled skip, cooldown dedupe + re-trigger)
+notifications/notification.routes.integration.test.js  2 tests  (inbox lifecycle, RBAC 401/403)
 ─────────────────────────────────────────────────────
-TOTAL                                    353 tests
+TOTAL                                    367 tests
 ```
 
 `npm test` runs the suite in scrypt KDF mode (portable); `npm run
@@ -414,21 +436,24 @@ test:argon2` exercises the real Argon2id KDF.
 ## What Is Still a Stub (Fail-Closed)
 
 Every unimplemented business endpoint returns `501 Not Implemented` with a
-`hint` pointing to the module README that owns it. The CI guard
+provides a `hint` pointing to the module README that owns it. The CI guard
 `check-routes` ensures this rule is never accidentally broken by a new
 real handler.
+
+> **Sprint 7 note:** `/reports/*` and `/notifications/*` are **no longer
+> stubs** — they shipped in Sprint 7 (see the Reports/Alerts/Notifications
+> section below). `/alerts/*` also shipped in Sprint 7 and is not listed
+> here.
 
 | Surface | Where it lives | Owning Sprint |
 | --- | --- | --- |
 | `/settings/*` | [`src/routes/settings.routes.js`](../../src/routes/settings.routes.js) | [Sprint 5](./phases/sprint-5.md) |
 | `/feature-flags/*` | [`src/routes/feature-flag.routes.js`](../../src/routes/feature-flag.routes.js) | [Sprint 5](./phases/sprint-5.md) |
-| `/notifications/*` | [`src/routes/notification.routes.js`](../../src/routes/notification.routes.js) | [Sprint 5](./phases/sprint-5.md) |
 | `/email-templates/*` | [`src/routes/email-template.routes.js`](../../src/routes/email-template.routes.js) | [Sprint 5](./phases/sprint-5.md) |
 | `/access-logs/*` | [`src/routes/access-log.routes.js`](../../src/routes/access-log.routes.js) | [Sprint 7](./phases/sprint-7.md) |
 | `/compliance/*` | [`src/routes/compliance.routes.js`](../../src/routes/compliance.routes.js) | [Sprint 7](./phases/sprint-7.md) |
 | `/monitoring/*` | [`src/routes/monitoring.routes.js`](../../src/routes/monitoring.routes.js) | [Sprint 8](./phases/sprint-8.md) |
 | `/support/*` | [`src/routes/support.routes.js`](../../src/routes/support.routes.js) | [Sprint 8](./phases/sprint-8.md) |
-| `/reports/*` | [`src/routes/report.routes.js`](../../src/routes/report.routes.js) | [Sprint 9](./phases/sprint-9.md) |
 | `/embed/*` | [`src/routes/embed.routes.js`](../../src/routes/embed.routes.js) | [Sprint 9](./phases/sprint-9.md) |
 
 ---
@@ -440,7 +465,7 @@ short version:
 
 | Horizon | Scope |
 | --- | --- |
-| **Phase 2 (in flight)** | Sprints 0–9 deliver the MVP: auth, IAM, RBAC, connectors, analytics engine, master data, dashboards, governance, monitoring, CSV reports + embed. Sprints 0–6 complete; Sprints 7–9 remain. |
+| **Phase 2 (in flight)** | Sprints 0–9 deliver the MVP: auth, IAM, RBAC, connectors, analytics engine, master data, dashboards, reports/alerts/notifications, governance, monitoring, CSV reports + embed. Sprints 0–7 complete; Sprints 8–9 remain. |
 | **Phase 3 (planned)** | KMS-managed keys, WebAuthn / passkey, multi-region, SIEM forwarder, cold archival to S3, hash-chain audit, OAuth/SAML SSO, SCIM 2.0, MongoDB + Google Sheets connectors, push + outbound webhook notifications, PDF/XLSX reports, anomaly detection cron, Prometheus `/metrics`. |
 | **Phase 4+ (future)** | Data residency per tenant, connector marketplace, custom-domain tenant routing. |
 
@@ -453,24 +478,45 @@ features land. See [DECISIONS.md](./DECISIONS.md) "Postponed Decisions".
 
 ## Next Milestone
 
-**Sprint 7 — Governance (audit, access, compliance).**
+**Sprint 8 — Monitoring + Support (🕓 planned).**
 
-Concretely: by the end of Sprint 7 a developer can, against a real
-`mongodb-memory-server` database:
+Concretely: get the remaining Phase 2 surfaces to production grade — the
+`/monitoring/*` and `/support/*` route files exist as fail-closed stubs
+and need real, RBAC-scoped handlers; plus the deferred governance surfaces
+(`/access-logs/*`, `/compliance/*`) from the original Sprint 7 plan.
 
-1. `GET /access-logs` — tenant access-log surface backed by the `audit`
-   middleware + `AccessLog` model.
-2. `GET /compliance/*` — compliance surface (`ComplianceLog`), admin-
-   gated.
-3. The `audit` plugin domain events (Sprint 0) are consumed into the
-   `AuditLog` collection and queryable.
-
-The same auth + RBAC middleware from Sprints 1–6 guards every surface;
+The same auth + RBAC middleware from Sprints 1–7 guards every surface;
 `resolveTenant` scopes per tenant; `X-Idempotency-Key` protects every
 mutation.
 
-The Definition of Done for Sprint 7 lives in
-[`phases/sprint-7.md`](./phases/sprint-7.md).
+> **Note — Sprint 7 re-scoped:** Sprint 7 actually delivered **Reports,
+> Alerts, Notifications & Scheduling** (not the governance surfaces the
+> plan file describes). Those governance endpoints (`/access-logs/*`,
+> `/compliance/*`) remain planned for Sprint 8. The Sprint 7 close-out is
+> recorded in [`phases/sprint-7.md`](./phases/sprint-7.md).
+
+### Sprint 7 retro notes (closed)
+
+- **Delivered:** reports (CRUD + scheduled run off the HTTP path + JSON/CSV/XLSX
+  export + run history), threshold alerts evaluated through the **real
+  analytics engine** (event history + cooldown/dedup + notification
+  dispatch), and the tenant/actor-scoped notification inbox — behind
+  existing `reports.*` / `alerts.*` / `notifications.*` RBAC. Scheduling via
+  `runDue` / `evaluateDue` + the analytics worker. 14 new integration tests
+  (367 total).
+- **Real bugs found and fixed (not test hacks):** `sanitizeAlertQuery` and
+  `sanitizeReportQuery` stripped `datasetId` so query-source reports/alerts
+  failed execution; `AlertEvent` was missing the `paginate` plugin
+  (`listEvents` threw); `analytics.worker.js` dropped `tenantId` when calling
+  `processRun`/`evaluate`, so the engine returned 0 rows. All fixed.
+- **Watch out:** `npm test` must run without forcing `NODE_ENV=test` — the
+  health test asserts `env === 'development'`. The integration harness runs
+  batches of 8 spec files against one shared `mongodb-memory-server` to stay
+  under mutex limits; run plain `npm test` (defaults to development) with
+  `PASSWORD_KDF=scrypt`.
+- **Deferred to later sprints:** email *channel* delivery (SMTP/noop transport
+  exists; the outbound email consumer is a later sprint), outbound webhook /
+  push notifications, PDF reports, embed surface.
 
 ### Sprint 6 retro notes (closed)
 
@@ -485,9 +531,10 @@ The Definition of Done for Sprint 7 lives in
   (rows + total + pagination), not a bare rows array; the analytics
   engine only aggregates when `groupBy` is non-empty — non-grouped
   queries return raw connector rows. Tests now reflect both.
-- **Deferred to later sprints:** reports (`/reports/*`), embed
-  (`/embed/*`), notifications and email-templates remain fail-closed
-  stubs; per-dashboard realtime refresh rooms are still planned.
+- **Deferred to later sprints:** reports (`/reports/*`) and notifications
+  (`/notifications/*`) shipped in Sprint 7 — only embed (`/embed/*`) and
+  email-templates remain fail-closed stubs; per-dashboard realtime refresh
+  rooms are still planned.
 
 ### Sprint 3 retro notes (closed)
 
@@ -568,7 +615,7 @@ single document updated as part of every sprint closure PR.
 ### Real-World Examples
 
 - A new engineer opens `STATUS.md` on Monday, sees *Next Deliverable:
-  Sprint 7 — Governance*, opens [`Sprint 7`](./phases/sprint-7.md)
+  Sprint 8 — Monitoring + Support*, opens [`Sprint 8`](./phases/sprint-8.md)
   for the deliverables list, and starts on the smallest unblocked
   item. No Slack thread required.
 - A reviewer opens a PR and runs `npm run ci:guards`. `check-routes`

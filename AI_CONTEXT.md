@@ -45,11 +45,11 @@ Phase 4+.
 | --- | --- |
 | Current version | `1.0.0` |
 | Current phase | Phase 2 — Implementation |
-| Current sprint | Sprint 6 — Dashboards & Widgets (complete) |
-| Next sprint | Sprint 7 — Governance (audit, access, compliance) |
-| Current progress | ~75 % of Phase 2 |
-| Last completed milestone | Sprint 6 close — dashboards + widgets: authoring, lifecycle, sharing, execution with presets + cache, RBAC `dashboards.*` + `analytics.view` (353 tests, 5/5 CI guards green) |
-| Next milestone | Sprint 7 — Governance (access logs + compliance surfaces) |
+| Current sprint | Sprint 7 — Reports, Alerts, Notifications & Scheduling (complete) |
+| Next sprint | Sprint 8 — Monitoring + Support (planned; includes the originally-planned Governance surfaces) |
+| Current progress | ~80 % of Phase 2 |
+| Last completed milestone | Sprint 7 close — reports (CRUD + scheduled run + JSON/CSV/XLSX export + history), alerts (CRUD + real-engine evaluation + events + cooldown + notifications), notifications inbox. 367 tests pass, 5/5 CI guards green, 0 npm audit vulns. |
+| Next milestone | Sprint 8 — Monitoring + Support + Governance surfaces (`/access-logs/*`, `/compliance/*`, `AuditLog` consumer, scheduler tick) |
 
 Facts as of Sprint 6 close:
 
@@ -89,11 +89,12 @@ Facts as of Sprint 6 close:
   (404 unknown, 400 foreign/deleted dataset). `/dashboards/*` sits behind
   `permission('dashboards', …)`; running a widget also needs
   `analytics.view`.
-- `npm test` → 353 pass, 0 fail. `npm run ci:guards` → 5/5 green.
+- `npm test` → **367 pass, 0 fail**. `npm run ci:guards` → 5/5 green.
   `npm audit` → 0 vulnerabilities.
-- The next work is **Sprint 7 — Governance** (access logs + compliance
-  surfaces on top of the Sprint 0 `audit` plugin + `AccessLog`/
-  `ComplianceLog` models). See [sprint-7.md](src/docs/phases/sprint-7.md)
+- The next work is **Sprint 8 — Monitoring + Support** (the originally-
+  planned Governance surfaces — `/access-logs/*`, `/compliance/*`,
+  `AuditLog` consumer — are pulled into Sprint 8 alongside the
+  monitoring/support stubs). See [sprint-8.md](src/docs/phases/sprint-8.md)
   and [backend/security.md](src/docs/backend/security.md).
 
 See [STATUS.md](src/docs/STATUS.md) for the canonical,
@@ -259,7 +260,7 @@ Development (`src/docs/development/`):
 Planning and code references:
 
 - [src/docs/phases/README.md](src/docs/phases/README.md) — phase + sprint index
-- [src/docs/phases/sprint-7.md](src/docs/phases/sprint-7.md) — current sprint plan (Governance)
+- [src/docs/phases/sprint-7.md](src/docs/phases/sprint-7.md) — last-closed sprint (Reports, Alerts, Notifications & Scheduling; original Governance plan preserved as historical context)
 - [src/docs/adr/README.md](src/docs/adr/README.md) — how to read/add ADRs
 - [src/docs/glossary/README.md](src/docs/glossary/README.md) — plain-English terms
 - [src/modules/README.md](src/modules/README.md) — feature module map
@@ -280,14 +281,15 @@ six types (`kpi`, `table`, `bar`, `line`, `area`, `pie`), and
 `executeWidget` / `viewDashboard` running each widget's whitelisted query
 contract through the Sprint 5 analytics engine with date presets +
 per-query caching (widget edits bust the cache via `updatedAt`
-revisions). Sprints 0–6 are complete (353 tests, 5/5 CI guards green).
+revisions). Sprints 0–7 are complete (**367 tests, 5/5 CI guards green,
+0 npm audit vulnerabilities**).
 
-The next work is **Sprint 7 — Governance (audit, access, compliance)**:
-real `AccessLog` / `ComplianceLog` surfaces on top of the Sprint 0
-`audit` plugin + the existing middleware shells. See
-[sprint-7.md](src/docs/phases/sprint-7.md). Do not start later sprints
-(reports, embed, notifications) — they are planned, not open; those
-surfaces stay fail-closed `501` stubs until their sprint lands.
+The next work is **Sprint 8 — Monitoring + Support**, which now also
+absorbs the originally-planned Sprint 7 Governance surfaces
+(`/access-logs/*`, `/compliance/*`, the `AuditLog` consumer, and the
+scheduler tick for `runDue` / `evaluateDue`). See
+[sprint-8.md](src/docs/phases/sprint-8.md). Do not start Sprint 9
+(embed + remaining analytics surfaces) until Sprint 8 lands.
 
 ---
 

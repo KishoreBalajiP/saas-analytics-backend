@@ -452,8 +452,10 @@ audit-log annotations, not in code.
 | Support Engineer → Account recovery | Reset | `module: 'support', action: 'account_recover', reason: ...` |
 
 Every row in this table is a row the `audit` plugin already emits;
-Sprint 7 persists them. Two of them (the impersonation rows) are
-emitted to *both* the audit log and the access log.
+Sprint 8 persists them (originally Sprint 7, re-scoped — see
+[`phases/sprint-7.md`](./phases/sprint-7.md)). Two of them (the
+impersonation rows) are emitted to *both* the audit log and the access
+log.
 
 ## Real-world Examples
 

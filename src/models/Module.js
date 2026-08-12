@@ -47,7 +47,7 @@ export const BUILTIN_MODULES = Object.freeze([
   'monitoring', 'notifications',
   'email_templates', 'audit_logs',
   'access_logs', 'compliance', 'support',
-  'dashboards',
+  'dashboards', 'reports', 'alerts',
 ]);
 
 /**

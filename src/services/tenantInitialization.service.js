@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Tenant Initialization Service (Sprint 3 - implemented).
  *
  * PURPOSE
@@ -45,13 +45,14 @@ import { invalidateScope } from './rbac.cache.service.js';
 const TENANT_PERMISSION_ACTIONS = Object.freeze({
   users: ['view', 'create', 'update', 'delete'],
   roles: ['view', 'create', 'update', 'delete', 'assign'],
-  settings: ['view', 'configure'],
-  feature_flags: ['view', 'configure'],
+  settings: ['view', 'configure', 'update', 'delete'],
+  feature_flags: ['view', 'configure', 'update', 'delete'],
   analytics: ['view', 'create', 'update', 'delete', 'export'],
   connectors: ['view', 'create', 'update', 'delete', 'configure'],
   dashboards: ['view', 'create', 'update', 'delete'],
   reports: ['view', 'create', 'update', 'delete', 'export'],
-  notifications: ['view', 'configure'],
+  notifications: ['view', 'configure', 'update', 'delete'],
+  alerts: ['view', 'create', 'update', 'delete', 'evaluate'],
   master_data: ['view'],
   email_templates: ['view', 'create', 'update', 'delete'],
 });
@@ -66,15 +67,16 @@ const DEFAULT_ROLES = Object.freeze({
     permissions: [
       ...P('users', ['view', 'create', 'update', 'delete']),
       ...P('roles', ['view', 'create', 'update', 'delete', 'assign']),
-      ...P('settings', ['view', 'configure']),
-      ...P('feature_flags', ['view', 'configure']),
+      ...P('settings', ['view', 'configure', 'update', 'delete']),
+      ...P('feature_flags', ['view', 'configure', 'update', 'delete']),
       ...P('analytics', ['view', 'create', 'update', 'delete', 'export']),
       ...P('connectors', ['view', 'create', 'update', 'delete', 'configure']),
       ...P('dashboards', ['view', 'create', 'update', 'delete']),
       ...P('reports', ['view', 'create', 'update', 'delete', 'export']),
-      ...P('notifications', ['view', 'configure']),
+      ...P('notifications', ['view', 'configure', 'update', 'delete']),
       ...P('master_data', ['view']),
       ...P('email_templates', ['view', 'create', 'update', 'delete']),
+      ...P('alerts', ['view', 'create', 'update', 'delete', 'evaluate']),
     ],
   },
   Admin: {
@@ -83,15 +85,16 @@ const DEFAULT_ROLES = Object.freeze({
     permissions: [
       ...P('users', ['view', 'create', 'update']),
       ...P('roles', ['view']),
-      ...P('settings', ['view', 'configure']),
-      ...P('feature_flags', ['view', 'configure']),
+      ...P('settings', ['view', 'configure', 'update', 'delete']),
+      ...P('feature_flags', ['view', 'configure', 'update', 'delete']),
       ...P('analytics', ['view', 'create', 'update', 'export']),
       ...P('connectors', ['view', 'create', 'update', 'configure']),
       ...P('dashboards', ['view', 'create', 'update']),
       ...P('reports', ['view', 'create', 'update', 'export']),
-      ...P('notifications', ['view', 'configure']),
+      ...P('notifications', ['view', 'configure', 'update', 'delete']),
       ...P('master_data', ['view']),
       ...P('email_templates', ['view', 'create', 'update']),
+      ...P('alerts', ['view', 'create', 'update', 'evaluate']),
     ],
   },
   Manager: {
@@ -104,6 +107,7 @@ const DEFAULT_ROLES = Object.freeze({
       ...P('dashboards', ['view', 'create', 'update']),
       ...P('reports', ['view', 'create', 'update']),
       ...P('notifications', ['view']),
+      ...P('alerts', ['view', 'create', 'update', 'evaluate']),
       ...P('master_data', ['view']),
     ],
   },
@@ -117,6 +121,7 @@ const DEFAULT_ROLES = Object.freeze({
       ...P('dashboards', ['view']),
       ...P('reports', ['view']),
       ...P('notifications', ['view']),
+      ...P('alerts', ['view']),
       ...P('master_data', ['view']),
     ],
   },

@@ -80,7 +80,12 @@ a daily cap per admin.
 
 ## Dependencies
 
-- Sprint 7 (audit + access logs).
+- Sprint 7 (Reports, Alerts, Notifications & Scheduling — delivered;
+  audit + access logs were originally planned here but moved into
+  Sprint 8 — see `phases/sprint-7.md`). Sprint 8 also picks up the
+  originally-planned Governance surfaces (`/access-logs/*`,
+  `/compliance/*`, the `AuditLog` consumer, and the scheduler tick
+  for `runDue` / `evaluateDue`).
 
 ## Testing
 

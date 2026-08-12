@@ -25,8 +25,6 @@ export default [
   'src/services/compliance.service.js',
   'src/services/masterData.service.js',
   'src/services/monitoring.service.js',
-  'src/services/notification.service.js',
-  'src/services/report.service.js',
   'src/services/support.service.js',
 
   // Phase 2 controllers
@@ -35,9 +33,7 @@ export default [
   'src/controllers/compliance.controller.js',
   'src/controllers/masterData.controller.js',
   'src/controllers/monitoring.controller.js',
-  'src/controllers/notification.controller.js',
   'src/controllers/permission.controller.js',
-  'src/controllers/report.controller.js',
   'src/controllers/role.controller.js',
   'src/controllers/setting.controller.js',
   'src/controllers/support.controller.js',

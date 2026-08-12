@@ -119,12 +119,15 @@ secret). The envelope is `enc:v1:<ctxHash>:<iv>:<tag>:<ciphertext>`.
 - `softDelete` - `deletedAt` / `deletedBy` + helpers
 - `paginate` - `mongoose-paginate-v2` wrapper
 - `optimisticConcurrency` - `mongoose-update-if-current` wrapper
-- `audit` - domain-event emitter consumed by Sprint 7
+- `audit` - domain-event emitter consumed by the Governance sprint
+  (Sprint 8; originally Sprint 7, re-scoped — see
+  [`phases/sprint-7.md`](./phases/sprint-7.md))
 
 **Consequences.**
 - Every tenant-owned model applies the same set; CI guard
   `check-models` flags drift.
-- The audit plugin emits lightweight events so Sprint 7 can subscribe
+- The audit plugin emits lightweight events so the Governance sprint
+  (Sprint 8; originally Sprint 7, re-scoped) can subscribe
   with a non-breaking API.
 
 ## ADR-008: Idempotency middleware with cached outcomes

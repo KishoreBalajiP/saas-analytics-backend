@@ -196,9 +196,10 @@ the surface Sprint 0 shipped.
 - **"Why infrastructure only?"** — Because every other sprint
   assumes this surface. Sprint 1 needs JWT + email + idempotency;
   Sprint 2 needs tenantScope; Sprint 3 needs optimisticConcurrency +
-  audit; Sprint 6 needs storage + queue; Sprint 7 needs audit +
-  access-log hooks. Building them mid-feature is a recipe for
-  shortcuts.
+  audit; Sprint 6 needs storage + queue; Sprint 8 needs audit +
+  access-log hooks (originally Sprint 7, re-scoped — see
+  [`sprint-7.md`](./sprint-7.md)). Building them mid-feature is a
+  recipe for shortcuts.
 
 ### Real-World Examples
 

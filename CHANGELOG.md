@@ -7,6 +7,163 @@ here. Dates are ISO 8601.
 
 ## [Unreleased] - Phase 2
 
+### Sprint 7 — Reports, Alerts, Notifications & Scheduling (close: 2026-08-12)
+
+Sprint 7 ships the analytics engine's **off-hot-path output**: scheduled,
+tenant-scoped report generation with JSON/CSV/XLSX export and execution
+history; threshold alerts evaluated through the same engine (event
+history + cooldown/deduplication + notification dispatch); the
+user-facing notification inbox; and the shared `runDue` / `evaluateDue`
+scheduling integration. Suite grew **353 → 367 tests** (+14).
+
+Verification (authoritative, 2026-08-12): `npm test` → **367 tests, 367
+pass, 0 fail, 0 cancelled, 0 skipped, 0 todo**. `npm run ci:guards` →
+**5 / 5 OK**. `npm audit` → **0 vulnerabilities**.
+
+> **Sprint 7 was re-scoped.** The original roadmap label for Sprint 7
+> was *Governance (Audit + Access + Compliance)* — that work moves to
+> Sprint 8; this slot was used for Reports + Alerts + Notifications +
+> Scheduling, which the Sprint 6 dashboards surface immediately depends
+> on. See [`phases/sprint-7.md`](./src/docs/phases/sprint-7.md) for the
+> full delivery record (the Governance plan is preserved there as
+> historical context).
+
+#### Added (models)
+
+- `src/models/Report.js` — `REPORT_FORMATS = ['json', 'csv', 'xlsx']`;
+  schedule (`enabled`, `format`, `cron`, `timezone`, `recipients[]`);
+  `runs[]` execution history (`runId`, `triggeredBy`, `format`, `status`,
+  `rowCount`, `resultKey`, `startedAt`, `finishedAt`); `nextRunAt`;
+  source `widget` / `query`. All five plugins.
+- `src/models/AlertRule.js` —
+  `ALERT_CONDITIONS = ['gt','gte','lt','lte','eq','neq','between']`;
+  `ALERT_SOURCES = ['widget','query']`;
+  `ALERT_CHANNELS = ['email','in_app']`; `cooldownMinutes`,
+  `lastTriggeredAt`, `nextEvaluationAt`, `enabled`,
+  `notification.{channels, recipients, template}`. All five plugins.
+- `src/models/AlertEvent.js` — event history; **`paginate` plugin added**
+  in Sprint 7 (the missing plugin was a real bug).
+- `src/models/Notification.js` — tenant/actor-scoped inbox + preferences.
+
+#### Added (services)
+
+- `src/services/report.service.js` — `create`, `update`, `list`, `get`,
+  `remove`, `run`, `exportReport`, `processRun`, `runDue`.
+  `sanitizeReportQuery` preserves `datasetId`. JSON/CSV/XLSX
+  serialisation of flattened connector rows.
+- `src/services/alert.service.js` — `create`, `update`, `list`, `get`,
+  `remove`, `evaluate`, `evaluateDue`, `runDue`. `sanitizeAlertQuery`
+  preserves `datasetId`. `evaluate` guards `enabled === false`
+  (returns `{ triggered: false, disabled: true }`) and dedupes against
+  `lastTriggeredAt` + `cooldownMinutes`.
+- `src/services/notification.service.js` — `listInbox`,
+  `getUnreadCount`, `markRead`, `markAllRead`, `remove`,
+  `getPreferences`, `updatePreferences`. All scoped to
+  `(tenantId, recipientId)`.
+
+#### Added (repositories)
+
+- `src/repositories/report.repository.js`,
+  `src/repositories/alert.repository.js`,
+  `src/repositories/notification.repository.js`.
+
+#### Added (controllers + routes)
+
+- `src/routes/report.routes.js` — full surface incl. `/:id/run` and
+  `/:id/export?format=…`; `permission('reports', …)` gate; raw MongoDB
+  operators rejected by the validator.
+- `src/routes/alert.routes.js` — full surface incl. `/:id/evaluate`
+  and `/:id/events`; `permission('alerts', …)` gate; registered in
+  `src/routes/index.js`.
+- `src/routes/notification.routes.js` — inbox, unread-count,
+  mark-read (single + all), delete, preferences;
+  `permission('notifications', …)` gate.
+- `src/controllers/report.controller.js`,
+  `src/controllers/alert.controller.js`,
+  `src/controllers/notification.controller.js`.
+
+#### Added (validators)
+
+- `src/validators/report.validators.js` (`reportListSchema`,
+  `reportCreateSchema`, `reportUpdateSchema`, `reportRunSchema`,
+  `reportDownloadSchema`).
+- `src/validators/alert.validators.js` (`alertListSchema`,
+  `alertCreateSchema`, `alertUpdateSchema`, `alertEventsSchema`).
+- `src/validators/notification.validators.js` (`listSchema`,
+  `idSchema`, `preferencesSchema`).
+- `src/validators/report.validator.js` + `alert.validator.js` +
+  `notification.validator.js` — single-schema companion files.
+
+#### Added (worker + scheduling)
+
+- `src/jobs/analytics.worker.js` — single consumer that branches on
+  `job.data.type`: `report-run` → `reportService.processRun`,
+  `alert-evaluate` → `alertService.evaluate`. **Passes `tenantId`
+  through** alongside `params` (see Fixed bugs).
+- `report.service.runDue` / `alert.service.evaluateDue` + `runDue`
+  drive scheduled work; `nextRunAt` / `nextEvaluationAt` are advanced
+  per call.
+
+#### Added (RBAC)
+
+- `src/services/tenantInitialization.service.js` — seeds `reports.*`
+  (`view/create/update/delete/run`), `alerts.*`
+  (`view/create/update/delete/evaluate`), and `notifications.*`
+  (`view/configure/update/delete`) into every tenant role profile.
+
+#### Fixed (real bugs — not test hacks)
+
+- **`sanitizeReportQuery` stripped `datasetId`** so query-source
+  reports failed execution with "report query requires a datasetId".
+  Now preserved.
+- **`sanitizeAlertQuery` stripped `datasetId`** so query-source
+  alerts lost their dataset and never evaluated. Now preserved.
+- **`AlertEvent` model lacked the `paginate` plugin** that
+  `alertRepository.listEvents` relies on (HTTP 500 on `GET
+  /alerts/:id/events`). Added.
+- **`analytics.worker.js` dropped `tenantId`** (it lived at
+  `job.data.tenantId`, sibling to `params`), so `processRun` /
+  `evaluate` ran with `tenantId: undefined` and the engine returned 0
+  rows for reports. Worker now passes `tenantId` through to both
+  service methods.
+
+#### Removed
+
+- `src/services/reportQueryBuilder.service.js` — orphaned; the real
+  flow is `report.service` over the analytics engine + `Connector` as
+  dataset.
+- `src/services/alertEvaluator.service.js` — orphaned; the real flow
+  is `alert.service.evaluate` over the analytics engine.
+
+#### Added (testing — 14 tests)
+
+- `tests/reports/report.routes.integration.test.js` (3) — CRUD +
+  RBAC 401/403, tenant isolation (cross-tenant 404), run → ready with
+  rows, JSON/CSV export download, security (raw operators / `$where` /
+  `$expr` rejected).
+- `tests/alerts/alert.routes.integration.test.js` (5) — CRUD + RBAC
+  401/403, evaluation → event + notification, **datasetId contract**
+  (create → reload → evaluate triggers), **disabled guard**
+  (manual `/evaluate` against a disabled alert returns
+  `{ triggered: false, disabled: true }`).
+- `tests/alerts/alert.scheduler.test.js` (4) — `evaluateDue` fires
+  due alerts and cooldown-dedupes; `runDue` enqueues due reports and
+  advances `nextRunAt`; **disabled alerts skipped by scheduler**;
+  **re-trigger after cooldown expires**.
+- `tests/notifications/notification.routes.integration.test.js` (2)
+  — inbox lifecycle + RBAC 401/403.
+
+#### Added (documentation)
+
+- `src/docs/phases/sprint-7.md` rewritten as the actual-delivery
+  record (preserves the original Governance plan as historical
+  context); `src/docs/STATUS.md` updated with Sprint 7 in the Sprint
+  Log, At-a-Glance, Test Coverage, and Sprint 7 retro notes;
+  `src/modules/alerts/STATUS.md`,
+  `src/modules/analytics/reports/STATUS.md`,
+  `src/modules/platform/notifications/STATUS.md` marked
+  ✅ Implemented; `AI_CONTEXT.md` updated.
+
 ### Sprint 6 — Dashboards & Widgets (close: 2026-08-12)
 
 Sprint 6 ships the first user-facing analytics surface on top of the

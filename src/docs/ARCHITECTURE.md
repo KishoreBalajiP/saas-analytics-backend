@@ -25,13 +25,14 @@
         │   ├── /auth/*      (Sprint 1)          │
         │   ├── /admin-auth/* (Sprint 1)         │
         │   ├── /tenants/*   (Sprint 2)          │
-        │   ├── /roles/*     (Sprint 3)          │
-        │   ├── /permissions/* (Sprint 3)        │
-        │   ├── /connectors/* (Sprint 6)         │
-        │   ├── /dashboards/* (Sprint 9)         │
-        │   ├── /reports/*   (Sprint 9)          │
-        │   └── /audit-logs/*, /access-logs/*,  │
-        │       /compliance/*  (Sprint 7)       │
+│   ├── /roles/*     (Sprint 3)          │
+│   ├── /permissions/* (Sprint 3)        │
+│   ├── /connectors/* (Sprint 4)         │
+│   ├── /dashboards/* (Sprint 6)         │
+│   ├── /reports/*, /alerts/*,          │
+│   │   /notifications/*  (Sprint 7)     │
+│   └── /audit-logs/*, /access-logs/*,  │
+│       /compliance/*  (Sprint 8)       │
         └─────────────────┬──────────────────────┘
                           │
                           ▼

@@ -30,6 +30,11 @@ import { apiLimiter } from './middleware/rateLimiter.middleware.js';
 import { notFoundHandler } from './middleware/notFound.middleware.js';
 import { errorHandler } from './middleware/error.middleware.js';
 import apiRoutes from './routes/index.js';
+import { registerAnalyticsWorker } from './jobs/analytics.worker.js';
+
+// Register the analytics queue consumer (report generation + alert
+// evaluation) once per process so enqueued jobs are actually processed.
+registerAnalyticsWorker();
 
 const app = express();
 

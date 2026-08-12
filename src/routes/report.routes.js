@@ -1,46 +1,40 @@
-/**
- * /api/v1/reports routes - Scheduled + ad-hoc analytics reports.
+﻿/**
+ * /api/v1/reports routes (Sprint 7 - implemented).
  *
- * WHY IT EXISTS
- *   Reports produce frozen artefacts (CSV/XLSX/PDF) delivered via email
- *   or download. Parameters are persisted with each run so audits can
- *   reconstruct what the user saw. Backed by `analytics/reports/`.
+ * ENDPOINTS
+ *   - GET    /                       list            reports.view
+ *   - POST   /                       create          reports.create
+ *   - GET    /:id                    detail+history  reports.view
+ *   - PATCH  /:id                    update          reports.update
+ *   - POST   /:id/run                ad-hoc run      reports.export
+ *   - DELETE /:id                    soft-delete     reports.delete
+ *   - GET    /:id/download           artefact URL    reports.export
  *
- * RESPONSIBILITY (planned, NOT implemented)
- *   - GET    /                       - list (tenant-scoped)
- *   - POST   /                       - create
- *   - GET    /:id                    - detail + latest run status
- *   - PATCH  /:id                    - update parameters / schedule
- *   - POST   /:id/run                - ad-hoc run (queued)
- *   - DELETE /:id                    - soft-delete
- *   - GET    /:id/download           - latest presigned URL
- *
- * HOW TO EXTEND
- *   - Runs always go through `src/queues/analytics.queue.js`.
- *   - Result artefacts live in `src/storage/`, not in MongoDB.
+ * CODING GUIDELINES
+ *   - Runs always go through `src/queues/analytics.queue.js`; the worker
+ *     (`report.service.processRun`) generates the artefact off the hot path.
+ *   - Artefacts live in `src/storage/`, never in MongoDB.
  */
 
 import { Router } from 'express';
-import asyncHandler from '../utils/asyncHandler.js';
+import { authenticate } from '../middleware/auth.middleware.js';
+import { resolveTenant } from '../middleware/tenant.middleware.js';
+import { permission } from '../middleware/permission.middleware.js';
+import { validate } from '../validators/index.js';
+import reportValidator from '../validators/report.validator.js';
+import reportController from '../controllers/report.controller.js';
 
 const router = Router();
 
-const notImplemented = (op) =>
-  asyncHandler(async (_req, res) => {
-    res.status(501).json({
-      success: false,
-      statusCode: 501,
-      message: `${op} is not implemented yet (Phase 1.2 architecture placeholder)`,
-      hint: 'See src/modules/analytics/reports/README.md',
-    });
-  });
+const guarded = (action, ...mw) => [authenticate, resolveTenant, permission('reports', action), ...mw];
+const idParam = { params: { id: 'objectId|required' } };
 
-router.get('/', notImplemented('GET /reports'));
-router.post('/', notImplemented('POST /reports'));
-router.get('/:id', notImplemented('GET /reports/:id'));
-router.patch('/:id', notImplemented('PATCH /reports/:id'));
-router.post('/:id/run', notImplemented('POST /reports/:id/run'));
-router.delete('/:id', notImplemented('DELETE /reports/:id'));
-router.get('/:id/download', notImplemented('GET /reports/:id/download'));
+router.get('/', guarded('view', validate(reportValidator.reportListSchema)), reportController.listReports);
+router.post('/', guarded('create', validate(reportValidator.reportCreateSchema)), reportController.createReport);
+router.get('/:id', guarded('view', validate(idParam)), reportController.getReport);
+router.patch('/:id', guarded('update', validate(reportValidator.reportUpdateSchema)), reportController.updateReport);
+router.post('/:id/run', guarded('export', validate(reportValidator.reportRunSchema)), reportController.runReport);
+router.delete('/:id', guarded('delete', validate(idParam)), reportController.deleteReport);
+router.get('/:id/download', guarded('export', validate(reportValidator.reportDownloadSchema)), reportController.downloadReport);
 
 export default router;

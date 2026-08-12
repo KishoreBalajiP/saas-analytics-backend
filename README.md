@@ -2,11 +2,13 @@
 
 Production-grade foundation for a **multi-tenant SaaS analytics platform**.
 
-> **Phase 2:** Sprints 0–6 complete — shared infrastructure, authentication for
+> **Phase 2:** Sprints 0–7 complete — shared infrastructure, authentication for
 > both portals, IAM + RBAC, Multi-Tenancy, Connector Platform (CSV + Webhook),
-> Analytics Engine + Master Data, and Dashboards & Widgets. Sprint 7 — Governance —
-> is planned. See `src/docs/STATUS.md` for the daily-read state and
-> `CHANGELOG.md` for the roll-up.
+> Analytics Engine + Master Data, Dashboards & Widgets, and (Sprint 7,
+> re-scoped) Reports, Alerts, Notifications & Scheduling. The originally-
+> planned Sprint 7 Governance surfaces move to Sprint 8. See
+> `src/docs/STATUS.md` for the daily-read state and `CHANGELOG.md` for the
+> roll-up.
 
 ---
 
@@ -157,7 +159,7 @@ Dashboards & Widgets. See `src/docs/STATUS.md` for the daily-read state and
 | 4      | Connector Platform (CSV + Webhook connectors, sync engine)   | done   |
 | 5      | Analytics Engine + Master Data (query engine, history, exports, reference catalogue) | done |
 | 6      | Dashboards & Widgets (authoring, lifecycle, sharing, execution, cache) | done |
-| 7      | Governance: Audit + Access + Compliance                     | planned|
+| 7      | Reports, Alerts, Notifications & Scheduling (re-scoped from Governance; scheduled report generation + JSON/CSV/XLSX export, threshold alerts via the analytics engine with cooldown + notifications, notification inbox) | done |
 | 8      | Monitoring + Support                                        | planned|
 | 9      | Reports + Embed                                             | planned|
 

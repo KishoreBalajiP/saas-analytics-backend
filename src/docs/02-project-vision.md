@@ -200,7 +200,7 @@ choice.
 | "Security middleware must never be silently skipped" | Every stub middleware returns `501` via `ApiError.notImplemented()` | [`src/middleware/auth.middleware.js`](../../src/middleware/auth.middleware.js) · [`src/utils/ApiError.js`](../../src/utils/ApiError.js) |
 | "Switching infra provider should not be a refactor" | Service wrappers + provider selection via config | [`src/services/`](../../src/services/) |
 | "Architecture rules must be enforced" | CI guard scripts under `scripts/ci/` | [`scripts/ci/`](../../scripts/ci/) |
-| "Every mutation must be auditable" | `audit` plugin + Sprint 7 consumer | [`src/models/plugins/audit.js`](../../src/models/plugins/audit.js) |
+| "Every mutation must be auditable" | `audit` plugin + Sprint 8 consumer (originally Sprint 7, re-scoped — see [`phases/sprint-7.md`](./phases/sprint-7.md)) | [`src/models/plugins/audit.js`](../../src/models/plugins/audit.js) |
 | "Retries must not cause duplicate writes" | `idempotency` middleware + cached outcomes | [`src/middleware/idempotency.middleware.js`](../../src/middleware/idempotency.middleware.js) |
 | "The same code must run anywhere" | `degraded mode` boot + platform-agnostic `server.js` | [`src/server.js`](../../src/server.js) |
 

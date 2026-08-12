@@ -38,7 +38,8 @@
 ### Access log
 A per-request HTTP trace: method, path, status, latency, request
 size, response size, IP, UA, requestId, error. Never logs response
-body. Sprint 7 wires the persistence.
+body. Sprint 8 wires the persistence (originally Sprint 7 —
+re-scoped; see [`phases/sprint-7.md`](../phases/sprint-7.md)).
 
 ### AES-256-GCM
 A symmetric encryption algorithm with built-in authentication. We
@@ -62,7 +63,8 @@ parallelism: 1`.
 ### Audit log
 A record of every mutation: actor, action, resource, before,
 after, reason, IP, UA, requestId, result. Captured by the `audit`
-plugin; Sprint 7 wires the persistence.
+plugin; Sprint 8 wires the persistence (originally Sprint 7 —
+re-scoped; see [`phases/sprint-7.md`](../phases/sprint-7.md)).
 
 ### Authenticate
 Middleware (`auth.middleware.js#authenticate`) that verifies the
@@ -190,7 +192,8 @@ WebSocket, scheduler, queue, cache, storage, encryption, RBAC.
 
 ### GDPR
 General Data Protection Regulation. EU privacy law. Drives the
-compliance surface (Sprint 7).
+compliance surface (Sprint 8 — originally Sprint 7, re-scoped; see
+[`phases/sprint-7.md`](../phases/sprint-7.md)).
 
 ### Graceful shutdown
 A shutdown sequence that stops accepting new requests, drains

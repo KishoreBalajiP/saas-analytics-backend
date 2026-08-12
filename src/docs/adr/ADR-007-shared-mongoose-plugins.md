@@ -18,7 +18,9 @@ Five plugins, applied via a single import path
 - `softDelete` — `deletedAt` / `deletedBy` + helpers.
 - `paginate` — `mongoose-paginate-v2` wrapper.
 - `optimisticConcurrency` — `mongoose-update-if-current` wrapper.
-- `audit` — EventEmitter domain events for Sprint 7 to subscribe.
+- `audit` — EventEmitter domain events for the Governance consumer
+  (originally planned Sprint 7, re-scoped to Sprint 8; see
+  [`phases/sprint-7.md`](../phases/sprint-7.md)).
 
 ## Consequences
 
@@ -26,8 +28,10 @@ Five plugins, applied via a single import path
 
 - Every tenant-owned model applies the same set; CI guard
   `check-models` flags drift.
-- The audit plugin emits lightweight events so Sprint 7 can
-  subscribe with a non-breaking API.
+- The audit plugin emits lightweight events so the Governance
+  consumer (Sprint 8; originally Sprint 7, re-scoped — see
+  [`phases/sprint-7.md`](../phases/sprint-7.md)) can subscribe with a
+  non-breaking API.
 - Single import path (`src/models/plugins/`) for all plugins.
 
 **Harder:**

@@ -104,8 +104,10 @@ endpoints. Argon2id + JWT + refresh-token rotation + account lockout
   forgot / reset / MFA schemas.
 
 ### Audit
-- Every login / logout / lockout emits an `audit` event consumed in
-  Sprint 7 (the `audit` plugin is already in place).
+- Every login / logout / lockout emits an `audit` event consumed by
+  the Governance sprint (Sprint 8; originally Sprint 7, re-scoped —
+  see [`sprint-7.md`](./sprint-7.md)). The `audit` plugin is already in
+  place.
 
 ## Dependencies
 
@@ -191,7 +193,7 @@ with MFA). Sprint 1 is what makes step 3 possible.
 | Do | Why |
 | --- | --- |
 | **Use the Sprint 0 services, not vendor SDKs directly.** | The CI guard enforces it; the rule exists for a reason. |
-| **Audit every auth event.** | Sprint 7 wires the consumer; the events are already emitted. |
+| **Audit every auth event.** | Sprint 8 wires the consumer (originally Sprint 7, re-scoped — see [`sprint-7.md`](./sprint-7.md)); the events are already emitted. |
 
 ## Common Mistakes
 

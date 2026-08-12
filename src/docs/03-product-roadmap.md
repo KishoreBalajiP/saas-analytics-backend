@@ -40,8 +40,8 @@
 
 ## Current Status
 
-> **Status:** `In Progress` — Phase 2 (Sprints 0–6 complete; Sprint 7 — Governance — planned; Sprints 8–9 planned).
-> **Sprint:** Sprint 6 (✅ complete — Dashboards & Widgets) → Sprint 7 — Governance (🕏 planned).
+> **Status:** `In Progress` — Phase 2 (Sprints 0–7 complete; Sprint 7 re-scoped to Reports, Alerts, Notifications & Scheduling; Sprints 8–9 planned).
+> **Sprint:** Sprint 7 (✅ complete — Reports, Alerts, Notifications & Scheduling — re-scoped from Governance) → Sprint 8 — Monitoring + Support (+ Governance surfaces).
 > **Owner:** Engineering team.
 
 ## Business Perspective
@@ -321,11 +321,11 @@ Sprint 0 (Foundation — shared utilities, drivers, plugins)
         └── Sprint 2 (IAM + RBAC)
             └── Sprint 3 (Multi-Tenancy)
                 ├── Sprint 4 (Connector Platform: CSV + Webhook)
-                ├── Sprint 5 (Platform: Settings / Feature Flags surface, Notifications)
-                ├── Sprint 6 (Master Data: countries, currencies, ...)
-                └── Sprint 7 (Governance: Audit + Access + Compliance)
-                    ├── Sprint 8 (Monitoring + Support)
-                    └── Sprint 9 (Analytics + Embed)
+                ├── Sprint 5 (Analytics Engine + Master Data — re-scoped)
+                ├── Sprint 6 (Dashboards & Widgets — re-scoped)
+                ├── Sprint 7 (Reports, Alerts, Notifications & Scheduling — re-scoped from Governance; ✅ complete)
+                │   ├── Sprint 8 (Monitoring + Support + Governance surfaces)
+                │   └── Sprint 9 (Analytics + Embed)
 ```
 
 ### Completion Criteria

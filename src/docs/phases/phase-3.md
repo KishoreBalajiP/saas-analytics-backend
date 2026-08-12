@@ -62,8 +62,8 @@ The implementation is a slot-fill, not a rewrite.
 | Multi-region | `services/queue.service.js` + `services/cache.service.js` are already provider-agnostic |
 | SIEM forwarder | `audit` plugin emits events ([`models/plugins/audit.js`](../../../src/models/plugins/audit.js)) |
 | Cold archival to S3 | `services/storage.service.js` already has S3 driver |
-| Hash-chain tamper evidence | `audit` plugin events; `models/AuditLog.js` (Sprint 7) gains a `previousHash` field |
-| Public compliance endpoint | `compliance/` module route shells (Sprint 7) |
+| Hash-chain tamper evidence | `audit` plugin events; `models/AuditLog.js` (Sprint 8; originally Sprint 7, re-scoped — see [`sprint-7.md`](./sprint-7.md)) gains a `previousHash` field |
+| Public compliance endpoint | `compliance/` module route shells (Sprint 8; originally Sprint 7, re-scoped) |
 | MongoDB connector | `BaseConnector` framework (Phase 1.1) |
 | Google Sheets connector | `BaseConnector` framework |
 | Push notifications | `notifications/` module channel registry (Sprint 5) |
@@ -91,12 +91,13 @@ sprint: tests, docs, CI guard updates, `STATUS.md` updated.
    per-region scoping; data-residency controls on `Tenant` model.
 6. **SIEM forwarder** — new `governance/siem/` module; consumes the
    `audit` events; ships to Splunk / Datadog / Elastic via webhook.
-7. **Cold archival to S3** — `jobs/cleanup.job.js` (Sprint 7) ships a
-   real implementation that copies records past retention to S3 and
-   deletes them from MongoDB.
-8. **Hash-chain tamper evidence** — `models/AuditLog.js` (Sprint 7)
-   gains a `previousHash` field; insert computes `sha256(previousHash
-   + payload)`.
+7. **Cold archival to S3** — `jobs/cleanup.job.js` (Sprint 8;
+   originally Sprint 7, re-scoped — see [`sprint-7.md`](./sprint-7.md))
+   ships a real implementation that copies records past retention to S3
+   and deletes them from MongoDB.
+8. **Hash-chain tamper evidence** — `models/AuditLog.js` (Sprint 8;
+   originally Sprint 7, re-scoped) gains a `previousHash` field;
+   insert computes `sha256(previousHash + payload)`.
 9. **Public compliance endpoint** — `compliance/` route shell (Sprint
    7) gains a public surface via a signed token in the URL.
 10. **MongoDB connector** — `BaseConnector` subclass in
