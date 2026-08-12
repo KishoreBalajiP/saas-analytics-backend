@@ -2,11 +2,11 @@
 
 Production-grade foundation for a **multi-tenant SaaS analytics platform**.
 
-> **Phase 2:** Sprints 0–3 complete — shared infrastructure, authentication for
-> both portals, IAM + RBAC, and Multi-Tenancy (tenant lifecycle, onboarding,
-> auth gate, tenant settings, feature flags). Sprint 4 — Connector Platform
-> (CSV + Webhook) — is in progress. See `src/docs/STATUS.md` for the daily-read
-> state and `CHANGELOG.md` for the roll-up.
+> **Phase 2:** Sprints 0–6 complete — shared infrastructure, authentication for
+> both portals, IAM + RBAC, Multi-Tenancy, Connector Platform (CSV + Webhook),
+> Analytics Engine + Master Data, and Dashboards & Widgets. Sprint 7 — Governance —
+> is planned. See `src/docs/STATUS.md` for the daily-read state and
+> `CHANGELOG.md` for the roll-up.
 
 ---
 
@@ -143,8 +143,9 @@ New in Sprint 0:
 ## Sprint Status
 
 Sprint 0 ships shared infrastructure; Sprints 1–3 ship authentication,
-IAM/RBAC and multi-tenancy. Sprint 4 — Connector Platform — is in
-progress. See `src/docs/STATUS.md` for the daily-read state and
+IAM/RBAC and multi-tenancy; Sprint 4 ships the Connector Platform;
+Sprint 5 ships the Analytics Engine + Master Data; Sprint 6 ships
+Dashboards & Widgets. See `src/docs/STATUS.md` for the daily-read state and
 `CHANGELOG.md` for the detailed roll-up.
 
 | Sprint | Scope                                                       | Status |
@@ -153,12 +154,12 @@ progress. See `src/docs/STATUS.md` for the daily-read state and
 | 1      | Authentication (User, Admin, MFA)                           | done   |
 | 2      | IAM (Admins, Tenants, Users, RBAC)                          | done   |
 | 3      | Multi-Tenancy (tenant lifecycle, onboarding, auth gate, settings, feature flags) | done |
-| 4      | Connector Platform (CSV + Webhook connectors, sync engine)   | in progress |
-| 5      | Platform: Settings surface, Feature Flags surface, Notifications | planned |
-| 6      | Master Data (countries, currencies, timezones, plans, languages) | planned |
+| 4      | Connector Platform (CSV + Webhook connectors, sync engine)   | done   |
+| 5      | Analytics Engine + Master Data (query engine, history, exports, reference catalogue) | done |
+| 6      | Dashboards & Widgets (authoring, lifecycle, sharing, execution, cache) | done |
 | 7      | Governance: Audit + Access + Compliance                     | planned|
 | 8      | Monitoring + Support                                        | planned|
-| 9      | Analytics + Embed                                           | planned|
+| 9      | Reports + Embed                                             | planned|
 
 ## Deployment
 

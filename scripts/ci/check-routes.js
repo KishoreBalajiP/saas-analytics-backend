@@ -59,11 +59,29 @@ function stripComments(source) {
  * Check whether every `router.<verb>(...)` call in `source` is either a
  * not-implemented stub or carries an auth middleware.
  *
+ * Routes that mount a local wrapper (e.g. `guarded('view', ...)`) are also
+ * compliant, provided that wrapper is DEFINED with an auth middleware in its
+ * body - so an unauthenticated route cannot hide behind an arbitrary name.
+ *
  * @param {string} source
  * @returns {boolean}
  */
 function isCompliant(source) {
   const cleaned = stripComments(source);
+
+  // Names of local wrappers whose bodies explicitly mount an auth middleware,
+  // e.g. `const guarded = (action, ...mw) => [authenticate, ..., ...mw];`.
+  const wrapperPattern =
+    /(?:const|let)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:\([^)]*\)\s*=>\s*)?\[[^\]]*?(?:authenticate|adminAuth|optionalAuthenticate)[^\]]*?\]/g;
+  const wrappers = new Set();
+  let wrapperMatch;
+  while ((wrapperMatch = wrapperPattern.exec(cleaned)) !== null) {
+    wrappers.add(wrapperMatch[1]);
+  }
+  const wrapperUse = wrappers.size
+    ? new RegExp(`\\b(?:${[...wrappers].join('|')})\\s*\\(`)
+    : null;
+
   const routePattern = /router\.(get|post|put|patch|delete)\s*\(([^;]*?)\)/g;
   let match;
   let realCount = 0;
@@ -71,6 +89,7 @@ function isCompliant(source) {
     const args = match[2];
     if (/notImplemented|notImplementedStub/.test(args)) continue;
     if (/authenticate|adminAuth|optionalAuthenticate/.test(args)) continue;
+    if (wrapperUse && wrapperUse.test(args)) continue;
     if (/ci:routes-exempt/.test(args)) continue;
     realCount += 1;
   }

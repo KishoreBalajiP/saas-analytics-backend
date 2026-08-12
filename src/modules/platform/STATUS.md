@@ -1,13 +1,21 @@
 # Module — Status
 
-**Sprint:** 0 (foundation)
-**Status:** 📝 Planned (Phase 2)
-**Implements:** architecture-only contracts
-**Real source files:** none yet
-**Hook points:** shared infrastructure (cache/queue/storage/email + Mongoose plugins) is in place for Sprint 1+
+**Sprint:** 0 (foundation) + 5 (Master Data)
+**Status:** 🟡 Partial
 
-Sprint 0 ships only the shared infrastructure this module will depend on.
-The module itself is still a README + 501 shell.
+**Implements:**
 
-The next sprint that touches this module is documented in the parent
-`CHANGELOG.md` and `src/docs/DECISIONS.md`.
+- **Master Data (Sprint 5 — ✅ Implemented):** global reference catalogue
+  (`src/models/MasterData.js`, `src/services/masterData.service.js`,
+  `src/routes/master-data.routes.js`) — admin write, public cached read.
+  See `platform/master-data/STATUS.md`.
+
+**Still fail-closed stubs (501):**
+
+- `/settings/*`, `/feature-flags/*` — the engines already ship inside
+  Sprint 3 (`setting.service.js`, `featureFlag.service.js`, wired through
+  the `/tenants/*` surface); the standalone surfaces remain stubs.
+- `/notifications/*`, `/email-templates/*` — Sprint 5 plan deferred.
+
+**Depends on:** Sprint 0 (cache), Sprint 3 (settings/flags engines),
+Sprint 2 (admin RBAC).

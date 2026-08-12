@@ -12,7 +12,7 @@
 
 > **Note (re-scope):** Sprint 4 was originally Master Data. Connectors
 > are pulled forward to Sprint 4 (user prioritisation); Master Data
-> moves to [Sprint 6](./sprint-6.md).
+> moves to [Sprint 5](./sprint-5.md).
 
 ---
 
@@ -35,9 +35,11 @@
 
 ## Current Status
 
-> **Status:** `In Progress`.
-> **Sprint:** Sprint 4.
+> **Status:** `Complete` (Sprint 4 closed).
+> **Sprint:** Sprint 4 — Connector Platform (CSV + Webhook).
 > **Owner:** Engineering team.
+> **Verification:** 285 tests total; CI 5/5 green; `npm audit` clean.
+> The sprint shipped as planned — every deliverable below is implemented.
 
 ## Business Perspective
 
@@ -131,7 +133,7 @@ unique key so replays never duplicate rows.
 
 - Sprint 0 (queue + storage + encryption), Sprint 1 (auth),
   Sprint 2 (RBAC + permission middleware), Sprint 3 (tenant isolation +
-  settings). No dependency on master data (now Sprint 6).
+  settings). No dependency on master data (now Sprint 5).
 
 ## Testing
 
@@ -232,12 +234,12 @@ customers have two ingestion paths and the framework is proven.
 
 - [`phase-2.md`](./phase-2.md) — phase
 - [`sprint-3.md`](./sprint-3.md) — previous (Multi-Tenancy)
-- [`sprint-5.md`](./sprint-5.md) — next
+- [`sprint-5.md`](./sprint-5.md) — next (Analytics Engine + Master Data)
 - [`../backend/connectors.md`](../backend/connectors.md) — deep dive
 
 ## Last Updated
 
-- **Sprint:** Sprint 4 open (Connector Platform)
+- **Sprint:** Sprint 4 close (Connector Platform)
 - **Phase:** Phase 2 — Implementation
-- **Date:** 2026-08-08
-- **Author:** Engineering (Sprint 4)
+- **Date:** 2026-08-12
+- **Author:** Engineering (Sprint 4 close)

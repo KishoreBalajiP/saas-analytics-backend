@@ -7,6 +7,209 @@ here. Dates are ISO 8601.
 
 ## [Unreleased] - Phase 2
 
+### Sprint 6 — Dashboards & Widgets (close: 2026-08-12)
+
+Sprint 6 ships the first user-facing analytics surface on top of the
+Sprint 5 engine: tenant-scoped dashboard + widget authoring, lifecycle,
+sharing, and cached execution. Suite grew 325 → 353 tests.
+
+> **Re-scope note:** the original Sprint 6 plan was Master Data. Master
+> Data moved into [Sprint 5](#sprint-5--analytics-engine--master-data-close-2026-08-12)
+> (analytics engine + reference catalogue); Sprint 6 delivered Dashboards
+> & Widgets.
+
+#### Added (models)
+
+- `src/models/Dashboard.js` — real schema (`DASHBOARD_STATUSES` draft/
+  published/archived, `DATE_RANGE_PRESETS` today/yesterday/last_7_days/
+  last_30_days/this_month/previous_month/custom, share entries
+  `{email, role, expiresAt}`, `DASHBOARD_LIMITS` with
+  `MAX_WIDGETS_PER_DASHBOARD` = 30 + `WIDGET_CACHE_TTL_SEC` = 300;
+  tenantScope, softDelete, paginate, optimisticConcurrency, audit).
+- `src/models/Widget.js` — real schema (`WIDGET_TYPES` kpi/table/bar/
+  line/area/pie, `QUERY_FIELDS` whitelist for the safe query contract,
+  `WIDGET_LIMITS`; all five plugins, index `{tenantId, dashboardId}`).
+
+#### Added (services)
+
+- `src/services/dashboard.service.js` — dashboard CRUD + `publish` /
+  `duplicate` / soft-delete, email-grant `shareDashboard`/`revokeShare`
+  (audited), widget CRUD scoped by `(tenantId, dashboardId)`,
+  `executeWidget` + `viewDashboard` (partial failures per-widget).
+  Owns query-contract whitelisting, layout/filter sanitisation, and the
+  cache-key policy (widget/dashboard `updatedAt` revisions bust cached
+  results; analytics TTL otherwise governs).
+- `src/services/widget.service.js` — six widget types with layout +
+  query-contract validation.
+
+#### Added (routes / controller / validator)
+
+- `src/routes/dashboard.routes.js` — real, authenticated `GET/POST/PATCH/
+  DELETE` `/api/v1/dashboards/*` incl. `/:id/publish`, `/:id/duplicate`,
+  `/:id/share`, `/:id/execute`, `/:id/widgets/*` + widget execute —
+  behind `authenticate → resolveTenant → permission('dashboards',
+  <action>)`; running a widget additionally requires `analytics.view`.
+- `src/controllers/dashboard.controller.js` +
+  `src/validators/dashboard.validator.js` — thin handlers + schemas.
+
+#### Added (testing)
+
+- `tests/dashboards/dashboard.service.test.js` (9) — CRUD/lifecycle/share.
+- `tests/dashboards/widget.service.test.js` (8) — widget CRUD + types.
+- `tests/dashboards/dashboard.execution.test.js` (7) — engine
+  integration, cache miss→hit + edit-bust, tenant isolation, fail-closed
+  (404 unknown, 400 foreign/deleted dataset), date-preset application,
+  partial failures.
+- `tests/dashboards/dashboard.routes.integration.test.js` (4) — HTTP
+  end-to-end lifecycle + 401/403/422 + cross-tenant 404.
+
+#### Fixed (CI guard)
+
+- `scripts/ci/check-routes.js` — `isCompliant()` now recognises local
+  wrapper helpers that embed an auth middleware in their body (the
+  dashboards `guarded(...)` wrapper spreads `[authenticate, resolveTenant,
+  permission(...)]`), instead of requiring a literal `authenticate` in
+  every route argument. Verified against a temporary unprotected route
+  (still flagged) and the real routes (pass).
+
+#### Added (documentation)
+
+- `src/docs/phases/sprint-6.md` rewritten as the Dashboards & Widgets
+  completion record (was the stale Master Data plan); `STATUS.md`,
+  `src/modules/analytics/STATUS.md` +
+  `src/modules/analytics/dashboards/STATUS.md`, `CHANGELOG.md` +
+  `AI_CONTEXT.md` updated for the sprint close.
+
+### Sprint 5 — Analytics Engine + Master Data (close: 2026-08-12)
+
+Sprint 5 ships the tenant-scoped analytics query engine over ingested
+connector rows (filters, date presets, pagination, `groupBy` + metrics,
+cached execution, run history) and the platform-wide reference catalogue.
+Suite grew 285 → 325 tests.
+
+> **Re-scope note:** the original Sprint 5 plan was "Platform: settings,
+> feature flags, notifications" surfaces. The engines already shipped
+> inside Sprint 3 (`setting.service.js` / `featureFlag.service.js`), so
+> the standalone surfaces stayed fail-closed stubs and Sprint 5 delivered
+> the analytics engine + master data (which Sprint 6's dashboards need).
+
+#### Added (engine + service)
+
+- `src/services/analytics.engine.js` — compiles a normalised query into a
+  single MongoDB aggregation over `ConnectorRow` (no Node materialisation):
+  filters (`eq, neq, in, nin, gt, gte, lt, lte, exists`), `filtersOp`
+  and/or, date-range window, metrics (`count, sum, avg, min, max`),
+  `groupBy` aggregation (`groupMode: 'grouped'`) or raw rows
+  (`groupMode: 'raw'`), sort, pagination (default 50, max 200),
+  projection. Always injects `tenantId` + `deletedAt: null` into the
+  leading `$match` (aggregate bypasses the tenantScope plugin).
+- `src/services/analytics.service.js` — cached `query` (cache keyed by
+  `tenantId` + full query hash), `getQuery`/`listQueries` run history,
+  `scheduleExport` async export.
+- `src/services/analytics.cache.js` — `buildCacheKey` + `cachedQuery`
+  (+ `invalidate`).
+- `src/services/analytics.scheduler.js` — export scheduling.
+- `src/repositories/analytics.repository.js` — history persistence
+  (best-effort; a cache miss that computed a result never fails on the
+  metadata write).
+
+#### Added (master data)
+
+- `src/models/MasterData.js` + `src/services/masterData.service.js` —
+  category-discriminated reference catalogue; admin write, public cached
+  read (`master-data:<category>`).
+- `src/routes/master-data.routes.js` — `GET /:catalogue` (public,
+  cached) + `GET /:catalogue/:id` + admin `POST`/`PATCH`/`DELETE`;
+  `POST /:catalogue/import|export` remain 501.
+
+#### Added (routes / controller / validator)
+
+- `src/routes/analytics.routes.js` — `GET /` (run cached query),
+  `GET /queries`, `GET /queries/:id`, `POST /export` — behind
+  `authenticate → resolveTenant → permission('analytics', <action>)`.
+- `src/models/AnalyticsQuery.js` — historical run records.
+- `src/controllers/analytics.controller.js`,
+  `src/controllers/masterData.controller.js`, `src/validators/
+  analytics.validator.js` + `masterData.validator.js`.
+
+#### Added (testing)
+
+- `tests/analytics/analytics.engine.raw.test.js` (2), `analytics.engine.filters.test.js`
+  (10), `analytics.engine.aggregations.test.js` (6) — engine contract.
+- `tests/analytics/analytics.cache.test.js` (3), `analytics.service.test.js`
+  (6), `analytics.controller.test.js` (5) — cache + facade + handlers.
+- `tests/master-data/masterData.test.js` (8) — catalogue CRUD + cache +
+  admin gate.
+
+#### Added (documentation)
+
+- `src/docs/phases/sprint-5.md` rewritten as the Analytics Engine +
+  Master Data completion record; `STATUS.md` + module STATUS files
+  updated.
+
+### Sprint 4 — Connector Platform (close: 2026-08-12)
+
+Sprint 4 ships the persistence layer and the first two concrete
+providers on the Phase 1.1 connector framework: tenant-scoped connector
+CRUD (config encrypted at rest), CSV upload + stream-parse ingest, the
+inbound HMAC-verified webhook surface, and the idempotent sync engine +
+queue consumer. Suite grew 232 → 285 tests.
+
+#### Added (models)
+
+- `src/models/Connector.js` — tenant-scoped, `config` = encrypted
+  envelope, `webhookToken` (unique sparse) for webhook type, plain
+  `fieldMapping`, `lastSyncedAt`/`lastError`/`errorCount`.
+- `src/models/ConnectorRow.js` — ingested records, unique
+  `{connectorId, sourceRowId}` for idempotent replays.
+
+#### Added (repositories)
+
+- `src/repositories/connector.repository.js` — list/findById/
+  findByWebhookToken/create/update/bumpError/remove/countByType.
+- `src/repositories/connectorRow.repository.js` — list/count/upsertRows/
+  deleteForConnector.
+
+#### Added (connectors + shared)
+
+- `src/modules/connectors/csv/` — `csv.connector.js` (stream-parse with
+  backpressure) + `csv.parser.js`.
+- `src/modules/connectors/webhook/webhook.connector.js` — inbound route
+  with raw-body + HMAC-SHA256 signature verification (JSON parsing breaks
+  the signature).
+- `src/modules/connectors/shared/` — `field-mapping.js`, `sync-engine.js`
+  (idempotent upsert on `{connectorId, sourceRowId}`), `validators.js`,
+  `errors.js`.
+
+#### Added (service + queue + routes)
+
+- `src/services/connector.service.js` — CRUD, config encryption at rest,
+  validate/preview/trigger-sync/delete, row listing, registered types.
+- `src/queues/connector.queue.js` — real consumer: resolves the
+  connector, runs the sync engine, upserts rows idempotently.
+- `src/routes/connector.routes.js` — `/api/v1/connectors/*` CRUD +
+  validate + rows + CSV preview/sync behind `authenticate → resolveTenant
+  → permission('connectors', …)`.
+- `src/routes/webhook.routes.js` — inbound `/webhooks/:webhookToken`
+  (public, signature-verified).
+- `src/controllers/connector.controller.js`, `webhook.controller.js`,
+  `src/validators/connector.validator.js`.
+
+#### Added (testing)
+
+- `tests/connectors/connector.service.integration.test.js` (6),
+  `tests/modules/connectors/connectors.test.js` (8),
+  `tests/modules/connectors/csv/csv.parser.test.js` (6),
+  `tests/modules/connectors/shared/field-mapping.test.js` (9),
+  `tests/modules/connectors/shared/sync-engine.test.js` (6),
+  `tests/modules/connectors/shared/validators.test.js` (10),
+  `tests/modules/connectors/webhook/webhook.verify.test.js` (8).
+
+#### Added (documentation)
+
+- `src/docs/phases/sprint-4.md` marked complete; `STATUS.md` + connector
+  module STATUS files updated.
+
 ### Sprint 3 — Multi-Tenancy (close: 2026-08-07)
 
 Sprint 3 ships the tenant as a first-class lifecycle object: provision,

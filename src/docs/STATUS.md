@@ -27,11 +27,13 @@
 
 > **Status:** `Maintained` — the file is updated as part of every sprint
 > closure PR. The state it describes: Sprint 0 ✅, Sprint 1 ✅,
-> Sprint 2 ✅, Sprint 3 ✅ (Multi-Tenancy). Sprints 4–9 🕓 planned.
-> **Sprint:** Sprint 3 — Multi-Tenancy (complete).
+> Sprint 2 ✅, Sprint 3 ✅ (Multi-Tenancy), Sprint 4 ✅ (Connector
+> Platform), Sprint 5 ✅ (Analytics Engine + Master Data), Sprint 6 ✅
+> (Dashboards & Widgets). Sprints 7–9 🕓 planned.
+> **Sprint:** Sprint 6 — Dashboards & Widgets (complete).
 > **Owner:** Engineering team.
 >
-> Last updated: **Sprint 3 close** — see [CHANGELOG.md](../../CHANGELOG.md)
+> Last updated: **Sprint 6 close** — see [CHANGELOG.md](../../CHANGELOG.md)
 > at the repo root for the entry-by-entry record.
 
 ---
@@ -45,20 +47,20 @@
 | Question | Answer |
 | --- | --- |
 | **Current Phase** | Phase 2 — Implementation |
-| **Current Sprint** | Sprint 3 — Multi-Tenancy (✅ implemented). Sprints 0–3 complete; Sprints 4–9 planned. |
-| **Current Goal** | Sprint 3 closes the tenant lifecycle: provisioning, onboarding, suspend/restore/disable/archive with session + cache cascade, the login/refresh tenant-status gate, tenant settings (inheritance + redaction + read-only), feature flags, and the admin-gated `/tenants/*` surface. |
-| **Current Progress (%)** | **~65 %** of Phase 2 complete. Sprints 0–1 (foundation + auth) and Sprints 2–3 (IAM + multi-tenancy) are the four finished sprints of ten. |
-| **Last Completed Milestone** | Sprint 3 close — multi-tenancy: tenant lifecycle, onboarding, auth gate, tenant settings, feature flags, statistics, members, billing, `/tenants/*` API. See [Sprint 3](./phases/sprint-3.md). |
-| **Next Deliverable** | Sprint 4 — Connector Platform (CSV + Webhook connectors, sync engine, inbound webhook surface). |
-| **Current Blockers** | **None known.** 232 tests pass, CI green, `npm audit` clean. |
-| **Definition of Done (current sprint)** | *(Sprint 3)* ✅ All deliverables merged, 232 tests green, CI green, status docs updated. *(Sprint 4)* 🕓 See [Sprint 4](./phases/sprint-4.md). |
-| **Last Updated** | Sprint 3 close. This file is updated as part of every sprint closure PR. |
+| **Current Sprint** | Sprint 6 — Dashboards & Widgets (✅ implemented). Sprints 0–6 complete; Sprints 7–9 planned. |
+| **Current Goal** | Sprint 6 ships tenant-scoped dashboards and widgets on top of the analytics engine: dashboard CRUD + lifecycle (publish, duplicate, share, soft-delete), widget CRUD for six types (kpi, table, bar, line, area, pie), widget + dashboard execution with the date-range presets (`last_7_days`, `last_30_days`, …) and cache hit/miss, all behind `dashboards.*` RBAC. |
+| **Current Progress (%)** | **~75 %** of Phase 2 complete. Sprints 0–1 (foundation + auth), Sprints 2–3 (IAM + multi-tenancy), Sprint 4 (connectors), Sprint 5 (analytics engine + master data) and Sprint 6 (dashboards) are the seven finished sprints of ten. |
+| **Last Completed Milestone** | Sprint 6 close — dashboards + widgets: dashboard CRUD/lifecycle, widget CRUD (6 types), widget + dashboard execution with presets + cache, sharing, RBAC `dashboards.*` + `analytics.view` gate. See [Sprint 6](./phases/sprint-6.md). |
+| **Next Deliverable** | Sprint 7 — Governance (audit, access, compliance). |
+| **Current Blockers** | **None known.** 353 tests pass, CI green, `npm audit` clean. |
+| **Definition of Done (current sprint)** | *(Sprint 6)* ✅ All deliverables merged, 353 tests green, CI green, status docs updated. *(Sprint 7)* 🕓 See [Sprint 7](./phases/sprint-7.md). |
+| **Last Updated** | Sprint 6 close. This file is updated as part of every sprint closure PR. |
 
 ### What You Should Be Doing Right Now
 
 | If you are… | Do this |
 | --- | --- |
-| **About to start Sprint 4** | Read [Sprint 4 plan](./phases/sprint-4.md) end-to-end, then [Connector deep-dive](./backend/connectors.md) and the connectors module READMEs. Open the sprint branch. |
+| **About to start Sprint 7** | Read [Sprint 7 plan](./phases/sprint-7.md) end-to-end, then the governance module READMEs. Open the sprint branch. |
 | **Reviewing a PR** | Run `npm run ci:guards` and `npm test` locally. Check that any new route has an auth middleware (CI guard will flag it). Check that the matching entry in `STATUS.md` was updated. |
 | **Debugging a flaky test** | Run the affected file with `node scripts/ci/run-tests.js tests/<path>.test.js` (this sets `PASSWORD_KDF=scrypt`, portable on Windows). Tests use `mongodb-memory-server`; the first run downloads a MongoDB binary (~80 MB). `npm run test:argon2` exercises the real Argon2id KDF on CI (Linux). |
 | **Looking up an architectural rule** | The rule lives in the repo-root `README.md` (Architecture Rules) and in [`ARCHITECTURE.md`](./ARCHITECTURE.md); it is enforced by a CI guard under `scripts/ci/`. |
@@ -85,13 +87,13 @@ Before opening your first PR of the day, confirm:
 | Field | Value |
 | --- | --- |
 | **Phase** | Phase 2 — Implementation |
-| **Current sprint** | Sprint 3 — Multi-Tenancy (✅ complete) |
-| **Next sprint** | Sprint 4 — Connector Platform |
+| **Current sprint** | Sprint 6 — Dashboards & Widgets (✅ complete) |
+| **Next sprint** | Sprint 7 — Governance |
 | **Repository version** | `1.0.0` |
-| **Tests** | 232 pass, 0 fail |
+| **Tests** | 353 pass, 0 fail |
 | **CI guards** | 5 / 5 green |
 | **`npm audit`** | 0 vulnerabilities |
-| **Production features shipped** | 3 of ~30 (auth, IAM, multi-tenancy) |
+| **Production features shipped** | 7 of ~30 (auth, IAM, multi-tenancy, connectors, analytics engine, master data, dashboards) |
 
 ---
 
@@ -158,7 +160,43 @@ Sprint 3   ✅ ── Multi-Tenancy: tenant lifecycle + onboarding +
                  Feature-flag catalogue + per-tenant rollout. 232 tests
                  pass.
 
-…          ── Sprints 4 → 9: see [Sprint Log](#sprint-log).
+Sprint 4   ✅ ── Connector Platform: persisted, tenant-scoped
+                 connectors + the CSV and inbound Webhook providers.
+                 Real Connector / ConnectorRow models (config encrypted
+                 at rest, webhook token sparse-unique, idempotent rows).
+                 Real connector/connectorRow repositories + connector
+                 service + csv/webhook/shared connector modules + sync
+                 engine + connector queue consumer. Real /connectors/*
+                 and /webhooks/* surfaces behind authenticate +
+                 resolveTenant + permission('connectors', ...).
+                 CSV upload + stream-parse ingest, HMAC-SHA256 webhook
+                 verification. 285 tests pass.
+
+Sprint 5   ✅ ── Analytics Engine + Master Data: tenant-scoped read
+                 engine over ingested connector rows, query history +
+                 async exports, and the global reference-data
+                 catalogue. Real AnalyticsQuery / MasterData models,
+                 analytics.engine.js (grouping, metrics, filters, date
+                 presets, pagination, projection) + analytics.service/
+                 cache, masterData.service with admin write / public
+                 cached read. Real /analytics/* + /master-data/*
+                 surfaces. 325 tests pass.
+
+Sprint 6   ✅ ── Dashboards & Widgets: tenant-scoped dashboard +
+                 widget authoring and widget analytics execution over
+                 the analytics engine. Real Dashboard / Widget models.
+                 dashboard.service (CRUD, publish, duplicate, share,
+                 soft-delete) + widget.service (six types: kpi, table,
+                 bar, line, area, pie) + executeWidget / viewDashboard
+                 with date presets + per-query caching + cache bust on
+                 edit + fail-closed execution (404 unknown
+                 dashboard/widget, 400 foreign/deleted dataset). Real
+                 /dashboards/* surface behind authenticate +
+                 resolveTenant + permission('dashboards', ...); running
+                 a widget additionally requires analytics.view. 353
+                 tests pass.
+
+…          ── Sprints 7 → 9: see [Sprint Log](#sprint-log).
 
 Phase 3+   🔮 ── Enterprise: KMS, WebAuthn, multi-region, SIEM,
                  hash-chain audit, cold archival, PDF/XLSX
@@ -175,7 +213,7 @@ Phase 3+   🔮 ── Enterprise: KMS, WebAuthn, multi-region, SIEM,
 | 1 | Production Backend Foundation | ✅ Implemented | `app.js`, `server.js`, `config/`, error envelope, request id, rate limiter, validators, websocket bootstrap, scheduler, queue + storage + cache + encryption contracts |
 | 1.1 | Connector & Infrastructure Architecture | ✅ Implemented | `connectors/BaseConnector`, registry, fail-closed driver stubs |
 | 1.2 | Platform Management Architecture | ✅ Implemented | All route shells + middleware stubs returning 501 |
-| 2 | Implementation (Sprints 0–9) | 🟡 Partial | Sprints 0–3 complete (auth, IAM, multi-tenancy); Sprints 4–9 planned |
+| 2 | Implementation (Sprints 0–9) | 🟡 Partial | Sprints 0–6 complete (auth, IAM, multi-tenancy, connectors, analytics, dashboards); Sprints 7–9 planned |
 | 3 | Enterprise Features | 🔮 Future | KMS, WebAuthn, multi-region, SIEM |
 | 4 | (reserved) | 🔮 Future | |
 | 5 | (reserved) | 🔮 Future | |
@@ -196,16 +234,26 @@ Detailed per-sprint plans live under
 | [Sprint 1](./phases/sprint-1.md) | Authentication (User, Admin, MFA, refresh) | ✅ **Complete** | 51 (124 total) |
 | [Sprint 2](./phases/sprint-2.md) | IAM (admins, tenants, users, RBAC, audit) | ✅ **Complete** | 94 (218 total) |
 | [Sprint 3](./phases/sprint-3.md) | Multi-Tenancy (tenant lifecycle, onboarding, auth gate, settings, feature flags) | ✅ **Complete** | 23 (232 total) |
-| [Sprint 4](./phases/sprint-4.md) | Connector Platform (CSV + Webhook connectors, sync engine, inbound webhook surface) | 🕓 Planned | — |
-| [Sprint 5](./phases/sprint-5.md) | Platform: settings, feature flags, notifications | 🕓 Planned | — |
-| [Sprint 6](./phases/sprint-6.md) | Master Data (countries, currencies, timezones, plans, languages) | 🕓 Planned | — |
+| [Sprint 4](./phases/sprint-4.md) | Connector Platform (CSV + Webhook connectors, sync engine, inbound webhook surface) | ✅ **Complete** | 53 (285 total) |
+| [Sprint 5](./phases/sprint-5.md) | Analytics Engine + Master Data (query engine, query history, exports, reference catalogue) | ✅ **Complete** | 40 (325 total) |
+| [Sprint 6](./phases/sprint-6.md) | Dashboards & Widgets (authoring, lifecycle, sharing, execution, cache) | ✅ **Complete** | 28 (353 total) |
 | [Sprint 7](./phases/sprint-7.md) | Governance: audit, access, compliance | 🕓 Planned | — |
 | [Sprint 8](./phases/sprint-8.md) | Monitoring + Support | 🕓 Planned | — |
 | [Sprint 9](./phases/sprint-9.md) | Analytics + Embed | 🕓 Planned | — |
 
+> **Sprint re-scope note:** the plan documents for Sprints 5–6 predate the
+> delivery. Sprint 5 shipped the **Analytics Engine + Master Data** (the
+> settings/feature-flags/notifications surfaces listed in the old plan
+> stayed fail-closed stubs; settings + feature flags themselves already
+> shipped inside Sprint 3's `/tenants/*` surface). Sprint 6 shipped
+> **Dashboards & Widgets**, not Master Data — Master Data moved earlier
+> (Sprint 5) once the analytics engine existed to consume it. The
+> `sprint-5.md` / `sprint-6.md` plan files are the source of truth for
+> *planned* scope; this log records *delivered* scope.
+
 ---
 
-## What Is Shipped Today (Sprint 1)
+## What Is Shipped Today
 
 The following exist as production-grade code, not as stubs. Every bullet
 links to the canonical documentation.
@@ -255,7 +303,7 @@ See [`DECISIONS.md` ADR-007](./DECISIONS.md#adr-007-five-shared-mongoose-plugins
 | [`authorize`](../../src/middleware/auth.middleware.js) | ✅ Implemented | Dynamic RBAC; default-deny via `permission` middleware (Sprint 2) |
 | [`adminAuth`, `adminAuthOptional`](../../src/middleware/adminAuth.middleware.js) | ✅ Implemented | JWT verify + MFA-aware admin sessions |
 | [`resolveTenant`](../../src/middleware/tenant.middleware.js) | ✅ Implemented | `X-Tenant-Id` header → JWT `tenantId` claim (subdomain parser is Phase 4+) |
-| [`tenantIsolation`](../../src/middleware/tenantIsolation.middleware.js) | ⛔ Fail-closed stub | Sprint 2 |
+| [`tenantIsolation`](../../src/middleware/tenantIsolation.middleware.js) | ✅ Implemented | Cross-tenant header/JWT scope guard (Sprint 2) |
 | [`permission`, `denyIf`](../../src/middleware/permission.middleware.js) | ✅ Implemented | `<module>.<action>` guard, cached 60s, invalidated on write (Sprint 2) |
 | [`audit`, `accessLog`](../../src/middleware/) | ⛔ Fail-closed stubs | Sprint 7 |
 | [`compliance.*`](../../src/middleware/compliance.middleware.js) | ⛔ Fail-closed stub | Sprint 7 |
@@ -269,14 +317,41 @@ See [`DECISIONS.md` ADR-007](./DECISIONS.md#adr-007-five-shared-mongoose-plugins
 | Routes (real) | [`/auth/*`](../../src/routes/auth.routes.js) + [`/admin-auth/*`](../../src/routes/admin-auth.routes.js) — login, refresh, logout, password, MFA, me | [`backend/authentication.md`](./backend/authentication.md) |
 | Integration tests | [`tests/*.integration.test.js`](../../tests/README.md) — both portals, refresh replay family revocation, MFA with real TOTP, lockout, reset session revocation | [`tests/README.md`](../../tests/README.md) |
 
+### Connector Platform (Sprint 4)
+
+| Component | Implementation | Docs |
+| --- | --- | --- |
+| Models | [`Connector`](../../src/models/Connector.js) (config encrypted at rest, `webhookToken` sparse-unique, type + status) + [`ConnectorRow`](../../src/models/ConnectorRow.js) (`{connectorId, sourceRowId}` idempotency) | [`modules/connectors/STATUS.md`](../../src/modules/connectors/STATUS.md) |
+| Providers + sync engine | `src/connectors/` framework (Phase 1.1) + [`csv`](../../src/modules/connectors/csv/) + [`webhook`](../../src/modules/connectors/webhook/) + [`shared`](../../src/modules/connectors/shared/) (field mapping, sync engine, validators) | [`backend/connectors.md`](./backend/connectors.md) |
+| Queue consumer | [`connector.queue.js`](../../src/queues/connector.queue.js) — resolves connector, runs sync, upserts rows idempotently | [`backend/queues.md`](./backend/queues.md) |
+| Routes (real) | [`/connectors/*`](../../src/routes/connector.routes.js) (CRUD, validate, rows, CSV preview/sync) + [`/webhooks/*`](../../src/routes/webhook.routes.js) — behind `authenticate → resolveTenant → permission('connectors', …)` | [`connector.routes.js`](../../src/routes/connector.routes.js) |
+
+### Analytics Engine + Master Data (Sprint 5)
+
+| Component | Implementation | Docs |
+| --- | --- | --- |
+| Engine | [`analytics.engine.js`](../../src/services/analytics.engine.js) — `queryRows`/`queryFacet`: filters, date presets, sort, pagination, projection; `groupBy` + metrics (sum/avg/count/min/max) aggregation; non-grouped queries return raw connector rows | [`analytics/README.md`](../../src/modules/analytics/README.md) |
+| Service + cache | [`analytics.service.js`](../../src/services/analytics.service.js) + [`analytics.cache.js`](../../src/services/analytics.cache.js) (query cache keyed by `tenantId` + query hash) + query history via [`AnalyticsQuery`](../../src/models/AnalyticsQuery.js) | [`backend/cache.md`](./backend/cache.md) |
+| Master Data | [`masterData.service.js`](../../src/services/masterData.service.js) + [`MasterData`](../../src/models/MasterData.js) — admin write, public cached read (`master-data:<category>`) | [`platform/master-data/STATUS.md`](../../src/modules/platform/master-data/STATUS.md) |
+| Routes (real) | [`/analytics/*`](../../src/routes/analytics.routes.js) + [`/master-data/*`](../../src/routes/master-data.routes.js) | [`analytics.routes.js`](../../src/routes/analytics.routes.js) |
+
+### Dashboards & Widgets (Sprint 6)
+
+| Component | Implementation | Docs |
+| --- | --- | --- |
+| Models | [`Dashboard`](../../src/models/Dashboard.js) (layout, sharedWith, status draft/published/archived, versioned) + [`Widget`](../../src/models/Widget.js) (`WIDGET_TYPES` = kpi, table, bar, line, area, pie) | [`analytics/dashboards/README.md`](../../src/modules/analytics/dashboards/README.md) |
+| Services | [`dashboard.service.js`](../../src/services/dashboard.service.js) (CRUD, publish, duplicate, share, soft-delete, `executeWidget`/`viewDashboard`) + [`widget.service.js`](../../src/services/widget.service.js) (six widget types) | [`dashboard.service.js`](../../src/services/dashboard.service.js) |
+| Execution | Widget/dashboard execution delegates to the analytics engine; date presets (`last_7_days`, `last_30_days`, …); per-query cache with `updatedAt` revision so edits bust the cache; fail-closed (404 unknown dashboard/widget, 400 foreign/deleted dataset) | [`dashboard.routes.js`](../../src/routes/dashboard.routes.js) |
+| Routes (real) | [`/dashboards/*`](../../src/routes/dashboard.routes.js) — full surface incl. `/:id/execute` + `/:id/widgets/:widgetId/execute`; `permission('dashboards', …)` + `analytics.view` required to run a widget | [`dashboard.routes.js`](../../src/routes/dashboard.routes.js) |
+
 ### CI Guardrails
 
-Wired to `npm run ci:guards`. All green as of Sprint 3 close.
+Wired to `npm run ci:guards`. All green as of Sprint 6 close.
 
 | Guard | What it fails on | Script |
 | --- | --- | --- |
 | `check-stubs` | `notImplementedStub` outside the allowlist | [`check-stubs.js`](../../scripts/ci/check-stubs.js) |
-| `check-routes` | a real route handler without an auth middleware | [`check-routes.js`](../../scripts/ci/check-routes.js) |
+| `check-routes` | a real route handler without an auth middleware (understands wrapper helpers that embed an auth guard, e.g. `guarded()` in the dashboards routes) | [`check-routes.js`](../../scripts/ci/check-routes.js) |
 | `check-models` | `mongoose.model()` without a plugin import | [`check-models.js`](../../scripts/ci/check-models.js) |
 | `check-config` | `process.env` outside `src/config/`, `tests/`, `scripts/ci/` | [`check-config.js`](../../scripts/ci/check-config.js) |
 | `check-readme-sync` | missing root docs or per-module `STATUS.md` | [`check-readme-sync.js`](../../scripts/ci/check-readme-sync.js) |
@@ -290,15 +365,16 @@ auth-flow.integration.test.js             12 tests  (both portals, refresh repla
 admin-auth-mfa.integration.test.js         6 tests  (MFA two-step + real TOTP, login with code)
 password-reset-session.integration.test.js 3 tests  (no enumeration, reset revokes sessions)
 session-lifecycle.integration.test.js      7 tests  (deterministic lookup, rotate, revoke-all)
-routes/rbac.integration.test.js            8 tests  (roles/permissions/admins/audit-logs/users gates)
-rbac/services.integration.test.js          7 tests  (permission resolution + RBAC cache)
+routes/rbac.integration.test.js           19 tests  (roles/permissions/admins/audit-logs/users gates)
+rbac/services.integration.test.js         15 tests  (permission resolution + RBAC cache)
 middleware/auth.test.js                   11 tests  (authenticate / adminAuth / optional*)
-middleware/rbac.middleware.test.js        4 tests  (permission / denyIf enforcement)
+middleware/rbac.middleware.test.js        36 tests  (permission / denyIf enforcement)
 validators/auth.test.js                    9 tests  (Sprint 1 auth/admin validator schemas)
-validators/rbac.test.js                    8 tests  (roles/permissions/admins schemas)
+validators/rbac.test.js                   15 tests  (roles/permissions/admins schemas)
 models/plugins.test.js                     8 tests
 tenants/tenant.integration.test.js          13 tests (Sprint 3 lifecycle + onboarding + settings + flags)
 services/setting.service.test.js          10 tests (coercion, redaction, inheritance, cache, read-only)
+services/email.test.js                     3 tests
 utils/password.test.js                    10 tests  (KDF seam: scrypt + argon2)
 utils/jwt.test.js                         10 tests
 utils/idempotency.test.js                  7 tests
@@ -307,10 +383,27 @@ utils/encryption.test.js                   8 tests
 cache/memory.test.js                       8 tests
 queues/memory.test.js                      5 tests
 storage/local.test.js                      6 tests
-services/email.test.js                     3 tests
 health.test.js                             2 tests
+connectors/connector.service.integration.test.js   6 tests  (Sprint 4 CRUD + validation + CSV sync)
+modules/connectors/connectors.test.js      8 tests  (registry + provider wiring)
+modules/connectors/csv/csv.parser.test.js  6 tests  (stream-parse, types, errors)
+modules/connectors/shared/field-mapping.test.js   9 tests
+modules/connectors/shared/sync-engine.test.js     6 tests  (idempotent row upsert)
+modules/connectors/shared/validators.test.js     10 tests  (config schemas per type)
+modules/connectors/webhook/webhook.verify.test.js 8 tests  (HMAC-SHA256 + replay window)
+analytics/analytics.engine.raw.test.js     2 tests  (Sprint 5 raw row reads)
+analytics/analytics.engine.filters.test.js 10 tests (filters, date presets, sort, paging)
+analytics/analytics.engine.aggregations.test.js   6 tests (groupBy + metrics)
+analytics/analytics.cache.test.js          3 tests  (query cache hit/miss)
+analytics/analytics.service.test.js        6 tests  (service facade + history)
+analytics/analytics.controller.test.js     5 tests  (route handlers)
+master-data/masterData.test.js             8 tests  (Sprint 5 catalogue CRUD + cache + admin gate)
+dashboards/dashboard.service.test.js       9 tests  (Sprint 6 dashboard CRUD/lifecycle/share)
+dashboards/widget.service.test.js          8 tests  (Sprint 6 widget CRUD + six types)
+dashboards/dashboard.execution.test.js     7 tests  (executeWidget/viewDashboard, cache, isolation, fail-closed)
+dashboards/dashboard.routes.integration.test.js   4 tests  (HTTP end-to-end + RBAC 401/403)
 ─────────────────────────────────────────────────────
-TOTAL                                    232 tests
+TOTAL                                    353 tests
 ```
 
 `npm test` runs the suite in scrypt KDF mode (portable); `npm run
@@ -327,18 +420,14 @@ real handler.
 
 | Surface | Where it lives | Owning Sprint |
 | --- | --- | --- |
-| `/master-data/*` | [`src/routes/master-data.routes.js`](../../src/routes/master-data.routes.js) | [Sprint 4](./phases/sprint-4.md) |
 | `/settings/*` | [`src/routes/settings.routes.js`](../../src/routes/settings.routes.js) | [Sprint 5](./phases/sprint-5.md) |
 | `/feature-flags/*` | [`src/routes/feature-flag.routes.js`](../../src/routes/feature-flag.routes.js) | [Sprint 5](./phases/sprint-5.md) |
 | `/notifications/*` | [`src/routes/notification.routes.js`](../../src/routes/notification.routes.js) | [Sprint 5](./phases/sprint-5.md) |
 | `/email-templates/*` | [`src/routes/email-template.routes.js`](../../src/routes/email-template.routes.js) | [Sprint 5](./phases/sprint-5.md) |
-| `/connectors/*` | [`src/routes/connector.routes.js`](../../src/routes/connector.routes.js) | [Sprint 4](./phases/sprint-4.md) |
-| `/webhooks/*` | [`src/routes/webhook.routes.js`](../../src/routes/webhook.routes.js) | [Sprint 4](./phases/sprint-4.md) |
 | `/access-logs/*` | [`src/routes/access-log.routes.js`](../../src/routes/access-log.routes.js) | [Sprint 7](./phases/sprint-7.md) |
 | `/compliance/*` | [`src/routes/compliance.routes.js`](../../src/routes/compliance.routes.js) | [Sprint 7](./phases/sprint-7.md) |
 | `/monitoring/*` | [`src/routes/monitoring.routes.js`](../../src/routes/monitoring.routes.js) | [Sprint 8](./phases/sprint-8.md) |
 | `/support/*` | [`src/routes/support.routes.js`](../../src/routes/support.routes.js) | [Sprint 8](./phases/sprint-8.md) |
-| `/dashboards/*` | [`src/routes/dashboard.routes.js`](../../src/routes/dashboard.routes.js) | [Sprint 9](./phases/sprint-9.md) |
 | `/reports/*` | [`src/routes/report.routes.js`](../../src/routes/report.routes.js) | [Sprint 9](./phases/sprint-9.md) |
 | `/embed/*` | [`src/routes/embed.routes.js`](../../src/routes/embed.routes.js) | [Sprint 9](./phases/sprint-9.md) |
 
@@ -351,7 +440,7 @@ short version:
 
 | Horizon | Scope |
 | --- | --- |
-| **Phase 2 (in flight)** | Sprints 0–9 deliver the MVP: auth, IAM, RBAC, master data, platform config, CSV + webhook ingestion, governance, monitoring, dashboards + CSV reports + embed. |
+| **Phase 2 (in flight)** | Sprints 0–9 deliver the MVP: auth, IAM, RBAC, connectors, analytics engine, master data, dashboards, governance, monitoring, CSV reports + embed. Sprints 0–6 complete; Sprints 7–9 remain. |
 | **Phase 3 (planned)** | KMS-managed keys, WebAuthn / passkey, multi-region, SIEM forwarder, cold archival to S3, hash-chain audit, OAuth/SAML SSO, SCIM 2.0, MongoDB + Google Sheets connectors, push + outbound webhook notifications, PDF/XLSX reports, anomaly detection cron, Prometheus `/metrics`. |
 | **Phase 4+ (future)** | Data residency per tenant, connector marketplace, custom-domain tenant routing. |
 
@@ -364,25 +453,41 @@ features land. See [DECISIONS.md](./DECISIONS.md) "Postponed Decisions".
 
 ## Next Milestone
 
-**Sprint 4 — Connector Platform (CSV + Webhook).**
+**Sprint 7 — Governance (audit, access, compliance).**
 
-Concretely: by the end of Sprint 4 a developer can, against a real
+Concretely: by the end of Sprint 7 a developer can, against a real
 `mongodb-memory-server` database:
 
-1. `POST /connectors` — create a tenant-scoped CSV connector (config
-   encrypted at rest).
-2. `POST /connectors/:id/upload` — upload a CSV, which enqueues a sync.
-3. Consumer ingests the file → rows land in MongoDB (idempotent on
-   replay).
-4. `POST /webhooks/:webhookToken` — inbound webhook with a valid
-   HMAC-SHA256 signature → 200, ingested; invalid signature → 401.
+1. `GET /access-logs` — tenant access-log surface backed by the `audit`
+   middleware + `AccessLog` model.
+2. `GET /compliance/*` — compliance surface (`ComplianceLog`), admin-
+   gated.
+3. The `audit` plugin domain events (Sprint 0) are consumed into the
+   `AuditLog` collection and queryable.
 
-The same auth + RBAC middleware from Sprints 1–3 guards every admin
-surface; `resolveTenant` scopes connectors per tenant; `X-Idempotency-Key`
-protects every mutation.
+The same auth + RBAC middleware from Sprints 1–6 guards every surface;
+`resolveTenant` scopes per tenant; `X-Idempotency-Key` protects every
+mutation.
 
-The Definition of Done for Sprint 4 lives in
-[`phases/sprint-4.md`](./phases/sprint-4.md).
+The Definition of Done for Sprint 7 lives in
+[`phases/sprint-7.md`](./phases/sprint-7.md).
+
+### Sprint 6 retro notes (closed)
+
+- **Went well:** dashboard + widget execution is fully covered at three
+  layers — service unit tests, engine integration tests, and HTTP
+  end-to-end (28 tests). Cache hit/miss + edit-bust verified; tenant
+  isolation + RBAC (401/403) verified end-to-end. The `ci:check-routes`
+  guard needed a small fix to recognise wrapper helpers (`guarded()`)
+  that embed an auth middleware — verified both positive and negative
+  cases.
+- **Watch out:** dashboard execution returns the engine result object
+  (rows + total + pagination), not a bare rows array; the analytics
+  engine only aggregates when `groupBy` is non-empty — non-grouped
+  queries return raw connector rows. Tests now reflect both.
+- **Deferred to later sprints:** reports (`/reports/*`), embed
+  (`/embed/*`), notifications and email-templates remain fail-closed
+  stubs; per-dashboard realtime refresh rooms are still planned.
 
 ### Sprint 3 retro notes (closed)
 
@@ -397,9 +502,7 @@ The Definition of Done for Sprint 4 lives in
   / `phase-2.md` files were never refreshed at the Sprint 2 close. The
   sprint doc discipline (update the sprint file in the closing PR) must
   be honoured going forward.
-- **Deferred to later sprints:** Master Data (originally Sprint 4)
-  moved to [Sprint 6](./phases/sprint-6.md) when the Connector Platform
-  was prioritised into Sprint 4; Google Sheets / MongoDB connectors and
+- **Deferred to later sprints:** Google Sheets / MongoDB connectors and
   outbound webhook notifications remain Phase 3.
 
 ---
@@ -465,7 +568,7 @@ single document updated as part of every sprint closure PR.
 ### Real-World Examples
 
 - A new engineer opens `STATUS.md` on Monday, sees *Next Deliverable:
-  Sprint 2 — IAM*, opens [`Sprint 2`](./phases/sprint-2.md)
+  Sprint 7 — Governance*, opens [`Sprint 7`](./phases/sprint-7.md)
   for the deliverables list, and starts on the smallest unblocked
   item. No Slack thread required.
 - A reviewer opens a PR and runs `npm run ci:guards`. `check-routes`
@@ -491,8 +594,10 @@ single document updated as part of every sprint closure PR.
 
 ## Last Updated
 
-- **Sprint:** Sprint 3 close
+- **Sprint:** Sprint 6 close (Dashboards & Widgets)
 - **Phase:** Phase 2 — Implementation
+- **Date:** 2026-08-12
+- **Author:** Engineering (Sprint 6 close, re-scope note for Sprints 5–6)
 - **Date:** 2026-08-08
 - **Author:** Engineering (Sprint 3 close, Sprint 4 re-scope)
 - **Date:** 2026-08-06

@@ -36,9 +36,9 @@
 
 ## Current Status
 
-> **Status:** `In Progress` — Sprint 0 complete; Sprints 1–3 complete;
-> Sprint 4 (Connector Platform) in progress; Sprints 5–9 planned.
-> **Sprint:** Sprint 3 (complete) → Sprint 4 (Connector Platform, in progress).
+> **Status:** `In Progress` — Sprint 0 complete; Sprints 1–6 complete;
+> Sprint 7 (Governance) planned; Sprints 8–9 planned.
+> **Sprint:** Sprint 6 (complete — Dashboards & Widgets) → Sprint 7 (Governance, planned).
 > **Owner:** Engineering team.
 
 ## Business Perspective
@@ -64,11 +64,11 @@ Sprint 0 (Foundation — utilities, drivers, plugins)
         └─ Sprint 2 (IAM: Tenant, Admin/Role/User CRUD, lifecycle, RBAC cache)
             └─ Sprint 3 (Multi-Tenancy: tenant lifecycle, onboarding, settings, feature flags)
                 ├─ Sprint 4 (Connector Platform: CSV + Webhook connectors, sync engine)
-                ├─ Sprint 5 (Platform: Settings/Feature-flag surface, Notifications)
-                ├─ Sprint 6 (Master Data: countries, currencies, timezones, plans, languages)
+                ├─ Sprint 5 (Analytics Engine + Master Data: query engine, reference catalogue)
+                ├─ Sprint 6 (Dashboards & Widgets: authoring, lifecycle, sharing, execution, cache)
                 └─ Sprint 7 (Governance: Audit, Access, Compliance)
                     ├─ Sprint 8 (Monitoring + Support)
-                    └─ Sprint 9 (Analytics + Embed)
+                    └─ Sprint 9 (Reports + Embed)
 ```
 
 ## Deliverables
@@ -79,9 +79,9 @@ Sprint 0 (Foundation — utilities, drivers, plugins)
 | Sprint 1 | [`sprint-1.md`](./sprint-1.md) | ✅ Complete |
 | Sprint 2 | [`sprint-2.md`](./sprint-2.md) | ✅ Complete |
 | Sprint 3 | [`sprint-3.md`](./sprint-3.md) | ✅ Complete |
-| Sprint 4 | [`sprint-4.md`](./sprint-4.md) | 🕒 In Progress (Connector Platform) |
-| Sprint 5 | [`sprint-5.md`](./sprint-5.md) | 🕒 Planned |
-| Sprint 6 | [`sprint-6.md`](./sprint-6.md) | 🕒 Planned (Master Data) |
+| Sprint 4 | [`sprint-4.md`](./sprint-4.md) | ✅ Complete (Connector Platform) |
+| Sprint 5 | [`sprint-5.md`](./sprint-5.md) | ✅ Complete (Analytics Engine + Master Data) |
+| Sprint 6 | [`sprint-6.md`](./sprint-6.md) | ✅ Complete (Dashboards & Widgets) |
 | Sprint 7 | [`sprint-7.md`](./sprint-7.md) | 🕒 Planned |
 | Sprint 8 | [`sprint-8.md`](./sprint-8.md) | 🕒 Planned |
 | Sprint 9 | [`sprint-9.md`](./sprint-9.md) | 🕒 Planned |
@@ -204,7 +204,7 @@ end-to-end demo-ability.
 
 ## Last Updated
 
-- **Sprint:** Sprint 3 close / Sprint 4 in progress
+- **Sprint:** Sprint 6 close / Sprint 7 planned
 - **Phase:** Phase 2 — Implementation
-- **Date:** 2026-08-08
-- **Author:** Engineering (Sprint 3 close, Sprint 4 re-scope)
+- **Date:** 2026-08-12
+- **Author:** Engineering (Sprint 6 close, Sprint 5–6 re-scope)

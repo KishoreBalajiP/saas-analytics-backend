@@ -23,7 +23,6 @@ export default [
   // Phase 2 services
   'src/services/accessLog.service.js',
   'src/services/compliance.service.js',
-  'src/services/dashboard.service.js',
   'src/services/masterData.service.js',
   'src/services/monitoring.service.js',
   'src/services/notification.service.js',
@@ -34,7 +33,6 @@ export default [
   'src/controllers/accessLog.controller.js',
   'src/controllers/auditLog.controller.js',
   'src/controllers/compliance.controller.js',
-  'src/controllers/dashboard.controller.js',
   'src/controllers/masterData.controller.js',
   'src/controllers/monitoring.controller.js',
   'src/controllers/notification.controller.js',

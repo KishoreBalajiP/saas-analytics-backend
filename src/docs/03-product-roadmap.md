@@ -40,8 +40,8 @@
 
 ## Current Status
 
-> **Status:** `In Progress` — Phase 2 (Sprints 0–3 complete; Sprint 4 — Connector Platform — in progress; Sprints 5–9 planned).
-> **Sprint:** Sprint 3 (✅ complete) → Sprint 4 — Connector Platform (🕏 in progress).
+> **Status:** `In Progress` — Phase 2 (Sprints 0–6 complete; Sprint 7 — Governance — planned; Sprints 8–9 planned).
+> **Sprint:** Sprint 6 (✅ complete — Dashboards & Widgets) → Sprint 7 — Governance (🕏 planned).
 > **Owner:** Engineering team.
 
 ## Business Perspective
@@ -614,7 +614,7 @@ analytics + embed. Every deliverable is traceable back to a sprint plan in `phas
 ## Key Takeaways
 
 - **Three phases complete, one in flight, four future.**
-- **Sprints 0-3 are the four completed sprints of ten** in Phase 2
+- **Sprints 0-6 are the seven completed sprints of ten** in Phase 2
 - **Phase 3+ items already have hooks in the code** (KMS swap,
   audit events, public compliance endpoint shape). They are not
   rewrites; they are slot-fills.
@@ -702,7 +702,7 @@ analytics + embed. Every deliverable is traceable back to a sprint plan in `phas
 
 ## Last Updated
 
-- **Sprint:** Sprint 3 close / Sprint 4 (Connector Platform) in progress
+- **Sprint:** Sprint 6 close (Dashboards & Widgets)
 - **Phase:** Phase 2 — Implementation
-- **Date:** 2026-08-08
-- **Author:** Engineering (Sprint 3 close, Sprint 4 re-scope)
+- **Date:** 2026-08-12
+- **Author:** Engineering (Sprint 6 close, Sprint 5–6 re-scope)

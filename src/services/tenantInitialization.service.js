@@ -5,7 +5,7 @@
  *   The idempotent onboarding sequence that turns a `pending` tenant into
  *   a fully-provisioned `active` tenant:
  *
- *     1. seed platform modules        (18-module contract + IAM children)
+ *     1. seed platform modules        (19-module contract + IAM children)
  *     2. seed tenant-scoped permissions (module.action keys)
  *     3. seed platform settings        (tenantSettings.initialize)
  *     4. seed feature flags            (featureFlagService.ensureDefaults)

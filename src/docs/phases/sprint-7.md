@@ -200,7 +200,7 @@ endpoints. After Sprint 7 the platform is auditable.
 ## Related Documents
 
 - [`phase-2.md`](./phase-2.md) — phase
-- [`sprint-6.md`](./sprint-6.md) — previous (Master Data)
+- [`sprint-6.md`](./sprint-6.md) — previous (Dashboards & Widgets)
 - [`sprint-8.md`](./sprint-8.md) — next
 
 ## Last Updated

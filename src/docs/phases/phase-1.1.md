@@ -88,14 +88,14 @@ Phase 1.
 
 ## Expected Outcome
 
-When Sprint 6 starts, the engineer writes
+When Sprint 4 starts, the engineer writes
 `src/modules/connectors/csv/csv.connector.js` extending
 `BaseConnector`, calls `registerConnector(CsvConnector)` at boot, and
 ships a working connector without touching any other file.
 
 ## Real-world Examples
 
-- Phase 2 / Sprint 6 ships the CSV connector and the Webhook
+- Phase 2 / Sprint 4 ships the CSV connector and the Webhook
   connector. Both plug into `BaseConnector` directly.
 - A future engineer adds a MongoDB connector (Phase 3) by writing
   one file. No business code changes.
@@ -120,7 +120,7 @@ ships a working connector without touching any other file.
 
 Phase 1.1 ships the connector framework and the infrastructure facades
 that let every later feature plug in without refactoring. Phase 1.1 is
-complete; the first concrete connector lands in Sprint 6.
+complete; the first concrete connector (CSV + Webhook) landed in Sprint 4.
 
 ## Key Takeaways
 
@@ -128,7 +128,7 @@ complete; the first concrete connector lands in Sprint 6.
   defines the lifecycle; the registry enforces uniqueness.
 - **One interface per infrastructure layer.** Cache, storage and
   queue are provider-agnostic; provider is chosen by env, not by code.
-- **No concrete connector is registered yet.** Sprint 6 registers
+- **No concrete connector is registered yet.** Sprint 4 registers
   the first two.
 
 ## Interview Preparation
@@ -152,14 +152,14 @@ complete; the first concrete connector lands in Sprint 6.
 
 - **"Why a separate phase?"** — Because the framework is a contract;
   contracts must be set before implementations. Phase 1.1 ships the
-  contract; Phase 2 / Sprint 6 ships the first implementation. Doing
+  contract; Phase 2 / Sprint 4 ships the first implementation. Doing
   them in the wrong order means either a rigid framework (because
   one connector shaped it) or a refactor (because the framework was
   retrofitted).
 
 ### Real-World Examples
 
-- Phase 1.1 ships `BaseConnector` + stubs. Sprint 6 ships `CsvConnector`
+- Phase 1.1 ships `BaseConnector` + stubs. Sprint 4 ships `CsvConnector`
   + `WebhookConnector`. Both plug into the framework unchanged.
 
 ### Common Mistakes

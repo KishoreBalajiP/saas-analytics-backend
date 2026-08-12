@@ -1,7 +1,7 @@
 # Module — Status
 
 **Sprint:** 4 — Connector Platform
-**Status:** 🕏 In Progress
+**Status:** ✅ Implemented
 
 **Implements:** persisted, tenant-scoped connector lifecycle + the CSV and
 inbound Webhook providers: connector CRUD (config encrypted at rest via
@@ -24,5 +24,12 @@ connector queue, and the `/connectors/*` + `/webhooks/*` surfaces.
 - `src/queues/connector.queue.js` — real consumer (resolves a connector,
   runs the sync engine, upserts rows).
 
+**Testing:** 53 tests — connector service integration, registry + provider
+wiring, CSV parser, field mapping, sync engine, shared validators, webhook
+signature verification.
+
 **Depends on:** Sprints 0–3 (bootstrap, auth, IAM/RBAC, multi-tenancy).
-Master Data (now Sprint 6) is **not** required.
+Master Data is **not** required.
+
+**Consumed by:** Sprint 5 analytics engine (`ConnectorRow`), Sprint 6
+dashboard widgets (dataset connectors).

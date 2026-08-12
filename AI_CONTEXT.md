@@ -45,13 +45,13 @@ Phase 4+.
 | --- | --- |
 | Current version | `1.0.0` |
 | Current phase | Phase 2 — Implementation |
-| Current sprint | Sprint 3 — Multi-Tenancy (complete) |
-| Next sprint | Sprint 4 — Connector Platform (CSV + Webhook) |
-| Current progress | ~78 % of Phase 2 |
-| Last completed milestone | Sprint 3 close — multi-tenancy: tenant lifecycle, onboarding, auth gate, tenant settings, feature flags (232 tests, 5/5 CI guards green) |
-| Next milestone | Sprint 4 — Connector Platform (persisted connectors + CSV + inbound Webhook ingestion) |
+| Current sprint | Sprint 6 — Dashboards & Widgets (complete) |
+| Next sprint | Sprint 7 — Governance (audit, access, compliance) |
+| Current progress | ~75 % of Phase 2 |
+| Last completed milestone | Sprint 6 close — dashboards + widgets: authoring, lifecycle, sharing, execution with presets + cache, RBAC `dashboards.*` + `analytics.view` (353 tests, 5/5 CI guards green) |
+| Next milestone | Sprint 7 — Governance (access logs + compliance surfaces) |
 
-Facts as of Sprint 3 close:
+Facts as of Sprint 6 close:
 
 - Auth is fully shipped and integration-tested against
   `mongodb-memory-server` for both portals (`/auth/*` + `/admin-auth/*`):
@@ -71,13 +71,30 @@ Facts as of Sprint 3 close:
   platform settings + feature flags), tenant settings with effective
   inheritance + secret redaction + read-only protection, and a
   feature-flag catalogue with 4 rollout strategies.
-- `npm test` → 232 pass, 0 fail. `npm run ci:guards` → 5/5 green.
+- Sprint 4 ships the Connector Platform: persisted tenant-scoped
+  connectors with encrypted `config`, CSV upload + stream-parse ingest,
+  inbound webhook with HMAC-SHA256 verification, idempotent sync engine +
+  queue consumer, `/connectors/*` + `/webhooks/*` surfaces.
+- Sprint 5 ships the analytics engine (`analytics.engine.js`: filters,
+  date presets, `groupBy` + metrics, pagination — always injects
+  `tenantId` + `deletedAt: null` into the `$match`) + Master Data
+  catalogue; `/analytics/*` + `/master-data/*` surfaces. Note: the
+  engine only aggregates when `groupBy` is non-empty; non-grouped
+  queries return raw connector rows.
+- Sprint 6 ships Dashboards & Widgets: dashboard CRUD + lifecycle
+  (publish/duplicate/share/soft-delete), widget CRUD for six types
+  (`kpi`, `table`, `bar`, `line`, `area`, `pie`), `executeWidget` /
+  `viewDashboard` with date presets + per-query caching (widget edits
+  bust the cache via `updatedAt` revisions), fail-closed execution
+  (404 unknown, 400 foreign/deleted dataset). `/dashboards/*` sits behind
+  `permission('dashboards', …)`; running a widget also needs
+  `analytics.view`.
+- `npm test` → 353 pass, 0 fail. `npm run ci:guards` → 5/5 green.
   `npm audit` → 0 vulnerabilities.
-- The next work is the **Connector Platform** — persisted, tenant-scoped
-  connectors with encrypted `config`, the CSV and inbound Webhook
-  providers, the async sync engine, and the `/connectors/*` +
-  `/webhooks/*` surfaces. See [sprint-4.md](src/docs/phases/sprint-4.md)
-  and [backend/connectors.md](src/docs/backend/connectors.md).
+- The next work is **Sprint 7 — Governance** (access logs + compliance
+  surfaces on top of the Sprint 0 `audit` plugin + `AccessLog`/
+  `ComplianceLog` models). See [sprint-7.md](src/docs/phases/sprint-7.md)
+  and [backend/security.md](src/docs/backend/security.md).
 
 See [STATUS.md](src/docs/STATUS.md) for the canonical,
 daily-read state and the full shipped/stubbed/planned inventory.
@@ -113,12 +130,21 @@ JWT, not the `X-Tenant-Id` header.
 
 **Dynamic RBAC** — roles are data, not code. Permissions are
 `<module>.<action>` strings; the resolved set is cached at `iam:rbac:<scope>`
-(5-min TTL, invalidated on write). Default deny. Planned for Sprint 3.
+(5-min TTL, invalidated on write). Default deny. Shipped since Sprint 2.
 
 **Connector architecture** — `BaseConnector` contract (`connect`, `validate`,
 `preview`, `ingest`, `disconnect`) + `ConnectorRegistry`. Business code never
-imports a vendor SDK. Framework implemented; Sprint 4 ships the persistence
-layer + CSV and Webhook providers and the inbound `/webhooks/*` surface.
+imports a vendor SDK. Framework implemented in Phase 1.1; Sprint 4 shipped the
+persistence layer + CSV and Webhook providers and the inbound `/webhooks/*`
+surface.
+
+**Analytics architecture** — `analytics.engine.js` turns a normalised query
+into a single MongoDB aggregation over `ConnectorRow` (filters, date presets,
+`groupBy` + metrics, pagination). It always injects `tenantId` +
+`deletedAt: null` into the leading `$match` because `aggregate()` bypasses the
+`tenantScope` plugin. Dashboards (`dashboard.service.js`) execute each widget's
+whitelisted query contract through this engine with a cache key that encodes
+the widget/dashboard `updatedAt` revisions.
 
 **Infrastructure abstraction** — feature code only consumes service wrappers
 (`cache.service.js`, `queue.service.js`, `storage.service.js`,
@@ -233,7 +259,7 @@ Development (`src/docs/development/`):
 Planning and code references:
 
 - [src/docs/phases/README.md](src/docs/phases/README.md) — phase + sprint index
-- [src/docs/phases/sprint-4.md](src/docs/phases/sprint-4.md) — current sprint plan (Connector Platform)
+- [src/docs/phases/sprint-7.md](src/docs/phases/sprint-7.md) — current sprint plan (Governance)
 - [src/docs/adr/README.md](src/docs/adr/README.md) — how to read/add ADRs
 - [src/docs/glossary/README.md](src/docs/glossary/README.md) — plain-English terms
 - [src/modules/README.md](src/modules/README.md) — feature module map
@@ -248,20 +274,20 @@ and are the contract + status for each module.
 
 ## 7. Current Priorities
 
-The last work was **Sprint 3 — Multi-Tenancy** (closed): the full tenant
-lifecycle (provision → onboard → suspend/restore/disable/archive with session +
-RBAC-cache cascade), the login/refresh tenant-status gate, idempotent onboarding
-(owner + four default roles + permissions + platform settings + feature flags),
-tenant settings with effective inheritance + secret redaction + read-only
-protection, and the feature-flag catalogue with 4 rollout strategies. Sprints 0–3
-are complete (232 tests, 5/5 CI guards green).
+The last work was **Sprint 6 — Dashboards & Widgets** (closed): dashboard
+CRUD + lifecycle (publish/duplicate/share/soft-delete), widget CRUD for
+six types (`kpi`, `table`, `bar`, `line`, `area`, `pie`), and
+`executeWidget` / `viewDashboard` running each widget's whitelisted query
+contract through the Sprint 5 analytics engine with date presets +
+per-query caching (widget edits bust the cache via `updatedAt`
+revisions). Sprints 0–6 are complete (353 tests, 5/5 CI guards green).
 
-The next work is **Sprint 4 — Connector Platform (CSV + Webhook)**: persisted,
-tenant-scoped connectors with encrypted `config`, the CSV and inbound Webhook
-providers, the async sync engine, and the `/connectors/*` + `/webhooks/*`
-surfaces. See [sprint-4.md](src/docs/phases/sprint-4.md). Do not start later
-sprints (Master Data, governance, analytics, embed) — they are planned, not
-open; Master Data moved to Sprint 6 when Connectors were pulled forward.
+The next work is **Sprint 7 — Governance (audit, access, compliance)**:
+real `AccessLog` / `ComplianceLog` surfaces on top of the Sprint 0
+`audit` plugin + the existing middleware shells. See
+[sprint-7.md](src/docs/phases/sprint-7.md). Do not start later sprints
+(reports, embed, notifications) — they are planned, not open; those
+surfaces stay fail-closed `501` stubs until their sprint lands.
 
 ---
 
