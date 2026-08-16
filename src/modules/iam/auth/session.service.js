@@ -96,6 +96,8 @@ export function sessionExpiryFromNow() {
  * @param {Object} [params.device] - device binding meta.
  * @param {string} [params.ip] - login IP.
  * @param {string} [params.userAgent] - login user agent.
+ * @param {string} [params.impersonatedBy] - support admin id when this
+ *   session is an impersonation (Sprint 8).
  * @returns {Promise<{ session: Object, refreshToken: string }>}
  */
 export async function create({
@@ -106,6 +108,7 @@ export async function create({
   device = {},
   ip = '',
   userAgent = '',
+  impersonatedBy = null,
 }) {
   if (!actorId || !actorType || typeof refreshToken !== 'string' || refreshToken.length === 0) {
     throw new Error('session.create requires actorId, actorType and a refresh token');
@@ -116,6 +119,7 @@ export async function create({
     actorId,
     actorType,
     tenantId: tenantId ?? null,
+    impersonatedBy: impersonatedBy ?? null,
     refreshTokenHash,
     device: normalizeDevice(device),
     ip,

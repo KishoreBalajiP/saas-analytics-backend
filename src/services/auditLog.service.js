@@ -9,7 +9,6 @@
  * RESPONSIBILITY
  *   - emit({ actor, action, module, resource, before, after, reason })
  *   - list(filters) / getById / listByModule
- *   - requestExport(filters) -> exportId, getExportStatus(exportId)
  *
  * CODING GUIDELINES
  *   - Sensitive payloads (passwords, tokens, refreshTokenHash, MFA
@@ -18,14 +17,14 @@
  *   - All reads filter by tenant unless the actor is a platform admin
  *     (the controller/middleware layer enforces that; the service accepts
  *     a tenant filter when provided).
- *   - Export jobs are intended to flow through `src/queues/` ->
- *     `src/storage/`; the queue consumer is a later-sprint deliverable,
- *     so `requestExport` records the request but no processing exists yet.
+ *   - Export requests live in `services/auditExport.service.js`
+ *     (`src/queues/` -> `src/storage/`); this module stays read/write for
+ *     the trail only.
  */
 
-import { randomUUID } from 'node:crypto';
 import ApiError from '../utils/ApiError.js';
 import auditLogRepository from '../repositories/auditLog.repository.js';
+import { buildAuditFilter } from '../utils/auditFilters.js';
 
 /** Sensitive field names, matched case-insensitively and stripped before persist. */
 const SENSITIVE_KEYS = new Set([
@@ -103,7 +102,9 @@ export async function emit({
 
 /**
  * Paginated audit read with optional filters. Applies the tenant filter
- * when provided (platform admins omit it to see everything).
+ * when provided (platform admins omit it to see everything). Every value
+ * is coerced to a safe scalar via `utils/auditFilters.js` - raw input can
+ * never become a Mongo operator.
  *
  * @param {Object} [opts]
  * @param {string} [opts.tenantId]
@@ -112,6 +113,11 @@ export async function emit({
  * @param {string} [opts.actorId]
  * @param {string} [opts.actorType]
  * @param {'success'|'failure'} [opts.result]
+ * @param {string} [opts.resourceType]
+ * @param {string} [opts.resourceId]
+ * @param {string} [opts.dateFrom] - ISO date; inclusive start of range.
+ * @param {string} [opts.dateTo] - ISO date; inclusive end of range.
+ * @param {string} [opts.search] - free-text term (regex-escaped).
  * @param {number} [opts.page=1]
  * @param {number} [opts.limit=20]
  * @returns {Promise<Object>} paginated audit list.
@@ -123,16 +129,27 @@ export async function list({
   actorId,
   actorType,
   result,
+  resourceType,
+  resourceId,
+  dateFrom,
+  dateTo,
+  search,
   page = 1,
   limit = 20,
 } = {}) {
-  const filter = {};
-  if (tenantId != null) filter.tenantId = tenantId;
-  if (module) filter.module = module;
-  if (action) filter.action = action;
-  if (actorId) filter.actorId = actorId;
-  if (actorType) filter.actorType = actorType;
-  if (result) filter.result = result;
+  const filter = buildAuditFilter({
+    tenantId: tenantId ?? undefined,
+    module,
+    action,
+    actorId,
+    actorType,
+    result,
+    resourceType,
+    resourceId,
+    dateFrom,
+    dateTo,
+    search,
+  });
   return auditLogRepository.list({ filter, page, limit });
 }
 
@@ -166,37 +183,26 @@ export async function listByModule({ module, tenantId, page = 1, limit = 20 } = 
 }
 
 /**
- * Request an audit export. Records the export id in `queued` state.
- * NOTE: the queue consumer that materialises the export file is a
- * later-sprint deliverable; this call only reserves the id + filters.
+ * Request an asynchronous audit export. Delegates to `auditExport.service.js`
+ * (lazy-imported to keep the module graph acyclic).
  *
- * @param {Object} [opts]
- * @param {Object} [opts.filters]
- * @param {string} [opts.requestedBy]
- * @returns {Promise<{ exportId: string, status: 'queued', filters: Object }>}
+ * @param {Object} opts - { tenantId, requestedBy, filters, format }.
+ * @returns {Promise<Object>} { exportId, status: 'queued', format }.
  */
-export async function requestExport({ filters = {}, requestedBy = null } = {}) {
-  return {
-    exportId: `exp_${randomUUID()}`,
-    status: 'queued',
-    requestedBy,
-    filters,
-  };
+export async function requestExport(opts) {
+  const { default: auditExport } = await import('./auditExport.service.js');
+  return auditExport.requestExport(opts);
 }
 
 /**
- * Poll the status of an audit export. With no processing pipeline yet,
- * a known id always reports `queued`.
+ * Poll the status of an audit export. Delegates to `auditExport.service.js`.
  *
- * @param {Object} opts
- * @param {string} opts.exportId
- * @returns {Promise<{ exportId: string, status: 'queued' }>}
+ * @param {Object} opts - { exportId, tenantId }.
+ * @returns {Promise<Object>} export status row.
  */
-export async function getExportStatus({ exportId } = {}) {
-  if (!exportId || typeof exportId !== 'string') {
-    throw ApiError.badRequest('exportId is required');
-  }
-  return { exportId, status: 'queued' };
+export async function getExportStatus(opts) {
+  const { default: auditExport } = await import('./auditExport.service.js');
+  return auditExport.getExportStatus(opts);
 }
 
 /* ------------------------------ internals -------------------------------- */

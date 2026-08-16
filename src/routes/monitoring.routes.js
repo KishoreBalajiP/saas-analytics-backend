@@ -1,52 +1,45 @@
 /**
- * /api/v1/monitoring routes - Operational health probes.
+ * /api/v1/monitoring routes - Operational health probes (Sprint 8 - implemented).
  *
  * WHY IT EXISTS
  *   Read-only, admin-gated snapshots of every subsystem we own. The
- *   service layer asks the relevant adapter (websocket, queues, jobs,
- *   storage, connectors) for a status; nothing here mutates state. Backed
- *   by `platform/monitoring/`.
+ *   service layer owns the probes (2 s time-box, graceful degradation);
+ *   this file only declares the surface and its RBAC gate.
  *
- * RESPONSIBILITY (planned, NOT implemented)
- *   - GET /health/system           - process / event loop
- *   - GET /health/db               - mongo ping
- *   - GET /health/websocket        - socket stats
- *   - GET /health/queue            - queue depth + workers
- *   - GET /health/scheduler        - jobs status
- *   - GET /health/storage          - provider latency
- *   - GET /health/connectors       - connector uptime
- *   - GET /health/aggregate        - one-shot summary
- *   - GET /metrics                 - prometheus (Phase 4+)
+ * ENDPOINTS
+ *   - GET /health/system         - process / event loop
+ *   - GET /health/db             - mongo ping
+ *   - GET /health/websocket      - socket stats
+ *   - GET /health/queue          - queue depth (Phase 3, deferred)
+ *   - GET /health/scheduler      - jobs status (Phase 3, deferred)
+ *   - GET /health/storage        - provider latency (Phase 3, deferred)
+ *   - GET /health/connectors     - connector uptime (Phase 3, deferred)
+ *   - GET /health/aggregate      - one-shot summary (5 s cached)
+ *   - GET /metrics               - prometheus (Phase 4, deferred)
+ *
+ * MIDDLEWARE ORDER
+ *   adminAuth -> permission('monitoring', 'view') -> handler
  *
  * HOW TO EXTEND
- *   - Each probe has a 2-second timeout; on timeout, the probe returns
- *     `{ status: 'degraded', error: 'timeout' }` rather than throwing.
- *   - The aggregate endpoint is cached for 5 seconds.
+ *   A new probe is one service function + one route; never skips the RBAC
+ *   gate (the module is `monitoring`, the action is `view`).
  */
 
 import { Router } from 'express';
-import asyncHandler from '../utils/asyncHandler.js';
+import { adminAuth } from '../middleware/adminAuth.middleware.js';
+import { permission } from '../middleware/permission.middleware.js';
+import monitoringController from '../controllers/monitoring.controller.js';
 
 const router = Router();
 
-const notImplemented = (op) =>
-  asyncHandler(async (_req, res) => {
-    res.status(501).json({
-      success: false,
-      statusCode: 501,
-      message: `${op} is not implemented yet (Phase 1.2 architecture placeholder)`,
-      hint: 'See src/modules/platform/monitoring/README.md',
-    });
-  });
-
-router.get('/health/system', notImplemented('GET /monitoring/health/system'));
-router.get('/health/db', notImplemented('GET /monitoring/health/db'));
-router.get('/health/websocket', notImplemented('GET /monitoring/health/websocket'));
-router.get('/health/queue', notImplemented('GET /monitoring/health/queue'));
-router.get('/health/scheduler', notImplemented('GET /monitoring/health/scheduler'));
-router.get('/health/storage', notImplemented('GET /monitoring/health/storage'));
-router.get('/health/connectors', notImplemented('GET /monitoring/health/connectors'));
-router.get('/health/aggregate', notImplemented('GET /monitoring/health/aggregate'));
-router.get('/metrics', notImplemented('GET /monitoring/metrics'));
+router.get('/health/system', adminAuth, permission('monitoring', 'view'), monitoringController.getSystemHealth);
+router.get('/health/db', adminAuth, permission('monitoring', 'view'), monitoringController.getDbHealth);
+router.get('/health/websocket', adminAuth, permission('monitoring', 'view'), monitoringController.getWsHealth);
+router.get('/health/queue', adminAuth, permission('monitoring', 'view'), monitoringController.getQueueHealth);
+router.get('/health/scheduler', adminAuth, permission('monitoring', 'view'), monitoringController.getSchedulerHealth);
+router.get('/health/storage', adminAuth, permission('monitoring', 'view'), monitoringController.getStorageHealth);
+router.get('/health/connectors', adminAuth, permission('monitoring', 'view'), monitoringController.getConnectorHealth);
+router.get('/health/aggregate', adminAuth, permission('monitoring', 'view'), monitoringController.getAggregateHealth);
+router.get('/metrics', adminAuth, permission('monitoring', 'view'), monitoringController.getMetrics);
 
 export default router;

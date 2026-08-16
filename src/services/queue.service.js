@@ -160,6 +160,19 @@ export function enqueueAnalytics(message) {
   });
 }
 
+/**
+ * Enqueue an audit-export job (consumed by `jobs/export.worker.js`).
+ *
+ * @param {Object} message - { exportId, tenantId }.
+ * @returns {Promise<Object>}
+ */
+export function enqueueExport(message) {
+  return enqueue(QUEUE_NAMES.EXPORT_JOBS, message, {
+    jobId: message?.exportId,
+    name: 'audit-export',
+  });
+}
+
 /* -------------------------------- helpers -------------------------------- */
 
 /**
@@ -190,6 +203,7 @@ export default {
   enqueueConnectorSync,
   enqueueEmail,
   enqueueAnalytics,
+  enqueueExport,
   QueueError,
   QUEUE_NAMES,
 };

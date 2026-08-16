@@ -12,19 +12,22 @@
  * CODING GUIDELINES
  *   - Admin-only access via `adminAuth` + permission middleware on the
  *     route layer.
- *   - Export requests reserve an id and a `queued` state; the materialising
- *     queue consumer is a later-sprint deliverable.
+ *   - Export requests reserve an id + sanitised filters and flow through
+ *     `services/auditExport.service.js` (queue consumer materialises the
+ *     artifact; status is polled until `completed`).
  *   - Pagination always returns `{ docs, page, limit, total, pages }`.
  */
 
 import asyncHandler from '../utils/asyncHandler.js';
 import ApiResponse from '../utils/ApiResponse.js';
 import auditLogService from '../services/auditLog.service.js';
+import auditExportService from '../services/auditExport.service.js';
 
 /** GET /audit-logs - filter + paginate the trail. */
 export const listAuditLogs = asyncHandler(async (req, res) => {
   const {
-    tenantId, module, action, actorId, actorType, result, page, limit,
+    tenantId, module, action, actorId, actorType, result,
+    resourceType, resourceId, dateFrom, dateTo, search, page, limit,
   } = req.validated?.query ?? {};
   const data = await auditLogService.list({
     tenantId,
@@ -33,6 +36,11 @@ export const listAuditLogs = asyncHandler(async (req, res) => {
     actorId,
     actorType,
     result,
+    resourceType,
+    resourceId,
+    dateFrom,
+    dateTo,
+    search,
     page: page ?? 1,
     limit: limit ?? 20,
   });
@@ -50,19 +58,25 @@ export const getAuditLog = asyncHandler(async (req, res) => {
   return ApiResponse.ok(res, entry, 'Audit entry fetched');
 });
 
-/** POST /audit-logs/export - request an export (queued). */
+/** POST /audit-logs/export - request an export (queued, processed async). */
 export const requestExport = asyncHandler(async (req, res) => {
-  const filters = req.validated?.body?.filters ?? {};
-  const exportJob = await auditLogService.requestExport({
-    filters,
+  const { format = 'json', filters = {} } = req.validated?.body ?? {};
+  const tenantId = req.admin?.tenantId ?? null;
+  const exportJob = await auditExportService.requestExport({
+    tenantId,
     requestedBy: req.admin?.id ?? null,
+    filters,
+    format,
   });
   return ApiResponse.accepted(res, exportJob, 'Audit export requested');
 });
 
 /** GET /audit-logs/export/:exportId - poll export status. */
 export const getExportStatus = asyncHandler(async (req, res) => {
-  const status = await auditLogService.getExportStatus({ exportId: req.params.exportId });
+  const status = await auditExportService.getExportStatus({
+    exportId: req.params.exportId,
+    tenantId: req.admin?.tenantId ?? null,
+  });
   return ApiResponse.ok(res, status, 'Export status');
 });
 

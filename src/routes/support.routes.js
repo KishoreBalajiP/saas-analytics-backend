@@ -1,46 +1,78 @@
 /**
- * /api/v1/support routes - Internal admin escape hatch.
+ * /api/v1/admin/support routes - Support tooling (Sprint 8 - implemented).
  *
  * WHY IT EXISTS
- *   Support Admins need a curated surface for impersonation, account
- *   recovery, and cross-tenant lookups - the regular APIs are deliberately
- *   narrow. Every support call is audited AND logged via `access-log`.
- *   Backed by `platform/support/`.
+ *   Admin-only support endpoints: secure impersonation, account recovery,
+ *   session revocation, tenant lookups and tenant-scoped broadcasts. Every
+ *   action is audited twice and gated by `support.configure`.
  *
- * RESPONSIBILITY (planned, NOT implemented)
- *   - POST   /impersonate             - begin impersonation (reason required)
- *   - POST   /impersonate/stop        - end impersonation
- *   - POST   /account/recover         - reset password / unlock
- *   - POST   /account/revoke-sessions - kill all sessions for a user
- *   - GET    /tenants/:id/lookups     - aggregated view
- *   - POST   /notifications/broadcast - one-off cross-tenant announcement
+ * ENDPOINTS
+ *   - POST /impersonate                  - start a user session (as admin)
+ *   - POST /impersonate/stop             - end an impersonation session
+ *   - POST /account/recover              - reset password / unlock by email
+ *   - POST /account/revoke-sessions      - revoke all of a user's sessions
+ *   - GET  /tenants/:id/lookups          - tenant overview + statistics
+ *   - POST /notifications/broadcast      - tenant-scoped in-app broadcast
+ *
+ * MIDDLEWARE ORDER
+ *   adminAuth -> permission('support', 'configure') -> validate(schema)
+ *   -> handler
  *
  * HOW TO EXTEND
- *   - Every request MUST carry `reason` in body. Validator rejects 422.
- *   - Impersonation is rate-limited per admin per day.
- *   - Audit + access-log middleware both run (Phase 2).
+ *   A new support tool is one validator + one service function + one route;
+ *   never skips the RBAC gate or the audit/access-log double write.
  */
 
 import { Router } from 'express';
-import asyncHandler from '../utils/asyncHandler.js';
+import { adminAuth } from '../middleware/adminAuth.middleware.js';
+import { permission } from '../middleware/permission.middleware.js';
+import { validate } from '../validators/index.js';
+import supportController from '../controllers/support.controller.js';
+import supportValidator from '../validators/support.validator.js';
 
 const router = Router();
 
-const notImplemented = (op) =>
-  asyncHandler(async (_req, res) => {
-    res.status(501).json({
-      success: false,
-      statusCode: 501,
-      message: `${op} is not implemented yet (Phase 1.2 architecture placeholder)`,
-      hint: 'See src/modules/platform/support/README.md',
-    });
-  });
-
-router.post('/impersonate', notImplemented('POST /support/impersonate'));
-router.post('/impersonate/stop', notImplemented('POST /support/impersonate/stop'));
-router.post('/account/recover', notImplemented('POST /support/account/recover'));
-router.post('/account/revoke-sessions', notImplemented('POST /support/account/revoke-sessions'));
-router.get('/tenants/:id/lookups', notImplemented('GET /support/tenants/:id/lookups'));
-router.post('/notifications/broadcast', notImplemented('POST /support/notifications/broadcast'));
+router.post(
+  '/impersonate',
+  adminAuth,
+  permission('support', 'configure'),
+  validate(supportValidator.impersonateSchema),
+  supportController.impersonate,
+);
+router.post(
+  '/impersonate/stop',
+  adminAuth,
+  permission('support', 'configure'),
+  validate(supportValidator.stopImpersonationSchema),
+  supportController.stopImpersonation,
+);
+router.post(
+  '/account/recover',
+  adminAuth,
+  permission('support', 'configure'),
+  validate(supportValidator.recoverSchema),
+  supportController.recoverAccount,
+);
+router.post(
+  '/account/revoke-sessions',
+  adminAuth,
+  permission('support', 'configure'),
+  validate(supportValidator.revokeSessionsSchema),
+  supportController.revokeAllSessions,
+);
+router.get(
+  '/tenants/:id/lookups',
+  adminAuth,
+  permission('support', 'configure'),
+  validate(supportValidator.tenantLookupsSchema),
+  supportController.getTenantLookups,
+);
+router.post(
+  '/notifications/broadcast',
+  adminAuth,
+  permission('support', 'configure'),
+  validate(supportValidator.broadcastSchema),
+  supportController.broadcastNotification,
+);
 
 export default router;

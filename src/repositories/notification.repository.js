@@ -19,6 +19,13 @@ export const create = async (data) => {
   return doc.toObject();
 };
 
+/** Bulk-insert notification documents (support broadcast fan-out). */
+export const createMany = async (docs) => {
+  if (!Array.isArray(docs) || docs.length === 0) return 0;
+  const inserted = await Notification.insertMany(docs, { ordered: false });
+  return inserted.length;
+};
+
 /** Paginated inbox for a recipient (optionally unread-only). */
 export const listInbox = async ({ tenantId, recipientId, unreadOnly = false, page = 1, limit = 20 } = {}) => {
   const filter = { tenantId, recipientId };
@@ -88,6 +95,7 @@ export const setPreferences = async ({ tenantId, recipientId, preferences } = {}
 
 export default {
   create,
+  createMany,
   listInbox,
   countUnread,
   findById,

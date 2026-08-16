@@ -57,6 +57,21 @@ const TENANT_PERMISSION_ACTIONS = Object.freeze({
   email_templates: ['view', 'create', 'update', 'delete'],
 });
 
+/**
+ * Platform/governance modules and their canonical permission actions. These
+ * permission rows are registered alongside the tenant catalogue so a
+ * platform super-admin role can grant `monitoring.view`, `support.impersonate`
+ * etc. to support staff. The default tenant roles deliberately do NOT
+ * reference them - governance surfaces stay platform-admin-only.
+ */
+const PLATFORM_PERMISSION_ACTIONS = Object.freeze({
+  monitoring: ['view'],
+  support: ['impersonate', 'recover', 'broadcast', 'lookup'],
+  audit_logs: ['view', 'export'],
+  access_logs: ['view', 'export'],
+  compliance: ['view', 'configure', 'file', 'cancel'],
+});
+
 const P = (module, actions) => actions.map((action) => `${module}.${action}`);
 
 /** Default roles created in every tenant on onboarding. */
@@ -156,18 +171,21 @@ async function ensureModules({ by }) {
 
 /** Ensure the tenant-scoped permission keys exist (idempotent). */
 async function ensurePermissions({ by }) {
-  for (const [moduleKey, actions] of Object.entries(TENANT_PERMISSION_ACTIONS)) {
-    const module = await permissionRepository.findModuleByKey(moduleKey);
-    if (!module) continue;
-    for (const action of actions) {
-      await permissionRepository.registerAction({
-        moduleId: module._id,
-        module: moduleKey,
-        action,
-        description: `${titleCase(action)} ${moduleKey}`,
-        isSystem: true,
-        createdBy: by,
-      });
+  const catalogues = [TENANT_PERMISSION_ACTIONS, PLATFORM_PERMISSION_ACTIONS];
+  for (const catalogue of catalogues) {
+    for (const [moduleKey, actions] of Object.entries(catalogue)) {
+      const module = await permissionRepository.findModuleByKey(moduleKey);
+      if (!module) continue;
+      for (const action of actions) {
+        await permissionRepository.registerAction({
+          moduleId: module._id,
+          module: moduleKey,
+          action,
+          description: `${titleCase(action)} ${moduleKey}`,
+          isSystem: true,
+          createdBy: by,
+        });
+      }
     }
   }
 }
@@ -293,5 +311,6 @@ export default {
   initialize,
   DEFAULT_ROLES,
   TENANT_PERMISSION_ACTIONS,
+  PLATFORM_PERMISSION_ACTIONS,
   _meta: { idempotent: true, module: 'iam.tenants' },
 };

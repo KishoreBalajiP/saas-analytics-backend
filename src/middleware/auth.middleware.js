@@ -33,6 +33,7 @@ import { verify as verifyJwt, JwtError, JWT_AUDIENCES } from '../utils/jwt.js';
 import sessionRepository from '../repositories/session.repository.js';
 import roleService from '../services/role.service.js';
 import { getActor } from './actor.js';
+import { runWithContext } from '../utils/actorContext.js';
 
 const BEARER_RE = /^Bearer\s+([^\s]+)$/i;
 
@@ -95,7 +96,10 @@ export function authenticateToken({ audience = JWT_AUDIENCES.USER, attach = 'use
       email: payload.email ?? null,
       tenantId: payload.tenantId ?? null,
     };
-    return next();
+    // Carry the resolved actor (and request id) through the async context so
+    // the audit plugin can attribute model changes to this requester.
+    const actor = getActor(req);
+    return runWithContext({ actor, requestId: req.id ?? null }, () => next());
   };
 }
 

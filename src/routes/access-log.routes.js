@@ -1,41 +1,41 @@
 /**
- * /api/v1/access-logs routes - Per-request HTTP trace.
+ * /api/v1/access-logs routes - Per-request HTTP trace (Sprint 8 - implemented).
  *
  * WHY IT EXISTS
  *   Higher cardinality than audit logs: every authenticated HTTP request.
- *   Used for behaviour analytics, debugging, abuse detection. Writes
- *   come from `accessLog.middleware.js`. Backed by `governance/access-logs/`.
+ *   Used for behaviour analytics, debugging, abuse detection. Writes come
+ *   from `accessLog.middleware.js`. Backed by `governance/access-logs/`.
  *
- * RESPONSIBILITY (planned, NOT implemented)
- *   - GET    /                      - filter + paginate
- *   - GET    /top-paths             - aggregated top paths
- *   - GET    /top-errors            - aggregated error rates
- *   - POST   /export                - export to presigned URL
+ * ENDPOINTS
+ *   - GET    /                    - filter + paginate
+ *   - GET    /top-paths           - aggregated top paths
+ *   - GET    /top-errors          - aggregated error rates
+ *   - POST   /export              - request an async export (JSON/CSV)
+ *   - GET    /export/:exportId    - poll status + download URL
+ *
+ * MIDDLEWARE ORDER
+ *   adminAuth -> permission('access_logs', <view|export>) -> validate -> handler
  *
  * HOW TO EXTEND
- *   - Admin-only. Tenant Admins see only their tenant.
- *   - Aggregation endpoints use the same time-range filters; cache
- *     aggressively (60s TTL on aggregates).
+ *   - Admin-only. Tenant-scoped admins see only their tenant (the
+ *     controller derives the boundary from `req.admin.tenantId`).
+ *   - Aggregation endpoints use the same time-range filters; results are
+ *     capped at 100 rows server-side.
  */
 
 import { Router } from 'express';
-import asyncHandler from '../utils/asyncHandler.js';
+import { validate } from '../validators/index.js';
+import { adminAuth } from '../middleware/adminAuth.middleware.js';
+import { permission } from '../middleware/permission.middleware.js';
+import accessLogValidator from '../validators/accessLog.validator.js';
+import accessLogController from '../controllers/accessLog.controller.js';
 
 const router = Router();
 
-const notImplemented = (op) =>
-  asyncHandler(async (_req, res) => {
-    res.status(501).json({
-      success: false,
-      statusCode: 501,
-      message: `${op} is not implemented yet (Phase 1.2 architecture placeholder)`,
-      hint: 'See src/modules/governance/access-logs/README.md',
-    });
-  });
-
-router.get('/', notImplemented('GET /access-logs'));
-router.get('/top-paths', notImplemented('GET /access-logs/top-paths'));
-router.get('/top-errors', notImplemented('GET /access-logs/top-errors'));
-router.post('/export', notImplemented('POST /access-logs/export'));
+router.get('/', adminAuth, permission('access_logs', 'view'), validate(accessLogValidator.listSchema), accessLogController.listAccessLogs);
+router.get('/top-paths', adminAuth, permission('access_logs', 'view'), validate(accessLogValidator.topPathsSchema), accessLogController.getTopPaths);
+router.get('/top-errors', adminAuth, permission('access_logs', 'view'), validate(accessLogValidator.topErrorsSchema), accessLogController.getTopErrors);
+router.post('/export', adminAuth, permission('access_logs', 'export'), validate(accessLogValidator.exportSchema), accessLogController.requestExport);
+router.get('/export/:exportId', adminAuth, permission('access_logs', 'view'), validate(accessLogValidator.exportStatusSchema), accessLogController.getExportStatus);
 
 export default router;

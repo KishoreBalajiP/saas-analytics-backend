@@ -50,6 +50,14 @@ class ApiError extends Error {
     return new ApiError(409, message, { code: ERROR_CODES.CONFLICT });
   }
 
+  static gone(message = 'Resource is gone') {
+    return new ApiError(410, message, { code: ERROR_CODES.GONE });
+  }
+
+  static locked(message = 'Resource is locked') {
+    return new ApiError(423, message, { code: ERROR_CODES.LOCKED });
+  }
+
   static validation(message = 'Validation failed', errors) {
     return new ApiError(422, message, { code: ERROR_CODES.VALIDATION_FAILED, errors });
   }

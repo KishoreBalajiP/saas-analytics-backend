@@ -26,15 +26,26 @@ import env from './config/env.js';
 import corsConfig from './config/cors.js';
 import { httpLoggerStream } from './config/logger.js';
 import { requestIdMiddleware } from './middleware/requestId.middleware.js';
+import { accessLog as accessLogMiddleware } from './middleware/accessLog.middleware.js';
 import { apiLimiter } from './middleware/rateLimiter.middleware.js';
 import { notFoundHandler } from './middleware/notFound.middleware.js';
 import { errorHandler } from './middleware/error.middleware.js';
 import apiRoutes from './routes/index.js';
 import { registerAnalyticsWorker } from './jobs/analytics.worker.js';
+import { registerExportWorker } from './jobs/export.worker.js';
+import { initAuditConsumer } from './services/auditConsumer.service.js';
 
 // Register the analytics queue consumer (report generation + alert
 // evaluation) once per process so enqueued jobs are actually processed.
 registerAnalyticsWorker();
+
+// Register the export queue consumer (audit-trail artifact materialisation)
+// once per process so requested exports actually complete.
+registerExportWorker();
+
+// Wire model-change events (audit plugin) to the audit trail. Runs after
+// routes are imported so every audit-enabled model is already compiled.
+initAuditConsumer();
 
 const app = express();
 
@@ -46,6 +57,8 @@ app.set('env', env.app.env);
 
 // 1. Request context (must run before anything that logs or throttles).
 app.use(requestIdMiddleware);
+// 1b. Per-request access trace (authenticated requests only; buffered writes).
+app.use(accessLogMiddleware());
 
 // 2. Security + transport headers.
 app.use(helmet());

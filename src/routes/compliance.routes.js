@@ -1,50 +1,54 @@
 /**
- * /api/v1/compliance routes - Data-subject requests and evidence.
+ * /api/v1/compliance routes - Data-subject requests and evidence (Sprint 8 - implemented).
  *
  * WHY IT EXISTS
  *   Centralised place to file and resolve GDPR/CCPA-style requests
  *   (export, delete, restrict, consent withdraw). Even "no data found"
  *   produces a compliance audit entry (proof of search). Backed by
- *   `governance/compliance/`.
+ *   `governance/compliance/` rows and the export queue.
  *
- * RESPONSIBILITY (planned, NOT implemented)
- *   - POST   /requests              - data subject (or admin) files request
- *   - GET    /requests              - list (admin-only)
+ * ENDPOINTS
+ *   - POST   /requests              - admin files on a subject's behalf
+ *   - GET    /requests              - list + filter (admin-only)
  *   - GET    /requests/:id          - status + evidence
  *   - POST   /requests/:id/cancel   - cancel before start
- *   - POST   /public/requests       - subject-facing entry (signed token)
- *   - GET    /public/requests/:id   - subject polls status
+ *   - POST   /public/requests       - subject files for themselves (JWT)
+ *   - GET    /public/requests/:id   - subject polls status (signed token)
+ *
+ * MIDDLEWARE ORDER
+ *   admin routes: adminAuth -> permission('compliance', <action>) -> validate
+ *   public routes: authenticate -> validate
  *
  * HOW TO EXTEND
- *   - Internal `/requests` requires `compliance.configure` permission.
- *   - External endpoints accept a signed token instead of bearer auth.
- *   - Every state change emits `audit.middleware.js` entry, including
- *     "no data found" rejections.
+ *   - Internal `/requests` requires `compliance.create`; cancellation requires
+ *     `compliance.update`; listing/status require `compliance.view`.
+ *   - External endpoints use a signed HMAC token (`pollToken`) instead of a
+ *     bearer credential.
+ *   - Every state change emits an audit entry (service layer).
  */
 
 import { Router } from 'express';
-import asyncHandler from '../utils/asyncHandler.js';
+import { validate } from '../validators/index.js';
+import { adminAuth } from '../middleware/adminAuth.middleware.js';
+import { authenticate } from '../middleware/auth.middleware.js';
+import { permission } from '../middleware/permission.middleware.js';
+import complianceValidator from '../validators/compliance.validator.js';
+import complianceController from '../controllers/compliance.controller.js';
 
 const router = Router();
 
-const notImplemented = (op) =>
-  asyncHandler(async (_req, res) => {
-    res.status(501).json({
-      success: false,
-      statusCode: 501,
-      message: `${op} is not implemented yet (Phase 1.2 architecture placeholder)`,
-      hint: 'See src/modules/governance/compliance/README.md',
-    });
-  });
-
 // Internal (admin-gated)
-router.post('/requests', notImplemented('POST /compliance/requests'));
-router.get('/requests', notImplemented('GET /compliance/requests'));
-router.get('/requests/:id', notImplemented('GET /compliance/requests/:id'));
-router.post('/requests/:id/cancel', notImplemented('POST /compliance/requests/:id/cancel'));
+router.post('/requests', adminAuth, permission('compliance', 'create'), validate(complianceValidator.createSchema), complianceController.createRequest);
+router.get('/requests', adminAuth, permission('compliance', 'view'), validate(complianceValidator.listSchema), complianceController.listRequests);
+router.get('/requests/:id', adminAuth, permission('compliance', 'view'), validate(complianceValidator.paramSchema), complianceController.getRequest);
+router.post('/requests/:id/cancel', adminAuth, permission('compliance', 'update'), validate(complianceValidator.cancelSchema), complianceController.cancelRequest);
 
-// Public subject-facing (signed token)
-router.post('/public/requests', notImplemented('POST /compliance/public/requests'));
-router.get('/public/requests/:id', notImplemented('GET /compliance/public/requests/:id'));
+// Public subject-facing (JWT to file, signed token to poll)
+router.post('/public/requests', authenticate, validate(complianceValidator.publicCreateSchema), complianceController.createSubjectRequest);
+router.get(
+  '/public/requests/:id', // ci:routes-exempt: self-authenticating HMAC token bound to the request
+  validate(complianceValidator.publicStatusSchema),
+  complianceController.getSubjectRequest,
+);
 
 export default router;

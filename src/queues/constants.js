@@ -15,6 +15,7 @@ export const QUEUE_NAMES = Object.freeze({
   CONNECTOR_SYNC: 'connector.sync',
   EMAIL_DELIVERY: 'email.delivery',
   ANALYTICS_JOBS: 'analytics.jobs',
+  EXPORT_JOBS: 'export.jobs',
 });
 
 export default QUEUE_NAMES;

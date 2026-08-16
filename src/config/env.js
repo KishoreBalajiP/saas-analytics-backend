@@ -252,6 +252,24 @@ const config = Object.freeze({
     },
   },
 
+  support: {
+    // Per-admin daily cap on impersonation sessions (Sprint 8).
+    impersonationBudgetDailyCap: num('SUPPORT_IMPERSONATION_DAILY_CAP', 20),
+    impersonationTokenTtl: str('SUPPORT_IMPERSONATION_TOKEN_TTL', '15m'),
+  },
+
+  retention: {
+    // How long append-only/volatile records are kept before the cleanup job
+    // hard-deletes them. Audit trails are the longest; transient idempotency
+    // keys are the shortest.
+    auditLogDays: num('RETENTION_AUDIT_LOG_DAYS', 90),
+    accessLogDays: num('RETENTION_ACCESS_LOG_DAYS', 30),
+    loginAttemptDays: num('RETENTION_LOGIN_ATTEMPT_DAYS', 30),
+    sessionDays: num('RETENTION_SESSION_DAYS', 90),
+    idempotencyDays: num('RETENTION_IDEMPOTENCY_DAYS', 1),
+    exportDays: num('RETENTION_EXPORT_DAYS', 1),
+  },
+
   logging: {
     level: str('LOG_LEVEL', isProduction ? 'info' : 'debug'),
     redact: list('LOG_REDACT', [

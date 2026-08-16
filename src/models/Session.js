@@ -41,6 +41,10 @@ const sessionSchema = new mongoose.Schema(
     actorId: { type: String, required: true },
     actorType: { type: String, enum: [...ACTOR_TYPES], required: true },
     tenantId: { type: String, default: null },
+    // Set when a support admin created this session on behalf of the actor
+    // (Sprint 8 impersonation). The admin's id is recorded so an impersonation
+    // session can be attributed, listed and revoked by its owner.
+    impersonatedBy: { type: String, default: null },
     refreshTokenHash: { type: String, required: true },
     device: {
       id: { type: String, default: null },
