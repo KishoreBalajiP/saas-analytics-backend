@@ -61,6 +61,10 @@ import connectorRoutes from './connector.routes.js';
 // Phase 5 - analytics
 import analyticsRoutes from './analytics.routes.js';
 
+// Sprint 9 - External API + API Keys + Embed
+import apiKeyRoutes from './api-key.routes.js';
+import externalApiRoutes from './externalApi.routes.js';
+
 // Phase 1.2 - platform management surface
 import adminAuthRoutes from './admin-auth.routes.js';
 import adminRoutes from './admin.routes.js';
@@ -91,6 +95,10 @@ router.use('/connectors', connectorRoutes);
 router.use('/analytics', analyticsRoutes);
 router.use('/embed', embedRoutes);
 router.use('/webhooks', webhookRoutes);
+
+// Sprint 9 - External API + API Keys
+router.use('/api-keys', apiKeyRoutes);
+router.use('/external', externalApiRoutes);
 
 // Phase 1.2 - Platform Management surface (admin + tenant portals share
 // the same backend; RBAC differentiates the two).

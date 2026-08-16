@@ -72,7 +72,7 @@ function isCompliant(source) {
   // Names of local wrappers whose bodies explicitly mount an auth middleware,
   // e.g. `const guarded = (action, ...mw) => [authenticate, ..., ...mw];`.
   const wrapperPattern =
-    /(?:const|let)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:\([^)]*\)\s*=>\s*)?\[[^\]]*?(?:authenticate|adminAuth|optionalAuthenticate)[^\]]*?\]/g;
+    /(?:const|let)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:\([^)]*\)\s*=>\s*)?\[[^\]]*?(?:authenticate|adminAuth|optionalAuthenticate|authenticateApiKey)[^\]]*?\]/g;
   const wrappers = new Set();
   let wrapperMatch;
   while ((wrapperMatch = wrapperPattern.exec(cleaned)) !== null) {
@@ -88,7 +88,7 @@ function isCompliant(source) {
   while ((match = routePattern.exec(cleaned)) !== null) {
     const args = match[2];
     if (/notImplemented|notImplementedStub/.test(args)) continue;
-    if (/authenticate|adminAuth|optionalAuthenticate/.test(args)) continue;
+    if (/authenticate|adminAuth|optionalAuthenticate|authenticateApiKey/.test(args)) continue;
     if (wrapperUse && wrapperUse.test(args)) continue;
     if (/ci:routes-exempt/.test(args)) continue;
     realCount += 1;

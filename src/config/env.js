@@ -169,6 +169,36 @@ const config = Object.freeze({
       windowMs: num('RATE_LIMIT_WINDOW_MS', 15 * 60 * 1000),
       max: num('RATE_LIMIT_MAX', 300),
       strictMax: num('RATE_LIMIT_STRICT_MAX', 20),
+      // External/public surfaces get their own tighter limits so a page
+      // of embeds or a busy API consumer cannot exhaust the global budget.
+      external: {
+        windowMs: num('EXTERNAL_API_RATE_LIMIT_WINDOW_MS', 60 * 1000),
+        max: num('EXTERNAL_API_RATE_LIMIT_MAX', 60),
+      },
+      embed: {
+        windowMs: num('EMBED_RATE_LIMIT_WINDOW_MS', 60 * 1000),
+        max: num('EMBED_RATE_LIMIT_MAX', 120),
+      },
+    },
+    // External API keys (Sprint 9).
+    apiKeys: {
+      // Default lifetime in days when the caller does not set an expiry.
+      defaultTtlDays: num('API_KEY_TTL_DAYS', 90),
+      // Per-tenant cap on active keys (abuse guard).
+      maxActivePerTenant: num('API_KEY_MAX_PER_TENANT', 100),
+    },
+    // Public embed surface (Sprint 9).
+    embed: {
+      // Default token lifetime when the caller does not set one.
+      defaultTtlSec: num('EMBED_TOKEN_DEFAULT_TTL_SEC', 24 * 60 * 60),
+      // Hard ceiling for any embed token TTL.
+      maxTtlSec: num('EMBED_TOKEN_MAX_TTL_SEC', 7 * 24 * 60 * 60),
+      // Cap on concurrent active tokens per dashboard.
+      maxActivePerDashboard: num('EMBED_MAX_PER_DASHBOARD', 50),
+      // Embbed content is loaded cross-origin by the tenant's external
+      // site; the public read is token-gated so it may safely reflect any
+      // Origin (no credentials are ever attached to embed data requests).
+      corsAllowAllOrigins: bool('EMBED_CORS_ALLOW_ALL', true),
     },
   },
 
@@ -220,6 +250,15 @@ const config = Object.freeze({
   connectors: {
     // Max CSV upload size in bytes (multer memory storage caps this).
     csvMaxUploadBytes: num('CONNECTOR_CSV_MAX_UPLOAD_MB', 10) * 1024 * 1024,
+    // Max XLSX upload size in bytes (multer memory storage caps this).
+    xlsxMaxUploadBytes: num('CONNECTOR_XLSX_MAX_UPLOAD_MB', 10) * 1024 * 1024,
+    // External MongoDB source connect trail-safety defaults. Credentials
+    // are never logged; these bound connect latency and result volume.
+    mongodb: {
+      maxDocsPerSync: num('MONGODB_CONNECTOR_MAX_DOCS_PER_SYNC', 100000),
+      connectTimeoutMs: num('MONGODB_CONNECTOR_CONNECT_TIMEOUT_MS', 10000),
+      serverSelectionTimeoutMs: num('MONGODB_CONNECTOR_SERVER_SELECTION_TIMEOUT_MS', 5000),
+    },
     // Connector sync queue sizing.
     queue: {
       concurrency: num('CONNECTOR_QUEUE_CONCURRENCY', 5),

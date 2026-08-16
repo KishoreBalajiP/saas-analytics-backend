@@ -55,6 +55,9 @@ const TENANT_PERMISSION_ACTIONS = Object.freeze({
   alerts: ['view', 'create', 'update', 'delete', 'evaluate'],
   master_data: ['view'],
   email_templates: ['view', 'create', 'update', 'delete'],
+  // External-API credentials + public embed surface (Sprint 9).
+  api_keys: ['view', 'create', 'update', 'delete'],
+  embed: ['view', 'create', 'delete'],
 });
 
 /**
@@ -92,6 +95,8 @@ const DEFAULT_ROLES = Object.freeze({
       ...P('master_data', ['view']),
       ...P('email_templates', ['view', 'create', 'update', 'delete']),
       ...P('alerts', ['view', 'create', 'update', 'delete', 'evaluate']),
+      ...P('api_keys', ['view', 'create', 'update', 'delete']),
+      ...P('embed', ['view', 'create', 'delete']),
     ],
   },
   Admin: {
@@ -110,6 +115,8 @@ const DEFAULT_ROLES = Object.freeze({
       ...P('master_data', ['view']),
       ...P('email_templates', ['view', 'create', 'update']),
       ...P('alerts', ['view', 'create', 'update', 'evaluate']),
+      ...P('api_keys', ['view', 'create', 'update']),
+      ...P('embed', ['view', 'create']),
     ],
   },
   Manager: {
@@ -124,6 +131,8 @@ const DEFAULT_ROLES = Object.freeze({
       ...P('notifications', ['view']),
       ...P('alerts', ['view', 'create', 'update', 'evaluate']),
       ...P('master_data', ['view']),
+      ...P('api_keys', ['view']),
+      ...P('embed', ['view']),
     ],
   },
   Viewer: {

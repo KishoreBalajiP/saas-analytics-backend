@@ -24,6 +24,39 @@ import connectorService from '../services/connector.service.js';
 
 const actorOf = (req) => req.user?.id ?? req.admin?.id ?? null;
 
+/** GET /api/v1/connectors/:connectorId/preview - generic file preview (CSV/XLSX). */
+export const previewFile = asyncHandler(async (req, res) => {
+  const result = await connectorService.previewFileUpload({
+    tenantId: getTenantId(req),
+    connectorId: req.params.connectorId,
+    buffer: req.file?.buffer,
+    limit: Number(req.body?.limit) || 10,
+  });
+  return ApiResponse.ok(res, result, 'File preview');
+});
+
+/** POST /api/v1/connectors/:connectorId/sync - generic file sync (CSV/XLSX). */
+export const syncFile = asyncHandler(async (req, res) => {
+  const result = await connectorService.syncFileUpload({
+    tenantId: getTenantId(req),
+    connectorId: req.params.connectorId,
+    actorId: actorOf(req),
+    buffer: req.file?.buffer,
+    filename: req.file?.originalname ?? null,
+  });
+  return ApiResponse.accepted(res, result, 'File sync enqueued');
+});
+
+/** POST /api/v1/connectors/:connectorId/sync-mongodb - MongoDB pull-sync. */
+export const syncMongoDB = asyncHandler(async (req, res) => {
+  const result = await connectorService.syncMongoDB({
+    tenantId: getTenantId(req),
+    connectorId: req.params.connectorId,
+    actorId: actorOf(req),
+  });
+  return ApiResponse.accepted(res, result, 'MongoDB sync enqueued');
+});
+
 /** GET /api/v1/connectors/types - registered connector catalogue. */
 export const listTypes = asyncHandler(async (_req, res) => {
   return ApiResponse.ok(res, connectorService.listConnectorTypes(), 'Connector types');
@@ -149,4 +182,7 @@ export default {
   listRows,
   previewCsv,
   syncCsv,
+  previewFile,
+  syncFile,
+  syncMongoDB,
 };

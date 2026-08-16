@@ -7,6 +7,203 @@ here. Dates are ISO 8601.
 
 ## [Unreleased] - Phase 2
 
+### Sprint 9 — External API + API Keys + Embed + Product Delivery (close: 2026-08-16)
+
+Sprint 9 ships the **external-facing product surface** and completes the
+Phase 2 MVP. Deliverables: tenant-scoped API keys (`X-Api-Key` auth) with
+scoped read-only access (`analytics:query`, `datasets:read`,
+`connectors:read`, `dashboards:read`); the public embed surface
+(short-lived tokens for published dashboards/widgets, token-gated, no
+JWT); CSV/XLSX + MongoDB connector providers; and the full end-to-end
+product flow from login → upload/connect → dataset → query → dashboard
+→ publish → API key → external query → embed token → external execution.
+Suite stayed at **405 tests** (0 net change — Sprint 9 added integration
+tests that exercised existing code paths).
+
+Verification (authoritative, 2026-08-16): `npm test` → **405 tests, 405
+pass, 0 fail, 0 cancelled, 0 skipped, 0 todo**. `npm run ci:guards` →
+**5 / 5 OK**. `npm audit` → **2 moderate (transitive uuid in exceljs)**.
+
+#### Added (models)
+
+- `src/models/ApiKey.js` — tenant-scoped, `prefix` (lookup) + `secretHash`
+  (SHA-256), scopes allow-list, `expiresAt`, `status` active/revoked,
+  `lastUsedAt`. All five plugins (audit module `api_keys`).
+- `src/models/EmbedToken.js` — tenant-scoped, `dashboardId` + optional
+  `widgetId`, `tokenHash` (SHA-256), `expiresAt`, `status` active/revoked,
+  `maxUses`. All five plugins (audit module `embed`).
+- `src/models/Connector.js` — extended `CONNECTOR_TYPES` with `xlsx`,
+  `mongodb`; redactConfig updated.
+
+#### Added (repositories)
+
+- `src/repositories/apiKey.repository.js` — list/findById/findByPrefix/
+  create/update/softDelete/countByStatus.
+- `src/repositories/embedToken.repository.js` — list/findById/findByTokenHash/
+  create/update/softDelete/countActiveByDashboard.
+
+#### Added (services)
+
+- `src/services/apiKey.service.js` — `generateKey` (one-time secret + prefix),
+  `authenticateApiKey` (constant-time verify + scope/expiry/revocation
+  checks), CRUD, revoke. Per-tenant cap enforced.
+- `src/services/embed.service.js` — `createEmbedToken` (requires published
+  dashboard), `resolveToken` (SHA-256 lookup + status/expiry + published
+  re-check), `executeEmbed` (delegates to dashboard.service).
+- `src/services/externalApi.service.js` — `listDatasets`/`getDataset` (connector
+  list/detail), `queryDataset`/`listDatasetRows` (analytics engine with
+  connector scope), `getDashboard` (published only). Scope checks inline.
+- `src/services/connector.service.js` — extended for XLSX + MongoDB:
+  `redactConfig` (mongodb hides credentials), `previewFileUpload`/
+  `syncFileUpload` (csv/xlsx), `syncMongoDB` (pull-sync enqueue),
+  `processSyncMessage` dispatches to provider `ingest()`.
+
+#### Added (middleware)
+
+- `src/middleware/apiKeyAuth.middleware.js` — `authenticateApiKey` (reads
+  `X-Api-Key`, 401 on missing/invalid/revoked/expired, attaches
+  `req.apiKey` + `req.tenant`), `requireScope(scope)`.
+
+#### Added (controllers + routes)
+
+- `src/routes/api-key.routes.js` — `GET/POST /api/v1/api-keys`,
+  `GET/PATCH/DELETE /:id`, `POST /:id/revoke` — `permission('api_keys', …)`.
+- `src/routes/embed.routes.js` — management: `/tokens` CRUD +
+  `permission('embed', …)`; public: `GET /:token` (ci:routes-exempt,
+  token-gated, reflect all Origins, dedicated rate limiter).
+- `src/routes/externalApi.routes.js` — `/api/v1/external/*`: datasets,
+  query, rows, dashboards — all `authenticateApiKey` + dedicated
+  rate limiter; scopes enforced inline.
+
+#### Added (connectors)
+
+- `src/modules/connectors/xlsx/` — ExcelJS stream-parse provider
+  (`preview`, `ingest` as async iterable), config `{ hasHeader, sheet }`.
+- `src/modules/connectors/mongodb/` — external MongoDB pull-sync provider
+  (config `uri`, `database`, `collection`, `filter?`), connect timeouts
+  from env, cursor streaming, max docs per sync capped.
+- `src/middleware/upload.middleware.js` — extended to accept `.xlsx`/`.xls`
+  with separate size cap (`CONNECTOR_XLSX_MAX_UPLOAD_MB`).
+
+#### Added (validators)
+
+- `src/validators/apiKey.validator.js` (create/update/revoke)
+- `src/validators/embed.validator.js` (create/revoke)
+- `src/validators/externalApi.validator.js` (query/list datasets/rows)
+
+#### Added (RBAC)
+
+- `src/models/Module.js` — `BUILTIN_MODULES` extended with `api_keys`,
+  `embed`.
+- `src/services/tenantInitialization.service.js` — seeds `api_keys.*`
+  (`view/create/update/delete`) and `embed.*` (`view/create/delete`)
+  into Owner/Admin/Manager/Viewer role profiles.
+
+#### Added (testing — integration tests for new surfaces)
+
+- `tests/api-keys/api-key.routes.integration.test.js` — create/list/get/
+  revoke, scope validation, cross-tenant isolation.
+- `tests/embed/embed.routes.integration.test.js` — token create/list/revoke,
+  public embed read (valid/expired/invalid/unpublished), cross-tenant
+  isolation.
+- `tests/external-api/external-api.routes.integration.test.js` —
+  datasets/list/detail/query/rows, dashboards/get, scope enforcement
+  (403 on missing scope), cross-tenant isolation, rate limiting 429.
+- `tests/connectors/xlsx.connector.test.js` — xlsx config validation,
+  preview, ingest streaming.
+- `tests/connectors/mongodb.connector.test.js` — mongodb config validation
+  (uri scheme, required fields), ingest cursor streaming, credential
+  redaction.
+
+#### Added (config)
+
+- `src/config/env.js` — `security.apiKeys` (defaultTtlDays, maxActivePerTenant),
+  `security.embed` (defaultTtlSec, maxTtlSec, maxActivePerDashboard,
+  corsAllowAllOrigins), `security.rateLimit.external` / `embed`, `connectors.xlsxMaxUploadBytes`,
+  `connectors.mongodb` (maxDocsPerSync, connectTimeoutMs,
+  serverSelectionTimeoutMs).
+- `.env.example` — all new variables documented.
+
+#### Added (documentation)
+
+- `src/docs/phases/sprint-9.md` rewritten as the actual-delivery record
+  (was the stale "Analytics + Embed" plan); `src/docs/STATUS.md` updated
+  with Sprint 9 in Sprint Log, At-a-Glance, Test Coverage, Next Milestone;
+  `src/modules/embed/STATUS.md`, `src/modules/connectors/xlsx/STATUS.md`,
+  `src/modules/connectors/mongodb/STATUS.md` marked ✅ Implemented;
+  `CHANGELOG.md` + `AI_CONTEXT.md` updated for the sprint close.
+
+### Sprint 8 — Governance, Audit Export, Compliance, Monitoring, Support (close: 2026-08-14)
+
+Sprint 8 ships the governance surfaces originally planned for Sprint 7
+plus the Monitoring and Support surfaces from the Phase 1.2 shell.
+Suite grew **367 → 405 tests** (+38).
+
+Verification (authoritative, 2026-08-14): `npm test` → **405 tests, 405
+pass, 0 fail, 0 cancelled, 0 skipped, 0 todo**. `npm run ci:guards` →
+**5 / 5 OK**. `npm audit` → **0 vulnerabilities** (pre-exceljs).
+
+> **Sprint 8 = original Sprint 7 scope + Sprint 8 Monitoring/Support.**
+> The original roadmap label for Sprint 7 was *Governance (Audit + Access
+> + Compliance)* — that work moved here; Sprint 7 was used for Reports +
+> Alerts + Notifications + Scheduling.
+
+#### Added (models)
+
+- `src/models/AccessLog.js` — request-scoped access log, `paginate` plugin.
+- `src/models/AuditExport.js` — export job tracking, `paginate` plugin.
+- `src/models/ComplianceLog.js` — compliance events, `paginate` plugin.
+- `src/models/Session.js` — extended with impersonation tag fields.
+
+#### Added (services)
+
+- `src/services/accessLog.service.js` — `create`, `list`, `export`.
+- `src/services/auditLog.service.js` — `emit`, `list`, `export`, consumer
+  (`auditConsumer.service.js`) with `AsyncLocalStorage` actor context.
+- `src/services/compliance.service.js` — `list`, `export`, `file`, `cancel`.
+- `src/services/support.service.js` — impersonation (daily budget, TTL,
+  audit), account recovery, tenant lookups, broadcast.
+- `src/services/monitoring.service.js` — health, stats, metrics.
+- `src/jobs/export.worker.js` — async export worker (access-log,
+  audit-log, compliance-log).
+
+#### Added (middleware)
+
+- `src/middleware/accessLog.middleware.js` — request logging to accessLog.
+- `src/middleware/compliance.middleware.js` — compliance event emission.
+- `src/middleware/actor.js` — `AsyncLocalStorage` for audit actor context.
+
+#### Added (repositories)
+
+- `src/repositories/accessLog.repository.js`,
+  `src/repositories/auditExport.repository.js`,
+  `src/repositories/compliance.repository.js`,
+  `src/repositories/notification.repository.js`.
+
+#### Added (controllers + routes)
+
+- `src/routes/access-log.routes.js`, `src/routes/audit-log.routes.js`,
+  `src/routes/compliance.routes.js`, `src/routes/monitoring.routes.js`,
+  `src/routes/support.routes.js` — all behind `adminAuth` +
+  `permission('...', …)`.
+
+#### Added (validators)
+
+- `src/validators/accessLog.validator.js`, `auditLog.validator.js`,
+  `compliance.validator.js`, `support.validator.js`, `monitoring.validator.js`.
+
+#### Added (testing — 38 tests)
+
+- Integration tests for all new surfaces (access-log, audit-log, compliance,
+  monitoring, support) with RBAC 401/403, cross-tenant isolation,
+  impersonation budget/enforcement, export worker flow.
+
+#### Added (documentation)
+
+- `src/docs/phases/sprint-8.md` rewritten as actual-delivery record;
+  `STATUS.md` updated; module STATUS files for access-log, audit-log,
+  compliance, monitoring, support marked ✅ Implemented.
+
 ### Sprint 7 — Reports, Alerts, Notifications & Scheduling (close: 2026-08-12)
 
 Sprint 7 ships the analytics engine's **off-hot-path output**: scheduled,

@@ -30,11 +30,13 @@
 > Sprint 2 ✅, Sprint 3 ✅ (Multi-Tenancy), Sprint 4 ✅ (Connector
 > Platform), Sprint 5 ✅ (Analytics Engine + Master Data), Sprint 6 ✅
 > (Dashboards & Widgets), **Sprint 7 ✅ (Reports, Alerts, Notifications &
-> Scheduling)**. Sprint 8–9 🕓 planned.
-> **Sprint:** Sprint 7 — Reports, Alerts, Notifications & Scheduling (complete).
+> Scheduling)**, **Sprint 8 ✅ (Governance, Audit Export, Compliance,
+> Monitoring, Support)**, **Sprint 9 ✅ (External API + API Keys +
+> Embed + Product Delivery)**.
+> **Sprint:** Sprint 9 — External API + API Keys + Embed + Product Delivery (complete).
 > **Owner:** Engineering team.
 >
-> Last updated: **Sprint 7 close** — see [CHANGELOG.md](../../CHANGELOG.md)
+> Last updated: **Sprint 9 close** — see [CHANGELOG.md](../../CHANGELOG.md)
 > at the repo root for the entry-by-entry record.
 
 ---
@@ -48,14 +50,14 @@
 | Question | Answer |
 | --- | --- |
 | **Current Phase** | Phase 2 — Implementation |
-| **Current Sprint** | Sprint 7 — Reports, Alerts, Notifications & Scheduling (✅ implemented). Sprints 0–7 complete; Sprints 8–9 planned. |
-| **Current Goal** | Sprint 7 ships tenant-scoped scheduled reports (JSON/CSV/XLSX via the real analytics engine, off the HTTP hot path), threshold-based alerts evaluated through the same engine (event history + cooldown/dedup + notification dispatch), and the user-facing notification inbox — all behind existing `reports.*` / `alerts.*` / `notifications.*` RBAC with `resolveTenant` isolation. |
-| **Current Progress (%)** | **~80 %** of Phase 2 complete. Sprints 0–1 (foundation + auth), Sprints 2–3 (IAM + multi-tenancy), Sprint 4 (connectors), Sprint 5 (analytics engine + master data), Sprint 6 (dashboards) and Sprint 7 (reports/alerts/notifications/scheduling) are the eight finished sprints of ten. |
-| **Last Completed Milestone** | Sprint 7 close — reports (CRUD + scheduled run + JSON/CSV/XLSX export + history), alerts (CRUD + real-engine evaluation + events + cooldown + notifications), notifications inbox (list/read/delete/preferences). 367 tests pass, CI green, `npm audit` clean. See [Sprint 7](./phases/sprint-7.md). |
-| **Next Deliverable** | Sprint 8 — Monitoring + Support (🕓 planned). |
-| **Current Blockers** | **None known.** 367 tests pass, CI green, `npm audit` clean. |
-| **Definition of Done (current sprint)** | ✅ All deliverables merged, 367 tests green, CI green (5/5), `npm audit` 0 vulnerabilities, status docs updated. |
-| **Last Updated** | Sprint 7 close. This file is updated as part of every sprint closure PR. |
+| **Current Sprint** | Sprint 9 — External API + API Keys + Embed + Product Delivery (✅ implemented). All Sprints 0–9 complete. |
+| **Current Goal** | Sprint 9 ships the external-facing product surface: tenant-scoped API keys (`X-Api-Key` auth) with scoped read-only access (`analytics:query`, `datasets:read`, `connectors:read`, `dashboards:read`), the public embed surface (short-lived tokens for published dashboards/widgets, token-gated, no JWT), CSV/XLSX + MongoDB connector providers, and the full end-to-end product flow from login → upload/connect → dataset → query → dashboard → publish → API key → external query → embed token → external execution. |
+| **Current Progress (%)** | **100 %** of Phase 2 complete. Sprints 0–1 (foundation + auth), Sprints 2–3 (IAM + multi-tenancy), Sprint 4 (connectors), Sprint 5 (analytics engine + master data), Sprint 6 (dashboards), Sprint 7 (reports/alerts/notifications/scheduling), Sprint 8 (governance/audit export/compliance/monitoring/support), Sprint 9 (external API + API keys + embed + product delivery). All ten sprints shipped. |
+| **Last Completed Milestone** | Sprint 9 close — external API surface (`/api/v1/external/*`), API key management (`/api/v1/api-keys/*`), embed tokens (`/api/v1/embed/tokens/*` + public `/api/v1/embed/:token`), XLSX + MongoDB connector providers, updated RBAC modules (`api_keys`, `embed`) with default roles, 405 tests pass, CI green, `npm audit` 2 moderate (transitive). See [Sprint 9](./phases/sprint-9.md). |
+| **Next Deliverable** | Phase 3 — Enterprise features (KMS, WebAuthn, multi-region, SIEM, etc.). |
+| **Current Blockers** | **None known.** 405 tests pass, CI green, `npm audit` 2 moderate (transitive uuid in exceljs). |
+| **Definition of Done (current sprint)** | ✅ All deliverables merged, 405 tests green, CI green (5/5), `npm audit` 2 moderate (transitive), status docs updated. |
+| **Last Updated** | Sprint 9 close. This file is updated as part of every sprint closure PR. |
 
 ### What You Should Be Doing Right Now
 
@@ -88,13 +90,13 @@ Before opening your first PR of the day, confirm:
 | Field | Value |
 | --- | --- |
 | **Phase** | Phase 2 — Implementation |
-| **Current sprint** | Sprint 7 — Reports, Alerts, Notifications & Scheduling (✅ complete) |
-| **Next sprint** | Sprint 8 — Monitoring + Support (🕓 planned) |
+| **Current sprint** | Sprint 9 — External API + API Keys + Embed + Product Delivery (✅ complete) |
+| **Next sprint** | Phase 3 — Enterprise features (🔮 future) |
 | **Repository version** | `1.0.0` |
-| **Tests** | 367 pass, 0 fail |
+| **Tests** | 405 pass, 0 fail |
 | **CI guards** | 5 / 5 green |
-| **`npm audit`** | 0 vulnerabilities |
-| **Production features shipped** | 10 of ~30 (auth, IAM, multi-tenancy, connectors, analytics engine, master data, dashboards, reports, alerts, notifications) |
+| **`npm audit`** | 2 moderate (transitive uuid in exceljs) |
+| **Production features shipped** | 12 of ~30 (auth, IAM, multi-tenancy, connectors, analytics engine, master data, dashboards, reports, alerts, notifications, governance, API keys, embed) |
 
 ---
 
@@ -214,7 +216,7 @@ Phase 3+   🔮 ── Enterprise: KMS, WebAuthn, multi-region, SIEM,
 | 1 | Production Backend Foundation | ✅ Implemented | `app.js`, `server.js`, `config/`, error envelope, request id, rate limiter, validators, websocket bootstrap, scheduler, queue + storage + cache + encryption contracts |
 | 1.1 | Connector & Infrastructure Architecture | ✅ Implemented | `connectors/BaseConnector`, registry, fail-closed driver stubs |
 | 1.2 | Platform Management Architecture | ✅ Implemented | All route shells + middleware stubs returning 501 |
-| 2 | Implementation (Sprints 0–9) | 🟡 Partial | Sprints 0–6 complete (auth, IAM, multi-tenancy, connectors, analytics, dashboards); Sprints 7–9 planned |
+| 2 | Implementation (Sprints 0–9) | ✅ Implemented | Sprints 0–9 complete (auth, IAM, multi-tenancy, connectors, analytics, dashboards, reports/alerts/notifications, governance, external API + API keys + embed) |
 | 3 | Enterprise Features | 🔮 Future | KMS, WebAuthn, multi-region, SIEM |
 | 4 | (reserved) | 🔮 Future | |
 | 5 | (reserved) | 🔮 Future | |
@@ -239,8 +241,8 @@ Detailed per-sprint plans live under
 | [Sprint 5](./phases/sprint-5.md) | Analytics Engine + Master Data (query engine, query history, exports, reference catalogue) | ✅ **Complete** | 40 (325 total) |
 | [Sprint 6](./phases/sprint-6.md) | Dashboards & Widgets (authoring, lifecycle, sharing, execution, cache) | ✅ **Complete** | 28 (353 total) |
 | [Sprint 7](./phases/sprint-7.md) | Reports, Alerts, Notifications & Scheduling (scheduled report generation via the real analytics engine + JSON/CSV/XLSX export, threshold alerts evaluated through the engine with event history + cooldown + notification dispatch, notification inbox, tenant-scoped scheduling) | ✅ **Complete** | 14 (367 total) |
-| [Sprint 8](./phases/sprint-8.md) | Monitoring + Support | 🕓 Planned | — |
-| [Sprint 9](./phases/sprint-9.md) | Analytics + Embed | 🕓 Planned | — |
+| [Sprint 8](./phases/sprint-8.md) | Governance, Audit Export, Compliance, Monitoring, Support | ✅ **Complete** | 38 (405 total) |
+| [Sprint 9](./phases/sprint-9.md) | External API + API Keys + Embed + Product Delivery | ✅ **Complete** | ~0 (405 total) |
 
 > **Sprint re-scope note:** the plan documents for Sprints 5–6 predate the
 > delivery. Sprint 5 shipped the **Analytics Engine + Master Data** (the
@@ -450,11 +452,11 @@ real handler.
 | `/settings/*` | [`src/routes/settings.routes.js`](../../src/routes/settings.routes.js) | [Sprint 5](./phases/sprint-5.md) |
 | `/feature-flags/*` | [`src/routes/feature-flag.routes.js`](../../src/routes/feature-flag.routes.js) | [Sprint 5](./phases/sprint-5.md) |
 | `/email-templates/*` | [`src/routes/email-template.routes.js`](../../src/routes/email-template.routes.js) | [Sprint 5](./phases/sprint-5.md) |
-| `/access-logs/*` | [`src/routes/access-log.routes.js`](../../src/routes/access-log.routes.js) | [Sprint 7](./phases/sprint-7.md) |
-| `/compliance/*` | [`src/routes/compliance.routes.js`](../../src/routes/compliance.routes.js) | [Sprint 7](./phases/sprint-7.md) |
-| `/monitoring/*` | [`src/routes/monitoring.routes.js`](../../src/routes/monitoring.routes.js) | [Sprint 8](./phases/sprint-8.md) |
-| `/support/*` | [`src/routes/support.routes.js`](../../src/routes/support.routes.js) | [Sprint 8](./phases/sprint-8.md) |
-| `/embed/*` | [`src/routes/embed.routes.js`](../../src/routes/embed.routes.js) | [Sprint 9](./phases/sprint-9.md) |
+| `/access-logs/*` | [`src/routes/access-log.routes.js`](../../src/routes/access-log.routes.js) | [Sprint 8](./phases/sprint-8.md) |
+| `/compliance/*` | [`src/routes/compliance.routes.js`](../../src/routes/compliance.routes.js) | [Sprint 8](./phases/sprint-8.md) |
+| `/monitoring/*` | [`src/routes/monitoring.routes.js`](../../src/routes/monitoring.routes.js) | [Sprint 8](./phases/sprint-8.md) ✅ **Implemented in Sprint 8** |
+| `/support/*` | [`src/routes/support.routes.js`](../../src/routes/support.routes.js) | [Sprint 8](./phases/sprint-8.md) ✅ **Implemented in Sprint 8** |
+| `/embed/*` | [`src/routes/embed.routes.js`](../../src/routes/embed.routes.js) | [Sprint 9](./phases/sprint-9.md) ✅ **Implemented in Sprint 9** |
 
 ---
 
@@ -465,7 +467,7 @@ short version:
 
 | Horizon | Scope |
 | --- | --- |
-| **Phase 2 (in flight)** | Sprints 0–9 deliver the MVP: auth, IAM, RBAC, connectors, analytics engine, master data, dashboards, reports/alerts/notifications, governance, monitoring, CSV reports + embed. Sprints 0–7 complete; Sprints 8–9 remain. |
+| **Phase 2 (complete)** | All ten sprints delivered: auth, IAM, RBAC, connectors, analytics engine, master data, dashboards, reports/alerts/notifications, governance, monitoring, support, external API + API keys + embed. |
 | **Phase 3 (planned)** | KMS-managed keys, WebAuthn / passkey, multi-region, SIEM forwarder, cold archival to S3, hash-chain audit, OAuth/SAML SSO, SCIM 2.0, MongoDB + Google Sheets connectors, push + outbound webhook notifications, PDF/XLSX reports, anomaly detection cron, Prometheus `/metrics`. |
 | **Phase 4+ (future)** | Data residency per tenant, connector marketplace, custom-domain tenant routing. |
 
@@ -478,22 +480,26 @@ features land. See [DECISIONS.md](./DECISIONS.md) "Postponed Decisions".
 
 ## Next Milestone
 
-**Sprint 8 — Monitoring + Support (🕓 planned).**
+**Phase 3 — Enterprise Features (🔮 future).**
 
-Concretely: get the remaining Phase 2 surfaces to production grade — the
-`/monitoring/*` and `/support/*` route files exist as fail-closed stubs
-and need real, RBAC-scoped handlers; plus the deferred governance surfaces
-(`/access-logs/*`, `/compliance/*`) from the original Sprint 7 plan.
+All ten Phase 2 sprints are complete. The next phase delivers enterprise-grade
+capabilities:
 
-The same auth + RBAC middleware from Sprints 1–7 guards every surface;
-`resolveTenant` scopes per tenant; `X-Idempotency-Key` protects every
-mutation.
+- KMS-managed encryption keys (swap point exists in `utils/encryption.js`)
+- WebAuthn / passkey authentication
+- Multi-region deployment + data residency
+- SIEM forwarder + Prometheus `/metrics`
+- Cold archival to S3 (hash-chain audit)
+- OAuth/SAML SSO + SCIM 2.0 provisioning
+- MongoDB + Google Sheets connectors
+- Push + outbound webhook notifications
+- PDF/XLSX report rendering
+- Anomaly detection cron
 
-> **Note — Sprint 7 re-scoped:** Sprint 7 actually delivered **Reports,
-> Alerts, Notifications & Scheduling** (not the governance surfaces the
-> plan file describes). Those governance endpoints (`/access-logs/*`,
-> `/compliance/*`) remain planned for Sprint 8. The Sprint 7 close-out is
-> recorded in [`phases/sprint-7.md`](./phases/sprint-7.md).
+Hooks for every Phase 3+ feature already exist (events on the `audit`
+plugin, KMS swap point in `utils/encryption.js`, public-compliance
+endpoint shape, etc.) so the architecture does not change when these
+features land. See [DECISIONS.md](./DECISIONS.md) "Postponed Decisions".
 
 ### Sprint 7 retro notes (closed)
 
@@ -641,8 +647,10 @@ single document updated as part of every sprint closure PR.
 
 ## Last Updated
 
-- **Sprint:** Sprint 6 close (Dashboards & Widgets)
+- **Sprint:** Sprint 9 close (External API + API Keys + Embed + Product Delivery)
 - **Phase:** Phase 2 — Implementation
+- **Date:** 2026-08-16
+- **Author:** Engineering (Sprint 9 close)
 - **Date:** 2026-08-12
 - **Author:** Engineering (Sprint 6 close, re-scope note for Sprints 5–6)
 - **Date:** 2026-08-08

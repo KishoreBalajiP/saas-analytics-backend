@@ -15,5 +15,7 @@
 
 import './csv/index.js';
 import './webhook/index.js';
+import './xlsx/index.js';
+import './mongodb/index.js';
 
 export {};

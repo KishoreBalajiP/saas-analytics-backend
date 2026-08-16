@@ -76,6 +76,29 @@ function redactConfig(type, config) {
       signingSecretConfigured: Boolean(config?.signingSecret),
     };
   }
+  if (type === 'xlsx') {
+    return {
+      hasHeader: config?.hasHeader ?? true,
+      sheet: config?.sheet ?? 0,
+    };
+  }
+  if (type === 'mongodb') {
+    // Extract host:port from URI without credentials.
+    let host = 'unknown';
+    try {
+      const url = new URL(config?.uri ?? '');
+      host = url.hostname + (url.port ? ':' + url.port : '');
+    } catch {
+      // ignore
+    }
+    return {
+      host,
+      database: config?.database,
+      collection: config?.collection,
+      filterConfigured: Boolean(config?.filter),
+      hasCredentials: true,
+    };
+  }
   return {
     delimiter: config?.delimiter ?? ',',
     hasHeader: config?.hasHeader ?? true,
@@ -281,6 +304,91 @@ export async function syncCsvUpload({ tenantId, connectorId, buffer, filename = 
   return { accepted: true, jobType: 'ingest', filename };
 }
 
+/**
+ * Generic file upload preview for csv/xlsx connectors.
+ * @param {Object} input
+ * @param {string} input.tenantId
+ * @param {string} input.connectorId
+ * @param {Buffer} input.buffer
+ * @param {string} [input.filename]
+ * @param {number} [input.limit]
+ * @returns {Promise<{ fields: string[], sample: Array, meta: Object }>}
+ */
+export async function previewFileUpload({ tenantId, connectorId, buffer, filename, limit = 10 } = {}) {
+  if (!buffer) throw new ConnectorValidationError('Preview requires an uploaded file');
+  const connector = await connectorRepository.findById(connectorId, { tenantId });
+  if (!connector) throw new ConnectorError('CONNECTOR_NOT_FOUND', 'Connector not found', { statusCode: 404 });
+  const config = await decryptConfig(connector);
+  const instance = createConnector(connector.type, { id: connectorId, config, tenantId });
+  const verdict = await instance.validate();
+  if (!verdict.valid) throw new ConnectorConfigError('Invalid connector configuration', verdict.errors);
+  return instance.preview({ buffer, limit });
+}
+
+/**
+ * Generic file upload sync for csv/xlsx connectors. Enqueues a job; the
+ * worker streams the buffer through the provider parser + sync engine.
+ * @param {Object} input
+ * @param {string} input.tenantId
+ * @param {string} input.connectorId
+ * @param {Buffer} input.buffer
+ * @param {string} [input.filename]
+ * @param {string} [input.actorId]
+ * @returns {Promise<{ accepted: boolean, jobType: string, filename: string|null }>}
+ */
+export async function syncFileUpload({ tenantId, connectorId, buffer, filename = null, actorId = null } = {}) {
+  if (!buffer || buffer.length === 0) throw new ConnectorValidationError('File sync requires an uploaded file');
+  const connector = await connectorRepository.findById(connectorId, { tenantId });
+  if (!connector) throw new ConnectorError('CONNECTOR_NOT_FOUND', 'Connector not found', { statusCode: 404 });
+  const config = await decryptConfig(connector);
+  const instance = createConnector(connector.type, { id: connectorId, config, tenantId });
+  const verdict = await instance.validate();
+  if (!verdict.valid) throw new ConnectorConfigError('Invalid connector configuration', verdict.errors);
+
+  const isXlsx = connector.type === 'xlsx';
+  const mimetype = isXlsx
+    ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    : 'text/csv';
+
+  await connectorQueue.enqueue({
+    connectorId,
+    tenantId,
+    jobType: 'ingest',
+    payload: { buffer: buffer.toString('base64'), filename, mimetype },
+  }, { name: `${connector.type}-sync`, jobId: `${connector.type}-${connectorId}-${Date.now()}` });
+
+  return { accepted: true, jobType: 'ingest', filename };
+}
+
+/**
+ * Enqueue a mongodb pull-sync job. No file upload — the worker connects
+ * to the external MongoDB and pulls documents.
+ * @param {Object} input
+ * @param {string} input.tenantId
+ * @param {string} input.connectorId
+ * @param {string} [input.actorId]
+ * @returns {Promise<{ accepted: boolean, jobType: string }>}
+ */
+export async function syncMongoDB({ tenantId, connectorId, actorId = null } = {}) {
+  const connector = await connectorRepository.findById(connectorId, { tenantId });
+  if (!connector) throw new ConnectorError('CONNECTOR_NOT_FOUND', 'Connector not found', { statusCode: 404 });
+  if (connector.type !== 'mongodb') throw new ConnectorValidationError('Not a mongodb connector');
+
+  const config = await decryptConfig(connector);
+  const instance = createConnector(connector.type, { id: connectorId, config, tenantId });
+  const verdict = await instance.validate();
+  if (!verdict.valid) throw new ConnectorConfigError('Invalid connector configuration', verdict.errors);
+
+  await connectorQueue.enqueue({
+    connectorId,
+    tenantId,
+    jobType: 'ingest',
+    payload: {},
+  }, { name: 'mongodb-sync', jobId: `mongodb-${connectorId}-${Date.now()}` });
+
+  return { accepted: true, jobType: 'ingest' };
+}
+
 /* ------------------------------- Webhook --------------------------------- */
 
 /**
@@ -365,6 +473,9 @@ export async function processSyncMessage(job = {}) {
   let records;
   if (payload.buffer) {
     records = instance.ingest({ buffer: Buffer.from(payload.buffer, 'base64') });
+  } else if (connector.type === 'mongodb') {
+    // MongoDB connector pulls directly; ingest() takes no args.
+    records = instance.ingest();
   } else {
     records = payload.records ?? [];
   }
@@ -402,6 +513,9 @@ export default {
   validateConnectorRecord,
   previewCsvUpload,
   syncCsvUpload,
+  previewFileUpload,
+  syncFileUpload,
+  syncMongoDB,
   handleWebhook,
   processSyncMessage,
 };

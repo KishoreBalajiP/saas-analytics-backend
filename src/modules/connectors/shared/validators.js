@@ -60,6 +60,42 @@ export function validateConfig(type, config = {}) {
       }
       return { valid: errors.length === 0, errors };
     }
+    // Spreadsheet files share the CSV shape plus a `sheet` selector.
+    case 'xlsx': {
+      const errors = [];
+      if (config.hasHeader !== undefined && typeof config.hasHeader !== 'boolean') {
+        errors.push({ field: 'config.hasHeader', message: 'hasHeader must be a boolean' });
+      }
+      if (config.sheet !== undefined && (typeof config.sheet !== 'string' || config.sheet.length === 0)) {
+        errors.push({ field: 'config.sheet', message: 'sheet must be a non-empty string (sheet name or index)' });
+      }
+      return { valid: errors.length === 0, errors };
+    }
+    case 'mongodb': {
+      const errors = [];
+      if (typeof config.uri !== 'string' || config.uri.length === 0) {
+        errors.push({ field: 'config.uri', message: 'uri is required for mongodb connectors' });
+      } else {
+        try {
+          const parsed = new URL(config.uri);
+          if (!['mongodb:', 'mongodb+srv:'].includes(parsed.protocol)) {
+            errors.push({ field: 'config.uri', message: `unsupported URI protocol "${parsed.protocol}"` });
+          }
+        } catch {
+          errors.push({ field: 'config.uri', message: 'uri is not a valid MongoDB connection string' });
+        }
+      }
+      if (typeof config.database !== 'string' || config.database.length === 0) {
+        errors.push({ field: 'config.database', message: 'database is required for mongodb connectors' });
+      }
+      if (typeof config.collection !== 'string' || config.collection.length === 0) {
+        errors.push({ field: 'config.collection', message: 'collection is required for mongodb connectors' });
+      }
+      if (config.filter !== undefined && (typeof config.filter !== 'object' || config.filter === null || Array.isArray(config.filter))) {
+        errors.push({ field: 'config.filter', message: 'filter must be a plain object' });
+      }
+      return { valid: errors.length === 0, errors };
+    }
     default: {
       return {
         valid: false,

@@ -11,6 +11,9 @@
  * TYPES
  *   `csv`     - file upload connector (parses CSV into rows).
  *   `webhook` - inbound provider events behind an HMAC-verified endpoint.
+ *   `xlsx`    - spreadsheet upload connector (Sprint 9, parses .xlsx rows).
+ *   `mongodb` - external MongoDB source (Sprint 9, authenticated pull sync;
+ *               credentials stay encrypted and are never logged).
  *
  * WEBHOOK INBOUND
  *   A webhook-type connector carries a `webhookToken` (a public, URL-safe
@@ -31,7 +34,7 @@ import mongoose from 'mongoose';
 import { tenantScope, softDelete, paginate, optimisticConcurrency, audit } from './plugins/index.js';
 
 export const MODEL_NAME = 'Connector';
-export const CONNECTOR_TYPES = Object.freeze(['csv', 'webhook']);
+export const CONNECTOR_TYPES = Object.freeze(['csv', 'webhook', 'xlsx', 'mongodb']);
 export const CONNECTOR_STATUSES = Object.freeze(['active', 'paused', 'error']);
 
 const connectorSchema = new mongoose.Schema(

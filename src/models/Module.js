@@ -32,12 +32,16 @@ import { softDelete, paginate, optimisticConcurrency, audit } from './plugins/in
 export const MODEL_NAME = 'Module';
 
 /**
- * Top-level built-in module keys (the 19-module seed contract).
+ * Top-level built-in module keys (the 21-module seed contract).
  *
  * `dashboards` was added in Sprint 6 so the dashboard permission keys the
  * default roles reference (`dashboards.view/create/update/delete`) are
  * actually registered during onboarding; without the module the permission
  * lookup in `tenantInitialization.ensurePermissions` silently skips them.
+ *
+ * `api_keys` and `embed` were added in Sprint 9 to register the permission
+ * keys the API-key and embed surfaces reference (`api_keys.view/create/
+ * update/delete`, `embed.view/create/delete`).
  */
 export const BUILTIN_MODULES = Object.freeze([
   'iam', 'platform', 'governance',
@@ -48,6 +52,7 @@ export const BUILTIN_MODULES = Object.freeze([
   'email_templates', 'audit_logs',
   'access_logs', 'compliance', 'support',
   'dashboards', 'reports', 'alerts',
+  'api_keys', 'embed',
 ]);
 
 /**
