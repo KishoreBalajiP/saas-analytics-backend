@@ -323,4 +323,27 @@ const config = Object.freeze({
   },
 });
 
+// Frontend-dependent URLs are intentionally kept as placeholders until the
+// frontend is deployed. In production a leftover placeholder (or the
+// localhost default) would silently reject browser CORS preflights and
+// Socket.IO connections for every tenant, so flag it loudly at startup.
+if (isProduction) {
+  const unconfigured = [
+    ['CORS_ORIGINS / CLIENT_URL', config.cors.origins.join(',')],
+    ['CLIENT_URL', config.cors.clientUrl],
+    ['SOCKET_CORS_ORIGIN', config.socket.corsOrigins.join(',')],
+  ].filter(([, value]) => /YOUR-FRONTEND-DOMAIN|localhost/i.test(value));
+
+  if (unconfigured.length > 0) {
+    /* eslint-disable-next-line no-console */
+    console.warn(
+      `[config] WARNING: production startup detected unconfigured frontend URL(s): ${unconfigured
+        .map(([name]) => name)
+        .join(', ')}. ` +
+        'Replace these with the deployed frontend domain before the final Render deployment, ' +
+        'otherwise browser CORS and Socket.IO connections will be rejected.',
+    );
+  }
+}
+
 export default config;

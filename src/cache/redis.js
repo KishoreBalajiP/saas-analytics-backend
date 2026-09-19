@@ -16,12 +16,24 @@
  * CONFIG:
  *   { provider: 'redis', url, keyPrefix, ttlDefault }
  *
+ * CONNECTION LIFE CYCLE
+ *   A single client is created lazily on first use. Every command awaits the
+ *   connection reaching the `ready` state first, so a cold start (first cache
+ *   operation after process restart) can never issue a command before Redis
+ *   is ready - previously that raced and blew up the first caller.
+ *     - Single connection per process (no duplicate clients).
+ *     - Asynchronous failures reject instead of being swallowed; the ready
+ *       wait is cleared on error so a later call succeeds once Redis is back.
+ *     - ioredis keeps reconnecting in the background, so availability dips
+ *       degrade to per-call errors rather than a broken driver.
+ *
  * HOW TO EXTEND
  *   The driver is provider-pluggable. Switching to KeyDB, DragonflyDB or a
  *   managed offering is a configuration change.
  */
 
 import Redis from 'ioredis';
+import logger from '../utils/logger.js';
 
 const DEFAULT_TTL_SEC = 300;
 const DEFAULT_KEY_PREFIX = 'saas:';
@@ -40,28 +52,67 @@ export function createRedisCache(config = {}) {
   const keyPrefix = typeof config.keyPrefix === 'string' ? config.keyPrefix : DEFAULT_KEY_PREFIX;
 
   let client = null;
+  let readyPromise = null;
 
   /**
-   * Lazily connect. We don't open a connection at creation time so an
-   * application can boot even when Redis is temporarily unreachable;
-   * individual calls then fail and the caller decides whether to retry.
+   * Resolve to a connected Redis client (created lazily, exactly once per
+   * process). The first call opens the connection and only resolves after
+   * Redis emits `ready`, so no command can race the initial handshake.
    *
-   * @returns {Redis}
+   * On a connection failure the returned promise rejects with the real
+   * error (never swallowed). The ready wait is then cleared so the next
+   * call can succeed once ioredis has reconnected. Commands issued while
+   * the connection is down fail fast (`enableOfflineQueue: false`) and the
+   * caller decides whether to retry.
+   *
+   * @returns {Promise<Redis>}
    */
   function getClient() {
-    if (client) return client;
-    if (!url) {
-      throw new Error('Redis cache requires url to be set');
+    if (!client) {
+      if (!url) {
+        return Promise.reject(new Error('Redis cache requires url to be set'));
+      }
+      client = new Redis(url, {
+        keyPrefix,
+        // Fail fast instead of queueing commands forever when the server is
+        // unreachable; the caller can decide whether to retry.
+        maxRetriesPerRequest: 2,
+        enableOfflineQueue: false,
+        lazyConnect: false,
+      });
+      // ioredis throws when an 'error' event has no listener. Connection
+      // failures must never crash a request path; the same errors are still
+      // surfaced to callers via the rejected commands and ready wait below.
+      client.on('error', (err) => {
+        logger.warn({ err: { message: err.message } }, 'Redis cache connection error');
+      });
     }
-    client = new Redis(url, {
-      keyPrefix,
-      // Fail fast instead of queueing commands forever when the server is
-      // unreachable; the caller can decide whether to retry.
-      maxRetriesPerRequest: 2,
-      enableOfflineQueue: false,
-      lazyConnect: false,
-    });
-    return client;
+
+    if (client.status === 'ready') {
+      readyPromise = null;
+      return Promise.resolve(client);
+    }
+
+    if (!readyPromise) {
+      readyPromise = new Promise((resolve, reject) => {
+        const cleanup = () => {
+          client.removeListener('ready', onReady);
+          client.removeListener('error', onError);
+        };
+        const onReady = () => {
+          cleanup();
+          resolve(client);
+        };
+        const onError = (err) => {
+          cleanup();
+          readyPromise = null;
+          reject(err);
+        };
+        client.once('ready', onReady);
+        client.once('error', onError);
+      });
+    }
+    return readyPromise;
   }
 
   return Object.freeze({
@@ -72,7 +123,7 @@ export function createRedisCache(config = {}) {
       if (typeof key !== 'string' || key.length === 0) {
         throw new Error('cache.get requires a non-empty key');
       }
-      const raw = await getClient().get(key);
+      const raw = await (await getClient()).get(key);
       if (raw === null || raw === undefined) return null;
       try {
         return JSON.parse(raw);
@@ -87,10 +138,11 @@ export function createRedisCache(config = {}) {
         throw new Error('cache.set requires a non-empty key');
       }
       const payload = JSON.stringify(value);
+      const client = await getClient();
       if (Number.isInteger(ttlSec) && ttlSec > 0) {
-        await getClient().set(key, payload, 'EX', ttlSec);
+        await client.set(key, payload, 'EX', ttlSec);
       } else {
-        await getClient().set(key, payload);
+        await client.set(key, payload);
       }
     },
 
@@ -98,7 +150,7 @@ export function createRedisCache(config = {}) {
       if (typeof key !== 'string' || key.length === 0) {
         throw new Error('cache.del requires a non-empty key');
       }
-      const removed = await getClient().del(key);
+      const removed = await (await getClient()).del(key);
       return removed > 0;
     },
 
@@ -106,21 +158,22 @@ export function createRedisCache(config = {}) {
       if (typeof key !== 'string' || key.length === 0) {
         throw new Error('cache.ttl requires a non-empty key');
       }
-      return getClient().ttl(key);
+      return (await getClient()).ttl(key);
     },
 
     async increment(key, by = 1) {
       if (typeof key !== 'string' || key.length === 0) {
         throw new Error('cache.increment requires a non-empty key');
       }
-      return getClient().incrby(key, Number(by));
+      return (await getClient()).incrby(key, Number(by));
     },
 
     async flushAll() {
       // SCAN + DEL pattern would be safer on a shared Redis. We keep
       // `flushAll` semantics simple: it uses the configured keyPrefix scope.
-      const stream = getClient().scanStream({ match: `${keyPrefix}*`, count: 200 });
-      const pipeline = getClient().pipeline();
+      const client = await getClient();
+      const stream = client.scanStream({ match: `${keyPrefix}*`, count: 200 });
+      const pipeline = client.pipeline();
       await new Promise((resolve, reject) => {
         stream.on('data', (keys) => {
           for (const key of keys) pipeline.del(key);
@@ -150,6 +203,7 @@ export function createRedisCache(config = {}) {
           client.disconnect();
         }
         client = null;
+        readyPromise = null;
       }
     },
   });

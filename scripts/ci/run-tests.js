@@ -33,6 +33,27 @@ if (!['argon2', 'scrypt'].includes(kdf)) {
 
 process.env.PASSWORD_KDF = kdf;
 
+/* ------------------------------------------------------------------------- */
+/* Test environment isolation.                                               */
+/*                                                                            */
+/* The project keeps real production credentials in `.env` so the running     */
+/* deployment matches Render. Tests MUST NOT touch production resources:      */
+/*   * NODE_ENV=development  - matches what tests assert (e.g. health checks)  */
+/*   * REDIS_URL=            - force the cache/queue to use in-memory drivers */
+/*   * STORAGE_PROVIDER=local - force the storage layer to write to a tmp dir */
+/*   * MONGODB_URI=.../test  - defensive; integration tests boot an in-memory */
+/*                              mongod via `tests/helpers/mongo.js` but the    */
+/*                              app import path would otherwise resolve the   */
+/*                              Atlas URI from `.env`.                        */
+/*                                                                            */
+/* These overrides only affect the spawned test process. The runner itself is */
+/* the only place this happens, so production `.env` stays untouched.         */
+/* ------------------------------------------------------------------------- */
+process.env.NODE_ENV = 'development';
+delete process.env.REDIS_URL;
+process.env.STORAGE_PROVIDER = 'local';
+process.env.MONGODB_URI = 'mongodb://127.0.0.1:27017/saas_analytics_test';
+
 const testArgs =
   kdfIndex === -1 ? args : args.filter((_, i) => i !== kdfIndex && i !== kdfIndex + 1);
 const child = spawn(

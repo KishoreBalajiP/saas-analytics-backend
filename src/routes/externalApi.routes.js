@@ -27,35 +27,35 @@ const externalLimiter = createRateLimiter({
 //        externalLimiter (per-IP rate limit for external surface)
 router.get(
   '/datasets',
-  authenticateApiKey,
+  authenticateApiKey(),
   externalLimiter,
   externalController.listDatasets,
 );
 
 router.get(
   '/datasets/:datasetId',
-  authenticateApiKey,
+  authenticateApiKey(),
   externalLimiter,
   externalController.getDataset,
 );
 
 router.get(
   '/datasets/:datasetId/query',
-  authenticateApiKey,
+  authenticateApiKey(),
   externalLimiter,
   externalController.queryDataset,
 );
 
 router.get(
   '/datasets/:datasetId/rows',
-  authenticateApiKey,
+  authenticateApiKey(),
   externalLimiter,
   externalController.listDatasetRows,
 );
 
 router.get(
   '/dashboards/:dashboardId',
-  authenticateApiKey,
+  authenticateApiKey(),
   externalLimiter,
   externalController.getDashboard,
 );
