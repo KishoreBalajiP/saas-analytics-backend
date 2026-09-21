@@ -31,12 +31,22 @@ import ApiError from '../utils/ApiError.js';
  */
 export function resolveTenant(req, _res, next) {
   const header = req.headers?.['x-tenant-id'];
-  if (typeof header === 'string' && header.trim().length > 0) {
-    req.tenant = { id: header.trim(), source: 'header' };
+  const requested = typeof header === 'string' ? header.trim() : '';
+  const claim = req.user?.tenantId ?? req.admin?.tenantId ?? null;
+
+  // The header is only a tenant selector for unauthenticated flows such as
+  // login and password reset. Once a JWT has been verified, its tenant claim
+  // is authoritative; accepting a different header would let callers steer
+  // tenant-scoped controllers at another tenant.
+  if (claim && requested && claim !== '*' && requested !== claim) {
+    return next(ApiError.forbidden('Your tenant context does not match your session'));
+  }
+
+  if (requested) {
+    req.tenant = { id: requested, source: 'header' };
     return next();
   }
 
-  const claim = req.user?.tenantId ?? req.admin?.tenantId ?? null;
   if (claim) {
     req.tenant = { id: claim, source: 'jwt' };
     return next();
