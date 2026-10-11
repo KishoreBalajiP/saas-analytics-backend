@@ -12,6 +12,7 @@
     "dev": "nodemon",
     "test": "node scripts/ci/run-tests.js",
     "test:argon2": "node scripts/ci/run-tests.js --kdf argon2",
+    "bootstrap:admin": "node scripts/ci/bootstrap-admin.js",
     "ci:guards": "node scripts/ci/run-all.js",
     "ci:check-stubs": "node scripts/ci/check-stubs.js",
     "ci:check-routes": "node scripts/ci/check-routes.js",

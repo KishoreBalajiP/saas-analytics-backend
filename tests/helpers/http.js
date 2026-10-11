@@ -21,6 +21,8 @@
  */
 
 import app from '../../src/app.js';
+import queueService from '../../src/services/queue.service.js';
+import logger from '../../src/utils/logger.js';
 
 let server = null;
 let baseUrl = '';
@@ -53,6 +55,11 @@ export async function stopHttp() {
   });
   server = null;
   baseUrl = '';
+  // app.js registers queue consumers at import time. Close those in-memory
+  // handles during test teardown so their scheduled drains cannot keep Node's
+  // event loop alive after the HTTP server and MongoDB are closed.
+  await queueService.closeAll();
+  await logger.flush?.();
 }
 
 /**

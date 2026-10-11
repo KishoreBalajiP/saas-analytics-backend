@@ -128,13 +128,18 @@ export async function login({
   if (!cfg) throw ApiError.badRequest('Unknown portal');
   if (portal === 'user' && !tenantId) throw ApiError.badRequest('Tenant id is required');
 
+  // The public tenant contract accepts a workspace slug. Resolve it before
+  // any user lookup so login and password recovery use the same tenant
+  // identity and cannot accidentally query by an untrusted raw selector.
+  const resolvedTenantId = portal === 'user' ? await resolveTenantId(tenantId) : tenantId;
+
   const normalized = String(email ?? '').toLowerCase().trim();
   if (!normalized || typeof password !== 'string' || password.length === 0) {
     throw ApiError.unauthorized(INVALID_CREDENTIALS);
   }
 
-  const account = await cfg.findForAuth(normalized, tenantId);
-  const attemptMeta = { portal, email: normalized, tenantId, ip, userAgent };
+  const account = await cfg.findForAuth(normalized, resolvedTenantId);
+  const attemptMeta = { portal, email: normalized, tenantId: resolvedTenantId, ip, userAgent };
 
   if (!account) {
     await dummyVerify(password);
@@ -148,7 +153,7 @@ export async function login({
   // stays generic (no enumeration); a blocked tenant is explicit (the
   // user already knows which tenant they are logging into).
   if (portal === 'user') {
-    const tenant = await findTenantOrNull(tenantId);
+    const tenant = await findTenantOrNull(resolvedTenantId);
     if (!tenant) {
       await dummyVerify(password);
       await recordAttempt({ ...attemptMeta, actorId: null, success: false, reason: 'unknown_tenant' });
@@ -196,7 +201,7 @@ export async function login({
   const { session } = await sessionService.create({
     actorId,
     actorType: portal,
-    tenantId: portal === 'user' ? tenantId : null,
+    tenantId: portal === 'user' ? resolvedTenantId : null,
     refreshToken,
     device,
     ip,
@@ -207,7 +212,7 @@ export async function login({
     portal,
     actor: account,
     sessionId: session.sessionId,
-    tenantId: portal === 'user' ? tenantId : account.tenantScope ?? null,
+    tenantId: portal === 'user' ? resolvedTenantId : account.tenantScope ?? null,
   });
 
   await recordAttempt({ ...attemptMeta, actorId, success: true, reason: 'success' });
@@ -430,6 +435,12 @@ async function findTenantOrNull(tenantId) {
     if (err?.name === 'CastError') return null;
     throw err;
   }
+}
+
+async function resolveTenantId(identifier) {
+  const tenant = await tenantRepository.findByIdOrSlug(identifier);
+  if (!tenant) throw ApiError.unauthorized(INVALID_CREDENTIALS);
+  return String(tenant._id);
 }
 
 /**

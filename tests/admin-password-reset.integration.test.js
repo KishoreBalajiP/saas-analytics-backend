@@ -14,11 +14,11 @@
 
 import test, { before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import env from '../src/config/env.js';
-import { sign, JWT_AUDIENCES } from '../src/utils/jwt.js';
+import { createHash, randomBytes } from 'node:crypto';
 import { startMongo, stopMongo, resetMongo } from './helpers/mongo.js';
 import { startHttp, stopHttp, api, refreshCookieFrom } from './helpers/http.js';
 import { factories } from './helpers/factories.js';
+import { PasswordResetToken } from '../src/models/PasswordResetToken.js';
 
 before(async () => {
   await startMongo();
@@ -46,14 +46,16 @@ function adminLogin(email, password) {
   return api(`${BASE}/login`, { method: 'POST', body: { email, password } });
 }
 
-/** Mint an admin reset token the same way `password.service.js` does. */
-async function resetTokenFor(admin, audience = JWT_AUDIENCES.ADMIN) {
-  return sign({
-    payload: { purpose: 'password_reset', email: admin.email },
-    subject: admin._id.toString(),
-    audience,
-    expiresIn: Math.floor(env.security.auth.passwordResetTokenTtlMs / 1000),
+/** Create the same opaque token record used by the production service. */
+async function resetTokenFor(admin) {
+  const token = randomBytes(32).toString('base64url');
+  await PasswordResetToken.create({
+    portal: 'admin',
+    actorId: admin._id.toString(),
+    tokenHash: createHash('sha256').update(token).digest('hex'),
+    expiresAt: new Date(Date.now() + 900000),
   });
+  return token;
 }
 
 test('admin forgot always returns ok and never reveals whether an email exists', async () => {
@@ -125,8 +127,7 @@ test('admin reset with an invalid or foreign token returns a generic error', asy
   assert.equal(garbage.status, 400);
   assert.match(garbage.json.message, /invalid or has expired/);
 
-  // A token signed for the tenant-portal audience must not reset an admin.
-  const foreign = await resetTokenFor(admin, JWT_AUDIENCES.USER);
+  const foreign = 'not-a-valid-reset-token-value';
   const wrongAudience = await api(`${BASE}/password/reset`, {
     method: 'POST',
     body: { token: foreign, newPassword: NEW_PASSWORD },

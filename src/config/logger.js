@@ -38,7 +38,11 @@ const baseOptions = {
 
 let logger;
 
-if (env.app.isProduction || env.app.isTest) {
+// Node's test runner exposes NODE_TEST_CONTEXT even when the suite keeps
+// NODE_ENV=development for environment-specific assertions. Treat that
+// process as a structured-logging test process too; pino-pretty's worker
+// transport otherwise leaves an IPC handle open after integration teardown.
+if (env.app.isProduction || env.app.isTest || process.env.NODE_TEST_CONTEXT) {
   // JSON only - ideal for stdout collectors (Fly, Render, CloudWatch, ECS).
   logger = pino(baseOptions);
 } else {

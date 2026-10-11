@@ -93,6 +93,7 @@ docker compose up --build
 | `npm run dev`                   | run with nodemon (auto-restart on change)            |
 | `npm test`                      | run the `node --test` suite (scrypt KDF, portable)             |
 | `npm run test:argon2`           | run the suite against the real Argon2id KDF                    |
+| `npm run bootstrap:admin`       | operator-controlled first platform-admin provisioning           |
 | `npm run ci:guards`             | run every CI guard in `scripts/ci/`                  |
 | `npm run ci:check-stubs`        | verify no orphan `notImplementedStub`                |
 | `npm run ci:check-routes`       | verify every route has auth or explicit exemption    |
@@ -111,6 +112,33 @@ New in Sprint 0:
 - `STORAGE_PROVIDER`, `STORAGE_BASE_DIR`, `S3_*` - storage driver selection.
 - `ENCRYPTION_KEY`, `ENCRYPTION_ALGORITHM`, `ENCRYPTION_KEY_VERSION` -
   separate from `JWT_SECRET` so rotation never invalidates tokens.
+
+### First platform administrator
+
+Provision the first administrator only from an operator-controlled shell in
+the intended environment. This command connects using the configured
+`MONGODB_URI`, never runs during normal startup, and does not expose an HTTP
+bootstrap endpoint. It is idempotent: if the email already exists, it reports
+that no changes were made and will not reset the password or role.
+
+```bash
+npm ci
+npm run bootstrap:admin -- --email operator@example.com
+```
+
+The command prompts for the initial password without echoing it. For a
+cryptographically generated one-time password instead:
+
+```bash
+npm run bootstrap:admin -- --email operator@example.com --generate-password
+```
+
+The generated password is printed once to the operator terminal only; never
+put it in shell history, source control, or application logs. Use the existing
+`super`, `platform`, or `support` admin types only. After first login at the
+admin portal, enroll MFA immediately. Run this procedure against production
+only after an authorized operator has reviewed the target environment and
+database; this repository does not perform that mutation automatically.
 
 ## Architecture Rules
 

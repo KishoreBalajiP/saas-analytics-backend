@@ -53,6 +53,14 @@ process.env.NODE_ENV = 'development';
 delete process.env.REDIS_URL;
 process.env.STORAGE_PROVIDER = 'local';
 process.env.MONGODB_URI = 'mongodb://127.0.0.1:27017/saas_analytics_test';
+// Never allow the test process to open the developer or production SMTP
+// connection loaded from .env. Email tests use the service capture sink and
+// the noop transport instead.
+process.env.MAIL_PROVIDER = 'none';
+delete process.env.SMTP_HOST;
+delete process.env.SMTP_PORT;
+delete process.env.MAIL_USER;
+delete process.env.MAIL_PASSWORD;
 
 const testArgs =
   kdfIndex === -1 ? args : args.filter((_, i) => i !== kdfIndex && i !== kdfIndex + 1);

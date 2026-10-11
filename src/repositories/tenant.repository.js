@@ -27,6 +27,17 @@ export const findById = (id) => Tenant.findById(id).lean();
 /** Find a tenant by its unique slug. */
 export const findBySlug = (slug) => Tenant.findOne({ slug: slug.toLowerCase() }).lean();
 
+/** Resolve either the canonical id or the public workspace slug. */
+export const findByIdOrSlug = async (identifier) => {
+  try {
+    const byId = await findById(identifier);
+    if (byId) return byId;
+  } catch (err) {
+    if (err?.name !== 'CastError') throw err;
+  }
+  return findBySlug(identifier);
+};
+
 /** Create a tenant. Returns the saved plain document. */
 export const create = async (data) => {
   const doc = new Tenant(data);
@@ -141,6 +152,7 @@ function escapeRegExp(value) {
 export default {
   findById,
   findBySlug,
+  findByIdOrSlug,
   create,
   update,
   list,
