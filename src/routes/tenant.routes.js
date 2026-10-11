@@ -38,6 +38,8 @@ import { adminAuth } from '../middleware/adminAuth.middleware.js';
 import { permission } from '../middleware/permission.middleware.js';
 import tenantValidator from '../validators/tenant.validator.js';
 import tenantController from '../controllers/tenant.controller.js';
+import invitationController from '../controllers/invitation.controller.js';
+import invitationValidator from '../validators/invitation.validator.js';
 
 const router = Router();
 
@@ -56,5 +58,9 @@ router.get('/:id/billing', adminAuth, permission('iam.tenants', 'view'), tenantC
 router.get('/:id/settings', adminAuth, permission('iam.tenants', 'view'), validate(tenantValidator.settingsGetSchema), tenantController.getTenantSettings);
 router.patch('/:id/settings', adminAuth, permission('iam.tenants', 'configure'), validate(tenantValidator.settingsUpdateSchema), tenantController.updateTenantSettings);
 router.post('/:id/owner', adminAuth, permission('iam.tenants', 'assign'), validate(tenantValidator.changeOwnerSchema), tenantController.changeTenantOwner);
+router.get('/:id/invitations', adminAuth, permission('iam.tenants', 'view'), validate(invitationValidator.listSchema), invitationController.list);
+router.post('/:id/invitations', adminAuth, permission('iam.tenants', 'create'), validate(invitationValidator.createSchema), invitationController.create);
+router.post('/:id/invitations/resend', adminAuth, permission('iam.tenants', 'update'), validate(invitationValidator.resendSchema), invitationController.resend);
+router.post('/:id/invitations/:invitationId/revoke', adminAuth, permission('iam.tenants', 'update'), validate(invitationValidator.revokeSchema), invitationController.revoke);
 
 export default router;

@@ -84,6 +84,7 @@ import dashboardRoutes from './dashboard.routes.js';
 import reportRoutes from './report.routes.js';
 import alertRoutes from './alert.routes.js';
 import supportRoutes from './support.routes.js';
+import invitationRoutes from './invitation.routes.js';
 
 const router = Router();
 
@@ -120,5 +121,6 @@ router.use('/dashboards', dashboardRoutes);
 router.use('/reports', reportRoutes);
 router.use('/alerts', alertRoutes);
 router.use('/support', supportRoutes);
+router.use('/invitations', invitationRoutes);
 
 export default router;

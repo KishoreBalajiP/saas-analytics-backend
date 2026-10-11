@@ -32,6 +32,7 @@ import * as tenantInitialization from './tenantInitialization.service.js';
 import * as tenantLifecycle from './tenantLifecycle.service.js';
 import { getStatistics } from './tenantStatistics.service.js';
 import * as tenantSettings from './tenantSettings.service.js';
+import * as tenantInvitation from './tenantInvitation.service.js';
 
 /** Profile fields a caller may update on a tenant. Status/slug are excluded. */
 const UPDATABLE_FIELDS = [
@@ -110,7 +111,13 @@ export async function create({ tenant = {}, owner = {}, initialize = false, by =
   });
 
   if (initialize) {
-    return tenantInitialization.initialize({ tenantId: created._id, owner, by });
+    const result = await tenantInitialization.initialize({ tenantId: created._id, owner, by });
+    if (owner?.email && !owner.password) {
+      result.invitation = await tenantInvitation.create({
+        tenantId: String(created._id), email: owner.email, name: owner.name, roleName: 'Owner', invitedBy: by,
+      });
+    }
+    return result;
   }
   return { tenant: created };
 }
@@ -164,8 +171,15 @@ export const lifecycle = {
 };
 
 /** Run (or safely re-run) onboarding for a tenant. */
-export const initialize = ({ tenantId, owner = {}, by = null } = {}) =>
-  tenantInitialization.initialize({ tenantId, owner, by });
+export const initialize = async ({ tenantId, owner = {}, by = null } = {}) => {
+  const result = await tenantInitialization.initialize({ tenantId, owner, by });
+  if (owner?.email && !owner.password && !result.alreadyInitialized) {
+    result.invitation = await tenantInvitation.create({
+      tenantId, email: owner.email, name: owner.name, roleName: 'Owner', invitedBy: by,
+    });
+  }
+  return result;
+};
 
 /** Per-tenant activity statistics. */
 export const statistics = ({ tenantId } = {}) => getStatistics({ tenantId });

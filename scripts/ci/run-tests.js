@@ -50,7 +50,8 @@ process.env.PASSWORD_KDF = kdf;
 /* the only place this happens, so production `.env` stays untouched.         */
 /* ------------------------------------------------------------------------- */
 process.env.NODE_ENV = 'development';
-delete process.env.REDIS_URL;
+// An empty value prevents dotenv from repopulating the developer's Redis URL.
+process.env.REDIS_URL = '';
 process.env.STORAGE_PROVIDER = 'local';
 process.env.MONGODB_URI = 'mongodb://127.0.0.1:27017/saas_analytics_test';
 // Never allow the test process to open the developer or production SMTP
