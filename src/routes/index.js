@@ -31,7 +31,7 @@
  *   connector                 /connectors              (Phase 1.1)
  *   embed                     /embed                   (Phase 1)
  *   webhook                   /webhooks                (Phase 1 - connector webhook)
- *   health                    /health                  (Phase 1)
+ *   health                    /health                  (Phase 1, liveness/readiness)
  *
  * HOW TO EXTEND
  *   New feature? Create `routes/<name>.routes.js`, implement it under

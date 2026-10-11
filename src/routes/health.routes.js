@@ -42,4 +42,18 @@ router.get(
   }),
 );
 
+router.get(
+  '/ready',
+  asyncHandler(async (_req, res) => {
+    const ready = isDatabaseConnected();
+    const data = {
+      status: ready ? 'ready' : 'not_ready',
+      timestamp: new Date().toISOString(),
+      version: env.app.version,
+    };
+    if (!ready) return ApiResponse.error(res, 503, 'Service is not ready');
+    return ApiResponse.ok(res, data, 'Service is ready');
+  }),
+);
+
 export default router;

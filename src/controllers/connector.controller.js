@@ -30,6 +30,7 @@ export const previewFile = asyncHandler(async (req, res) => {
     tenantId: getTenantId(req),
     connectorId: req.params.connectorId,
     buffer: req.file?.buffer,
+    filename: req.file?.originalname ?? null,
     limit: Number(req.body?.limit) || 10,
   });
   return ApiResponse.ok(res, result, 'File preview');

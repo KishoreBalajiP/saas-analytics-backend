@@ -31,6 +31,8 @@ test('GET /api/v1/health returns a healthy envelope', async (t) => {
   assert.equal(typeof body.data.version, 'string');
   assert.ok(typeof body.data.uptime === 'string');
   assert.ok(body.data.db === 'connected' || body.data.db === 'disconnected');
+  assert.equal(res.headers.get('x-content-type-options'), 'nosniff');
+  assert.equal(res.headers.get('x-frame-options'), 'SAMEORIGIN');
 });
 
 test('unknown routes return the standard 404 envelope', async (t) => {
@@ -44,4 +46,17 @@ test('unknown routes return the standard 404 envelope', async (t) => {
   assert.equal(res.status, 404);
   assert.equal(body.success, false);
   assert.equal(body.statusCode, 404);
+});
+
+test('readiness fails safely when the database is unavailable', async (t) => {
+  const server = app.listen(0);
+  t.after(() => server.close());
+
+  const { port } = server.address();
+  const res = await fetch(`http://127.0.0.1:${port}/api/v1/health/ready`);
+  const body = await res.json();
+
+  assert.equal(res.status, 503);
+  assert.equal(body.success, false);
+  assert.equal(body.data, undefined);
 });

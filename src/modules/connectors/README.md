@@ -12,7 +12,7 @@ concrete connector.
 | -------------- | ------------------------------------------- | ----- |
 | `csv`          | uploaded CSV/XLSX files                     | parsing, field mapping, import (Sprint 4) |
 | `webhook`      | incoming HTTP webhooks / streaming          | signature verification, buffering, ingest (Sprint 4) |
-| `google-sheets`| Google Sheets documents                     | OAuth, ranges, scheduled sync (Phase 3) |
+| `google-sheets`| Planned; not wired                            | OAuth, ranges, scheduled sync (future phase) |
 | `mongodb`      | customer-owned MongoDB Atlas databases      | URI, db/collection, preview, sync (Phase 3) |
 | *future*       | PostgreSQL, MySQL, REST, GraphQL, Snowflake, BigQuery | - |
 
@@ -27,7 +27,7 @@ src/modules/connectors/
 ├── csv/            # CSV connector (parse + import)        — Sprint 4
 ├── webhook/        # webhook connector (ingest streams)     — Sprint 4
 ├── shared/         # field mapping, sync engine, common validation, errors
-├── google-sheets/  # Google Sheets connector (sync)         — Phase 3
+├── google-sheets/  # Google Sheets design/status only       — not wired
 └── mongodb/        # customer MongoDB connector (preview + sync) — Phase 3
 ```
 
@@ -52,7 +52,7 @@ inline.
 ## Dependencies (reserved, not installed)
 
 - CSV: `csv-parse` (already a dependency) + `multer` (already a dependency).
-- Google Sheets: `googleapis` (Phase 3).
+- Google Sheets: not implemented or exposed; `googleapis` is not installed.
 - Mongo customer databases: `mongodb` driver (Phase 3; transitive of mongoose).
 
 Nothing extra is installed or wired yet — Sprint 4 wires the CSV and Webhook

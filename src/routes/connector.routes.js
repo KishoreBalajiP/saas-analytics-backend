@@ -32,7 +32,6 @@ import { authenticate } from '../middleware/auth.middleware.js';
 import { resolveTenant } from '../middleware/tenant.middleware.js';
 import { permission } from '../middleware/permission.middleware.js';
 import { upload } from '../middleware/upload.middleware.js';
-import { uploadXlsx } from '../middleware/upload.middleware.js';
 import connectorController from '../controllers/connector.controller.js';
 
 const router = Router();
@@ -50,10 +49,11 @@ router.patch('/:connectorId', authenticate, resolveTenant, permission('connector
 router.delete('/:connectorId', authenticate, resolveTenant, permission('connectors', 'delete'), connectorController.remove);
 router.post('/:connectorId/validate', authenticate, resolveTenant, permission('connectors', 'view'), connectorController.validate);
 router.get('/:connectorId/rows', authenticate, resolveTenant, permission('connectors', 'view'), connectorController.listRows);
-router.post('/:connectorId/preview', authenticate, resolveTenant, permission('connectors', 'preview'), upload.single('file'), connectorController.previewCsv);
-router.post('/:connectorId/sync', authenticate, resolveTenant, permission('connectors', 'sync'), upload.single('file'), connectorController.syncCsv);
-router.post('/:connectorId/preview', authenticate, resolveTenant, permission('connectors', 'preview'), uploadXlsx.single('file'), connectorController.previewFile);
-router.post('/:connectorId/sync', authenticate, resolveTenant, permission('connectors', 'sync'), uploadXlsx.single('file'), connectorController.syncFile);
+// One registration per public path. The service dispatches CSV/XLSX behavior
+// from the persisted connector type; duplicate Express registrations would
+// shadow XLSX requests behind the first CSV handler.
+router.post('/:connectorId/preview', authenticate, resolveTenant, permission('connectors', 'preview'), upload.single('file'), connectorController.previewFile);
+router.post('/:connectorId/sync', authenticate, resolveTenant, permission('connectors', 'sync'), upload.single('file'), connectorController.syncFile);
 router.post('/:connectorId/sync-mongodb', authenticate, resolveTenant, permission('connectors', 'sync'), connectorController.syncMongoDB);
 
 export default router;

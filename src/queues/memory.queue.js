@@ -52,6 +52,8 @@ export function createInMemoryQueue(options = {}) {
   let closed = false;
   let running = 0;
   let nextId = 1;
+  const timers = new Set();
+  const immediates = new Set();
 
   function emit(event, payload) {
     const list = listeners.get(event) ?? [];
@@ -64,7 +66,11 @@ export function createInMemoryQueue(options = {}) {
     if (closed) return;
     // Yield to the event loop so callers can `await enqueue()` and observe
     // a stable state.
-    setImmediate(drain);
+    const handle = setImmediate(() => {
+      immediates.delete(handle);
+      void drain();
+    });
+    immediates.add(handle);
   }
 
   async function drain() {
@@ -76,7 +82,11 @@ export function createInMemoryQueue(options = {}) {
       if (idx === -1) {
         const next = buffer.reduce((acc, m) => Math.min(acc, m.runAt), Number.POSITIVE_INFINITY);
         if (Number.isFinite(next)) {
-          setTimeout(drain, Math.max(0, next - now));
+          const handle = setTimeout(() => {
+            timers.delete(handle);
+            void drain();
+          }, Math.max(0, next - now));
+          timers.add(handle);
         }
         return;
       }
@@ -166,6 +176,10 @@ export function createInMemoryQueue(options = {}) {
       consumer = null;
       buffer.length = 0;
       listeners.clear();
+      for (const handle of timers) clearTimeout(handle);
+      for (const handle of immediates) clearImmediate(handle);
+      timers.clear();
+      immediates.clear();
     },
   };
 }

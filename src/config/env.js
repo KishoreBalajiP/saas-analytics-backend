@@ -323,6 +323,33 @@ const config = Object.freeze({
   },
 });
 
+/* ----------------------- production safety gates ------------------------ */
+
+if (isProduction) {
+  const invalid = [];
+  const isPlaceholder = (value) => !value || /^(change-me|dev-only|localhost|127\.0\.0\.1)/i.test(value);
+
+  if (isPlaceholder(config.security.jwtSecret)) invalid.push('JWT_SECRET');
+  if (isPlaceholder(config.database.uri)) invalid.push('MONGODB_URI');
+  if (!config.redis.url) invalid.push('REDIS_URL');
+  if (!config.encryption.key || config.encryption.key.length < 32) invalid.push('ENCRYPTION_KEY (32+ characters)');
+  if (config.storage.provider !== 's3' || !config.storage.bucket) invalid.push('STORAGE_PROVIDER=s3 and S3_BUCKET');
+  if (config.mail.provider !== 'smtp' || !config.mail.host || !config.mail.password) {
+    invalid.push('MAIL_PROVIDER=smtp, SMTP_HOST, and MAIL_PASSWORD');
+  }
+  if (!config.security.cookieSecure) invalid.push('COOKIE_SECURE=true');
+  if (!config.cors.clientUrl || /localhost|127\.0\.0\.1/i.test(config.cors.clientUrl)) invalid.push('CLIENT_URL');
+  if (config.cors.origins.includes('*') || config.cors.origins.some((origin) => /localhost|127\.0\.0\.1/i.test(origin))) {
+    invalid.push('CORS_ORIGINS without localhost or wildcard');
+  }
+  if (config.socket.corsOrigins.includes('*') || config.socket.corsOrigins.some((origin) => /localhost|127\.0\.0\.1/i.test(origin))) {
+    invalid.push('SOCKET_CORS_ORIGIN without localhost or wildcard');
+  }
+  if (invalid.length) {
+    throw new Error(`Invalid production configuration: ${invalid.join(', ')}`);
+  }
+}
+
 // Frontend-dependent URLs are intentionally kept as placeholders until the
 // frontend is deployed. In production a leftover placeholder (or the
 // localhost default) would silently reject browser CORS preflights and

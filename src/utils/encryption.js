@@ -49,7 +49,7 @@ const ENVELOPE_VERSION = 'v1';
  * @returns {Buffer} 32-byte AES key.
  */
 function deriveContextKey(context) {
-  const master = env.security.jwtSecret;
+  const master = env.encryption.key || env.security.jwtSecret;
   const ctxString = canonicalContext(context);
   const salt = `saas-analytics:${ctxString}`;
   return crypto.scryptSync(master, salt, 32);
