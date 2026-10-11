@@ -102,3 +102,55 @@ test('invalid token preview does not disclose tenant information', async () => {
   assert.equal(response.status, 400);
   assert.equal(response.json.data, undefined);
 });
+
+test('tenant owner can invite once, retry idempotently, and cannot select another tenant', async () => {
+  const emails = [];
+  emailService.captureInto(emails);
+  const registration = await api('/api/v1/auth/register', {
+    method: 'POST',
+    body: {
+      fullName: 'Workspace Owner',
+      email: 'owner-onboarding@example.com',
+      password: PASSWORD,
+      workspaceName: 'Onboarding Invite Workspace',
+      workspaceSlug: 'onboarding-invite-workspace',
+    },
+  });
+  assert.equal(registration.status, 201);
+  const verificationToken = new URL(emails[0].text.match(/https?:\/\/[^\s]+/u)[0]).searchParams.get('token');
+  const verified = await api('/api/v1/auth/verify-email', { method: 'POST', body: { token: verificationToken } });
+  assert.equal(verified.status, 200);
+  const login = await api('/api/v1/auth/login', {
+    method: 'POST',
+    headers: { 'X-Tenant-Id': 'onboarding-invite-workspace' },
+    body: { email: 'owner-onboarding@example.com', password: PASSWORD },
+  });
+  assert.equal(login.status, 200);
+  const authorization = { Authorization: `Bearer ${login.json.data.accessToken}` };
+
+  const invite = await api('/api/v1/invitations', {
+    method: 'POST',
+    headers: authorization,
+    body: { email: 'teammate@example.com', name: 'A Teammate' },
+  });
+  assert.equal(invite.status, 201);
+  assert.equal(invite.json.data.delivered, true);
+  assert.equal(invite.json.data.invitation.roleName, 'Viewer');
+
+  const retry = await api('/api/v1/invitations', {
+    method: 'POST',
+    headers: authorization,
+    body: { email: 'teammate@example.com', name: 'A Teammate' },
+  });
+  assert.equal(retry.status, 200);
+  assert.equal(retry.json.data.alreadyPending, true);
+  assert.equal(retry.json.data.invitation._id, invite.json.data.invitation._id);
+  assert.equal(emails.filter((email) => email.subject === 'You are invited to Analivo').length, 1);
+
+  const forgedTenant = await api('/api/v1/invitations', {
+    method: 'POST',
+    headers: { ...authorization, 'X-Tenant-Id': 'some-other-tenant' },
+    body: { email: 'cross-tenant@example.com' },
+  });
+  assert.equal(forgedTenant.status, 403);
+});

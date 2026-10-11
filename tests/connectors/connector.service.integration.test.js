@@ -178,6 +178,15 @@ test('csv: enqueued sync streams, maps and persists rows idempotently', async ()
     filename: 'customers.csv',
   });
   assert.equal(enqueued.accepted, true);
+  const duplicateEnqueue = await connectorService.syncCsvUpload({
+    tenantId: TENANT_A,
+    connectorId: String(created._id),
+    buffer: csv,
+    filename: 'customers.csv',
+  });
+  assert.equal(duplicateEnqueue.alreadyQueued, true);
+  const queuedConnector = await connectorRepository.findById(String(created._id), { tenantId: TENANT_A });
+  assert.equal(queuedConnector.syncStatus, 'queued');
 
   // Preview first (no ingest).
   const preview = await connectorService.previewCsvUpload({
@@ -219,4 +228,5 @@ test('csv: enqueued sync streams, maps and persists rows idempotently', async ()
   // lastSyncedAt updated after a successful sync.
   const updated = await connectorRepository.findById(String(created._id), { tenantId: TENANT_A });
   assert.ok(updated.lastSyncedAt instanceof Date);
+  assert.equal(updated.syncStatus, 'succeeded');
 });

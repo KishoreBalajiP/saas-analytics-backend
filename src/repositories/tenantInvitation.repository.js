@@ -30,6 +30,12 @@ export const revoke = (id, by) => TenantInvitation.findOneAndUpdate(
 
 export const findById = (id) => TenantInvitation.findById(id).lean();
 
+export const findPendingByEmail = ({ tenantId, invitedEmail }) => TenantInvitation.findOne({
+  tenantId,
+  invitedEmail: invitedEmail.toLowerCase(),
+  status: 'pending',
+}).lean();
+
 export const list = async ({ tenantId, status, page = 1, limit = 20 } = {}) => {
   const filter = { tenantId };
   if (status) filter.status = status;
@@ -39,4 +45,4 @@ export const list = async ({ tenantId, status, page = 1, limit = 20 } = {}) => {
   return { docs: result.docs, total: result.totalDocs, page: result.page, limit: result.limit, pages: result.totalPages };
 };
 
-export default { create, findLiveByHash, consume, revokePending, revoke, findById, list };
+export default { create, findLiveByHash, consume, revokePending, revoke, findById, findPendingByEmail, list };

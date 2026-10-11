@@ -77,6 +77,28 @@ export const resetPasswordSchema = {
 };
 
 /** @type {import('../index.js').Schema} */
+export const registerSchema = {
+  body: {
+    fullName: { type: 'string', required: true, minLength: 2, maxLength: 120 },
+    email: 'email|required',
+    password: { type: 'string', required: true, minLength: 8 },
+    workspaceName: { type: 'string', required: true, minLength: 2, maxLength: 80 },
+    workspaceSlug: { type: 'string', minLength: 2, maxLength: 50, pattern: '^[a-z0-9-]+$' },
+  },
+  params: {},
+  query: {},
+};
+
+/** @type {import('../index.js').Schema} */
+export const verifyEmailSchema = {
+  body: {
+    token: 'string|required',
+  },
+  params: {},
+  query: {},
+};
+
+/** @type {import('../index.js').Schema} */
 export const mfaVerifySchema = {
   body: {
     code: { ...mfaToken, required: true },
@@ -91,6 +113,8 @@ export default {
   logoutSchema,
   forgotPasswordSchema,
   resetPasswordSchema,
+  registerSchema,
+  verifyEmailSchema,
   mfaVerifySchema,
   _meta: { sprint: '1 - auth validators implemented' },
 };

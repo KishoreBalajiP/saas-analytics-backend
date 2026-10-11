@@ -19,10 +19,14 @@ export const createSchema = {
   body: { email: emailRule, name: { type: 'string', maxLength: 120 }, roleName: { type: 'string', maxLength: 80 } },
   params: { id: 'objectId|required' }, query: {},
 };
+export const tenantCreateSchema = {
+  body: { email: emailRule, name: { type: 'string', maxLength: 120 }, roleName: { type: 'string', maxLength: 80 } },
+  params: {}, query: {},
+};
 export const resendSchema = {
   body: { invitationId: 'objectId|required' },
   params: { id: 'objectId|required' }, query: {},
 };
 export const revokeSchema = { body: {}, params: { id: 'objectId|required', invitationId: 'objectId|required' }, query: {} };
 
-export default { previewSchema, acceptSchema, listSchema, createSchema, resendSchema, revokeSchema };
+export default { previewSchema, acceptSchema, listSchema, createSchema, tenantCreateSchema, resendSchema, revokeSchema };

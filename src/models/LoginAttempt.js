@@ -39,6 +39,9 @@ export const ATTEMPT_REASONS = Object.freeze([
   'success',
   'suspended',
   'unknown_email',
+  'unknown_tenant',
+  'tenant_not_active',
+  'email_unverified',
 ]);
 
 const loginAttemptSchema = new mongoose.Schema(

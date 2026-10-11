@@ -136,10 +136,17 @@ export const upsertByKey = async ({ key, scope, tenantId = null, type, value, de
     const updated = await update(existing._id, patch);
     return { setting: updated, created: false };
   }
-  const setting = await create({
-    key, scope, tenantId, type, value, description, isSecret, isReadonly, group, updatedBy,
-  });
-  return { setting, created: true };
+  try {
+    const setting = await create({
+      key, scope, tenantId, type, value, description, isSecret, isReadonly, group, updatedBy,
+    });
+    return { setting, created: true };
+  } catch (error) {
+    if (error?.code !== 11000) throw error;
+    const createdConcurrently = await findByKey({ key, scope, tenantId });
+    if (!createdConcurrently) throw error;
+    return upsertByKey({ key, scope, tenantId, type, value, description, isSecret, isReadonly, group, updatedBy });
+  }
 };
 
 /** Soft-delete a setting row. Returns the plain doc or null. */

@@ -36,6 +36,7 @@ import { tenantScope, softDelete, paginate, optimisticConcurrency, audit } from 
 export const MODEL_NAME = 'Connector';
 export const CONNECTOR_TYPES = Object.freeze(['csv', 'webhook', 'xlsx', 'mongodb']);
 export const CONNECTOR_STATUSES = Object.freeze(['active', 'paused', 'error']);
+export const CONNECTOR_SYNC_STATUSES = Object.freeze(['idle', 'queued', 'running', 'succeeded', 'failed']);
 
 const connectorSchema = new mongoose.Schema(
   {
@@ -54,6 +55,8 @@ const connectorSchema = new mongoose.Schema(
     fieldMapping: { type: mongoose.Schema.Types.Mixed, default: {} },
     // Last ingestion bookkeeping.
     lastSyncedAt: { type: Date, default: null },
+    syncStatus: { type: String, enum: [...CONNECTOR_SYNC_STATUSES], default: 'idle', index: true },
+    syncRequestedAt: { type: Date, default: null },
     lastError: { type: String, default: null },
     errorCount: { type: Number, default: 0 },
     createdBy: { type: String, default: null },

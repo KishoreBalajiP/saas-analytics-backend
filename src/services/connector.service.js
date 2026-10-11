@@ -294,14 +294,20 @@ export async function syncCsvUpload({ tenantId, connectorId, buffer, filename = 
   const verdict = await instance.validate();
   if (!verdict.valid) throw new ConnectorConfigError('Invalid connector configuration', verdict.errors);
 
-  await connectorQueue.enqueue({
+  const queued = await enqueueTrackedSync({
     connectorId,
+    actorId,
     tenantId,
-    jobType: 'ingest',
-    payload: { buffer: buffer.toString('base64'), filename, mimetype: 'text/csv' },
-  }, { name: 'csv-sync', jobId: `csv-${connectorId}-${Date.now()}` });
+    job: {
+      connectorId,
+      tenantId,
+      jobType: 'ingest',
+      payload: { buffer: buffer.toString('base64'), filename, mimetype: 'text/csv' },
+    },
+    options: { name: 'csv-sync', jobId: `csv-${connectorId}-${Date.now()}` },
+  });
 
-  return { accepted: true, jobType: 'ingest', filename };
+  return { accepted: true, jobType: 'ingest', filename, alreadyQueued: !queued };
 }
 
 /**
@@ -350,14 +356,20 @@ export async function syncFileUpload({ tenantId, connectorId, buffer, filename =
     ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
     : 'text/csv';
 
-  await connectorQueue.enqueue({
+  const queued = await enqueueTrackedSync({
     connectorId,
+    actorId,
     tenantId,
-    jobType: 'ingest',
-    payload: { buffer: buffer.toString('base64'), filename, mimetype },
-  }, { name: `${connector.type}-sync`, jobId: `${connector.type}-${connectorId}-${Date.now()}` });
+    job: {
+      connectorId,
+      tenantId,
+      jobType: 'ingest',
+      payload: { buffer: buffer.toString('base64'), filename, mimetype },
+    },
+    options: { name: `${connector.type}-sync`, jobId: `${connector.type}-${connectorId}-${Date.now()}` },
+  });
 
-  return { accepted: true, jobType: 'ingest', filename };
+  return { accepted: true, jobType: 'ingest', filename, alreadyQueued: !queued };
 }
 
 /**
@@ -379,14 +391,15 @@ export async function syncMongoDB({ tenantId, connectorId, actorId = null } = {}
   const verdict = await instance.validate();
   if (!verdict.valid) throw new ConnectorConfigError('Invalid connector configuration', verdict.errors);
 
-  await connectorQueue.enqueue({
+  const queued = await enqueueTrackedSync({
     connectorId,
+    actorId,
     tenantId,
-    jobType: 'ingest',
-    payload: {},
-  }, { name: 'mongodb-sync', jobId: `mongodb-${connectorId}-${Date.now()}` });
+    job: { connectorId, tenantId, jobType: 'ingest', payload: {} },
+    options: { name: 'mongodb-sync', jobId: `mongodb-${connectorId}-${Date.now()}` },
+  });
 
-  return { accepted: true, jobType: 'ingest' };
+  return { accepted: true, jobType: 'ingest', alreadyQueued: !queued };
 }
 
 /* ------------------------------- Webhook --------------------------------- */
@@ -439,6 +452,22 @@ export async function handleWebhook({ webhookToken, rawBody, headers } = {}) {
   return { accepted: true, received: records.length };
 }
 
+async function enqueueTrackedSync({ connectorId, actorId, tenantId, job, options }) {
+  const requestedAt = new Date();
+  const queued = await connectorRepository.markSyncQueued(connectorId, { requestedAt, by: actorId });
+  if (!queued) return false;
+  try {
+    await connectorQueue.enqueue(job, options);
+    return true;
+  } catch (error) {
+    await connectorRepository.markSyncFailed(connectorId, {
+      requestedAt,
+      message: error?.message ?? 'Unable to enqueue sync',
+    });
+    throw error;
+  }
+}
+
 /* -------------------------------- worker ---------------------------------- */
 
 /**
@@ -467,39 +496,38 @@ export async function processSyncMessage(job = {}) {
   if (!connector) {
     throw new ConnectorError('CONNECTOR_NOT_FOUND', 'Connector no longer exists', { statusCode: 404 });
   }
-  const config = await decryptConfig(connector);
-  const instance = createConnector(connector.type, { id: connectorId, config, tenantId });
-
-  let records;
-  if (payload.buffer) {
-    records = instance.ingest({ buffer: Buffer.from(payload.buffer, 'base64') });
-  } else if (connector.type === 'mongodb') {
-    // MongoDB connector pulls directly; ingest() takes no args.
-    records = instance.ingest();
-  } else {
-    records = payload.records ?? [];
-  }
-
-  let result;
+  await connectorRepository.update(connectorId, { syncStatus: 'running' });
   try {
-    result = await ingestRecords({
+    const config = await decryptConfig(connector);
+    const instance = createConnector(connector.type, { id: connectorId, config, tenantId });
+    let records;
+    if (payload.buffer) {
+      records = instance.ingest({ buffer: Buffer.from(payload.buffer, 'base64') });
+    } else if (connector.type === 'mongodb') {
+      records = instance.ingest();
+    } else {
+      records = payload.records ?? [];
+    }
+
+    const result = await ingestRecords({
       records,
       fieldMapping: connector.fieldMapping,
       persist: (batch) => connectorRowRepository.upsertRows(connectorId, tenantId, batch),
     });
-  } catch (err) {
-    await connectorRepository.bumpError(connectorId, err?.message ?? 'Sync failed');
-    throw err;
+    const lastError = result.errors.length > 0 ? `ingested with ${result.errors.length} field errors` : null;
+    await connectorRepository.update(connectorId, {
+      lastSyncedAt: new Date(),
+      syncStatus: 'succeeded',
+      lastError,
+      errorCount: result.errors.length > 0 ? (connector.errorCount ?? 0) + 1 : 0,
+    });
+
+    return result;
+  } catch (error) {
+    await connectorRepository.bumpError(connectorId, error?.message ?? 'Sync failed');
+    await connectorRepository.update(connectorId, { syncStatus: 'failed' });
+    throw error;
   }
-
-  const lastError = result.errors.length > 0 ? `ingested with ${result.errors.length} field errors` : null;
-  await connectorRepository.update(connectorId, {
-    lastSyncedAt: new Date(),
-    lastError,
-    errorCount: result.errors.length > 0 ? (connector.errorCount ?? 0) + 1 : 0,
-  });
-
-  return result;
 }
 
 export default {

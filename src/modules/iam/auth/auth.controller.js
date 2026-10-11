@@ -123,6 +123,24 @@ export function createAuthController(portal) {
       const profile = await authService.getProfile({ portal, actorId });
       return ApiResponse.ok(res, profile);
     }),
+
+    register: asyncHandler(async (req, res) => {
+      const { fullName, email, password, workspaceName, workspaceSlug } = req.validated.body;
+      const result = await authService.register({
+        fullName,
+        email,
+        password,
+        workspaceName,
+        workspaceSlug,
+      });
+      return ApiResponse.created(res, result, 'Workspace created. Check your email to verify your account.');
+    }),
+
+    verifyEmail: asyncHandler(async (req, res) => {
+      const { token } = req.validated.body;
+      const result = await authService.verifyEmail({ token });
+      return ApiResponse.ok(res, result, 'Email verified successfully');
+    }),
   };
 }
 

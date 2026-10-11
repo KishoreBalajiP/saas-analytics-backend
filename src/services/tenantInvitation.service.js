@@ -46,24 +46,35 @@ async function ensureRoleGrant({ tenantId, userId, roleId, by }) {
   }
 }
 
-export async function create({ tenantId, email, name = '', roleName = 'Owner', invitedBy }) {
+export async function create({ tenantId, email, name = '', roleName = 'Owner', invitedBy, actorType = 'admin' }) {
   const tenant = await tenantRepository.findById(tenantId);
   if (!tenant) throw ApiError.notFound('Tenant not found');
   if (!invitedBy) throw ApiError.badRequest('Inviter is required');
   const invitedEmail = String(email ?? '').trim().toLowerCase();
   if (!invitedEmail) throw ApiError.badRequest('Invited email is required');
+  const existing = await invitationRepository.findPendingByEmail({ tenantId, invitedEmail });
+  if (existing && existing.expiresAt > new Date()) {
+    return { invitation: safeInvitation(existing), delivered: false, alreadyPending: true };
+  }
+  if (existing) await invitationRepository.revokePending({ tenantId, invitedEmail, by: invitedBy });
   const role = await resolveRole(tenantId, roleName);
   const user = await ensureInvitedUser({ tenantId, email: invitedEmail, name, invitedBy });
   if (user.status === 'active' && user.passwordHash) throw ApiError.conflict('A user with this email already belongs to the tenant');
   await ensureRoleGrant({ tenantId, userId: String(user._id), roleId: String(role._id), by: invitedBy });
-  await invitationRepository.revokePending({ tenantId, invitedEmail, by: invitedBy });
-
   const rawToken = randomBytes(32).toString('base64url');
-  const invitation = await invitationRepository.create({
-    tenantId, invitedEmail, roleId: String(role._id), roleName: role.name,
-    invitedBy: String(invitedBy), tokenHash: digest(rawToken),
-    expiresAt: new Date(Date.now() + TTL),
-  });
+  let invitation;
+  try {
+    invitation = await invitationRepository.create({
+      tenantId, invitedEmail, roleId: String(role._id), roleName: role.name,
+      invitedBy: String(invitedBy), tokenHash: digest(rawToken),
+      expiresAt: new Date(Date.now() + TTL),
+    });
+  } catch (error) {
+    if (error?.code !== 11000) throw error;
+    const pending = await invitationRepository.findPendingByEmail({ tenantId, invitedEmail });
+    if (!pending) throw error;
+    return { invitation: safeInvitation(pending), delivered: false, alreadyPending: true };
+  }
   const url = `${env.cors.clientUrl}/invite/accept?token=${encodeURIComponent(rawToken)}`;
   let delivered = true;
   try {
@@ -77,7 +88,7 @@ export async function create({ tenantId, email, name = '', roleName = 'Owner', i
     // Do not log the token or email body. The pending invitation can be resent.
     invitation.deliveryError = error?.message ?? 'Email delivery failed';
   }
-  await auditEmit({ actor: { type: 'admin', id: invitedBy }, action: 'tenant.invitation_created', module: 'iam.tenant_invitations', resource: { type: 'invitation', id: invitation._id }, tenantId, after: { invitedEmail, role: role.name, delivered } });
+  await auditEmit({ actor: { type: actorType, id: invitedBy }, action: 'tenant.invitation_created', module: 'iam.tenant_invitations', resource: { type: 'invitation', id: invitation._id }, tenantId, after: { invitedEmail, role: role.name, delivered } });
   return { invitation: safeInvitation(invitation), delivered };
 }
 
@@ -118,11 +129,13 @@ export const resend = async ({ tenantId, invitationId, email, name = '', roleNam
     ? await invitationRepository.findById(invitationId)
     : null;
   if (!invitationId && email) {
+    await invitationRepository.revokePending({ tenantId, invitedEmail: email, by: invitedBy });
     return create({ tenantId, email, name, roleName, invitedBy });
   }
   if (!existing || String(existing.tenantId) !== String(tenantId)) throw ApiError.notFound('Invitation not found');
   if (existing.status !== 'pending') throw ApiError.conflict('Only pending invitations can be resent');
   const user = await userRepository.findByEmail(tenantId, existing.invitedEmail);
+  await invitationRepository.revokePending({ tenantId, invitedEmail: existing.invitedEmail, by: invitedBy });
   return create({
     tenantId,
     email: existing.invitedEmail,

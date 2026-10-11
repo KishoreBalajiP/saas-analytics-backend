@@ -20,6 +20,10 @@ const schema = new mongoose.Schema({
 }, { timestamps: true });
 
 schema.index({ tenantId: 1, invitedEmail: 1, status: 1 });
+schema.index(
+  { tenantId: 1, invitedEmail: 1 },
+  { unique: true, partialFilterExpression: { status: 'pending' } },
+);
 schema.plugin(tenantScope);
 schema.plugin(paginate);
 schema.plugin(optimisticConcurrency);

@@ -95,6 +95,19 @@ export async function api(path, { method = 'GET', body, headers = {}, cookies = 
   return { status: res.status, headers: res.headers, json, setCookie };
 }
 
+/** Perform a multipart upload through the real HTTP app. */
+export async function apiMultipart(path, { method = 'POST', headers = {}, fields = {}, file } = {}) {
+  const formData = new FormData();
+  for (const [key, value] of Object.entries(fields)) formData.set(key, String(value));
+  if (file) formData.append('file', new Blob([file.buffer], { type: file.type }), file.name);
+  const res = await fetch(`${baseUrl}${path}`, { method, headers, body: formData });
+  const setCookie = res.headers.getSetCookie?.() ?? [];
+  const text = await res.text();
+  let json = null;
+  try { json = text ? JSON.parse(text) : null; } catch { json = null; }
+  return { status: res.status, headers: res.headers, json, setCookie };
+}
+
 /**
  * Extract the auth cookie (`saas_session=...`) from a response, ready to be
  * sent back via `opts.cookies`. Returns `null` when the cookie is absent.
@@ -107,4 +120,4 @@ export function refreshCookieFrom(resp) {
   return line ? line.split(';')[0] : null;
 }
 
-export default { startHttp, stopHttp, api, refreshCookieFrom };
+export default { startHttp, stopHttp, api, apiMultipart, refreshCookieFrom };

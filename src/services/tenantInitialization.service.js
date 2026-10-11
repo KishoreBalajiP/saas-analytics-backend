@@ -48,7 +48,7 @@ const TENANT_PERMISSION_ACTIONS = Object.freeze({
   settings: ['view', 'configure', 'update', 'delete'],
   feature_flags: ['view', 'configure', 'update', 'delete'],
   analytics: ['view', 'create', 'update', 'delete', 'export'],
-  connectors: ['view', 'create', 'update', 'delete', 'configure'],
+  connectors: ['view', 'create', 'update', 'delete', 'configure', 'preview', 'sync'],
   dashboards: ['view', 'create', 'update', 'delete'],
   reports: ['view', 'create', 'update', 'delete', 'export'],
   notifications: ['view', 'configure', 'update', 'delete'],
@@ -88,7 +88,7 @@ const DEFAULT_ROLES = Object.freeze({
       ...P('settings', ['view', 'configure', 'update', 'delete']),
       ...P('feature_flags', ['view', 'configure', 'update', 'delete']),
       ...P('analytics', ['view', 'create', 'update', 'delete', 'export']),
-      ...P('connectors', ['view', 'create', 'update', 'delete', 'configure']),
+      ...P('connectors', ['view', 'create', 'update', 'delete', 'configure', 'preview', 'sync']),
       ...P('dashboards', ['view', 'create', 'update', 'delete']),
       ...P('reports', ['view', 'create', 'update', 'delete', 'export']),
       ...P('notifications', ['view', 'configure', 'update', 'delete']),
@@ -108,7 +108,7 @@ const DEFAULT_ROLES = Object.freeze({
       ...P('settings', ['view', 'configure', 'update', 'delete']),
       ...P('feature_flags', ['view', 'configure', 'update', 'delete']),
       ...P('analytics', ['view', 'create', 'update', 'export']),
-      ...P('connectors', ['view', 'create', 'update', 'configure']),
+      ...P('connectors', ['view', 'create', 'update', 'configure', 'preview', 'sync']),
       ...P('dashboards', ['view', 'create', 'update']),
       ...P('reports', ['view', 'create', 'update', 'export']),
       ...P('notifications', ['view', 'configure', 'update', 'delete']),
@@ -159,13 +159,20 @@ function systemActor(by) {
 async function ensureModule(key, { name, by }) {
   const existing = await permissionRepository.findModuleByKey(key);
   if (existing) return existing;
-  return permissionRepository.createModule({
-    key,
-    name,
-    description: '',
-    isSystem: true,
-    createdBy: by,
-  });
+  try {
+    return await permissionRepository.createModule({
+      key,
+      name,
+      description: '',
+      isSystem: true,
+      createdBy: by,
+    });
+  } catch (error) {
+    if (error?.code !== 11000) throw error;
+    const createdByConcurrentInitializer = await permissionRepository.findModuleByKey(key);
+    if (!createdByConcurrentInitializer) throw error;
+    return createdByConcurrentInitializer;
+  }
 }
 
 /** Ensure every built-in module exists (top-level first, then children). */
@@ -203,14 +210,21 @@ async function ensurePermissions({ by }) {
 async function ensureRole({ tenantId, name, description, isSystem, by }) {
   const existing = await roleRepository.findByName({ tenantId, name });
   if (existing) return existing;
-  return roleRepository.create({
-    tenantId,
-    name,
-    description,
-    level: 'tenant',
-    isSystem,
-    createdBy: by,
-  });
+  try {
+    return await roleRepository.create({
+      tenantId,
+      name,
+      description,
+      level: 'tenant',
+      isSystem,
+      createdBy: by,
+    });
+  } catch (error) {
+    if (error?.code !== 11000) throw error;
+    const createdByConcurrentInitializer = await roleRepository.findByName({ tenantId, name });
+    if (!createdByConcurrentInitializer) throw error;
+    return createdByConcurrentInitializer;
+  }
 }
 
 /** Create/reuse the owner user and grant the Owner role. */
@@ -261,6 +275,9 @@ export async function initialize({ tenantId, owner = {}, by = null } = {}) {
   if (tenant.onboardingStatus === 'ready' && tenant.status === 'active') {
     return { tenant, owner: tenant.ownerId ? { _id: tenant.ownerId } : null, alreadyInitialized: true };
   }
+  if (!['pending', 'active'].includes(tenant.status)) {
+    throw ApiError.conflict('Only a pending or active tenant can be initialized');
+  }
 
   const actor = systemActor(by);
 
@@ -288,12 +305,13 @@ export async function initialize({ tenantId, owner = {}, by = null } = {}) {
     }
   }
 
-  const updated = await tenantRepository.update(tenantId, {
+  const updated = await tenantRepository.completeInitialization(tenantId, {
     onboardingStatus: 'ready',
     status: 'active',
     ownerId: ownerUser?._id ?? tenant.ownerId ?? null,
     updatedBy: by,
   });
+  if (!updated) throw ApiError.conflict('Tenant lifecycle changed during initialization');
 
   await invalidateScope(tenantId);
 

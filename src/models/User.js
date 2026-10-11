@@ -30,7 +30,7 @@ import mongoose from 'mongoose';
 import { tenantScope, softDelete, paginate, optimisticConcurrency, audit } from './plugins/index.js';
 
 export const MODEL_NAME = 'User';
-export const USER_STATUSES = Object.freeze(['invited', 'active', 'suspended', 'locked']);
+export const USER_STATUSES = Object.freeze(['invited', 'unverified', 'active', 'suspended', 'locked']);
 export const SSO_PROVIDERS = Object.freeze(['google', 'microsoft', 'saml']);
 
 const userSchema = new mongoose.Schema(

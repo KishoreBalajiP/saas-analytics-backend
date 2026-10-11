@@ -55,6 +55,20 @@ export const create = async (data) => {
 export const update = (id, patch) =>
   Connector.findByIdAndUpdate(id, { $set: patch }, { new: true, runValidators: true, lean: true });
 
+export const markSyncQueued = (id, { requestedAt, by = null }) =>
+  Connector.findOneAndUpdate(
+    { _id: id, syncStatus: { $nin: ['queued', 'running'] } },
+    { $set: { syncStatus: 'queued', syncRequestedAt: requestedAt, lastError: null, updatedBy: by } },
+    { new: true, runValidators: true, lean: true },
+  );
+
+export const markSyncFailed = (id, { requestedAt, message }) =>
+  Connector.findOneAndUpdate(
+    { _id: id, syncStatus: 'queued', syncRequestedAt: requestedAt },
+    { $set: { syncStatus: 'failed', lastError: message } },
+    { new: true, runValidators: true, lean: true },
+  );
+
 /** Record an ingestion failure on a connector (error counter + lastError). */
 export const bumpError = async (id, message) =>
   Connector.findByIdAndUpdate(
@@ -87,6 +101,8 @@ export default {
   findByWebhookToken,
   create,
   update,
+  markSyncQueued,
+  markSyncFailed,
   bumpError,
   remove,
   countByType,

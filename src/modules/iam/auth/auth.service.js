@@ -39,6 +39,8 @@ import sessionRepository from '../../../repositories/session.repository.js';
 import loginAttemptRepository from '../../../repositories/loginAttempt.repository.js';
 import sessionService from './session.service.js';
 import mfaService from './mfa.service.js';
+import emailVerificationService from '../../../services/emailVerification.service.js';
+import tenantInitializationService from '../../../services/tenantInitialization.service.js';
 
 const logger = createChildLogger({ module: 'services/auth' });
 const AUTH = env.security.auth;
@@ -149,6 +151,15 @@ export async function login({
 
   const actorId = String(account._id);
 
+  if (account.status === 'suspended') {
+    await recordAttempt({ ...attemptMeta, actorId, success: false, reason: 'suspended' });
+    throw ApiError.forbidden('Account is suspended');
+  }
+  if (account.status === 'unverified') {
+    await recordAttempt({ ...attemptMeta, actorId, success: false, reason: 'email_unverified' });
+    throw ApiError.forbidden('Email verification required');
+  }
+
   // Tenant gate: only `active` tenants may authenticate. A missing tenant
   // stays generic (no enumeration); a blocked tenant is explicit (the
   // user already knows which tenant they are logging into).
@@ -163,11 +174,6 @@ export async function login({
       await recordAttempt({ ...attemptMeta, actorId, success: false, reason: 'tenant_not_active' });
       throw ApiError.forbidden('Tenant is not active');
     }
-  }
-
-  if (account.status === 'suspended') {
-    await recordAttempt({ ...attemptMeta, actorId, success: false, reason: 'suspended' });
-    throw ApiError.forbidden('Account is suspended');
   }
   if (account.status === 'locked' || isLockedOut(account)) {
     await recordAttempt({ ...attemptMeta, actorId, success: false, reason: 'account_locked' });
@@ -483,8 +489,117 @@ async function recordAttempt({ portal, email, tenantId, actorId = null, ip = '',
   }
 }
 
+function slugify(value) {
+  return String(value ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 50) || 'workspace';
+}
+
+export async function register({ fullName, email, password, workspaceName, workspaceSlug }) {
+  const normalizedName = String(fullName ?? '').trim();
+  const normalizedEmail = String(email ?? '').trim().toLowerCase();
+  const normalizedPassword = typeof password === 'string' ? password : '';
+  const normalizedWorkspaceName = String(workspaceName ?? '').trim();
+
+  if (!normalizedName || normalizedName.length < 2) {
+    throw ApiError.badRequest('Full name is required');
+  }
+  if (!normalizedEmail || !normalizedEmail.includes('@')) {
+    throw ApiError.badRequest('A valid email is required');
+  }
+  if (normalizedPassword.length < 8) {
+    throw ApiError.badRequest('Password must be at least 8 characters');
+  }
+  if (!normalizedWorkspaceName || normalizedWorkspaceName.length < 2) {
+    throw ApiError.badRequest('Workspace name is required');
+  }
+
+  const slug = slugify(workspaceSlug || normalizedWorkspaceName);
+  const existingTenant = await tenantRepository.findBySlug(slug);
+  if (existingTenant) {
+    throw ApiError.conflict('This workspace URL is already taken');
+  }
+
+  const passwordHash = await hashPassword(normalizedPassword);
+
+  let tenant;
+  try {
+    tenant = await tenantRepository.create({
+      name: normalizedWorkspaceName,
+      slug,
+      status: 'pending',
+      onboardingStatus: 'not_started',
+      createdBy: 'public-signup',
+    });
+  } catch (error) {
+    if (error?.code === 11000) throw ApiError.conflict('This workspace URL is already taken');
+    throw error;
+  }
+
+  let user;
+  try {
+    user = await userRepository.create({
+      tenantId: String(tenant._id),
+      email: normalizedEmail,
+      passwordHash,
+      status: 'unverified',
+      profile: { name: normalizedName, locale: 'en', timezone: 'UTC' },
+      invitedBy: null,
+    });
+  } catch (error) {
+    await tenantRepository.deleteUninitialized(tenant._id);
+    if (error?.code === 11000) throw ApiError.conflict('This workspace URL is already taken');
+    throw error;
+  }
+
+  const verification = await emailVerificationService.create({
+    tenantId: String(tenant._id),
+    userId: String(user._id),
+    email: normalizedEmail,
+    name: normalizedName,
+  });
+
+  return {
+    ok: true,
+    email: normalizedEmail,
+    verificationSent: verification.delivered,
+    tenant: {
+      id: String(tenant._id),
+      name: tenant.name,
+      slug: tenant.slug,
+      status: tenant.status,
+      onboardingStatus: tenant.onboardingStatus,
+    },
+    owner: {
+      id: String(user._id),
+      name: normalizedName,
+    },
+  };
+}
+
+export async function verifyEmail({ token }) {
+  const result = await emailVerificationService.verify({ token });
+  return {
+    ok: true,
+    verified: true,
+    email: result.email,
+    tenant: {
+      id: result.tenant.id,
+      name: result.tenant.name,
+      slug: result.tenant.slug,
+      status: result.tenant.status,
+      onboardingStatus: result.tenant.onboardingStatus,
+    },
+  };
+}
+
 export default {
   login,
+  register,
+  verifyEmail,
   refresh,
   logout,
   logoutAll,

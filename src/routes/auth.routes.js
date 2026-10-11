@@ -36,6 +36,8 @@ import {
   logoutSchema,
   forgotPasswordSchema,
   resetPasswordSchema,
+  registerSchema,
+  verifyEmailSchema,
 } from '../validators/auth.validator.js';
 import { userAuthController } from '../modules/iam/auth/auth.controller.js';
 import { userPasswordController } from '../modules/iam/auth/password.controller.js';
@@ -78,6 +80,20 @@ router.post(
   strictLimiter,
   validateRequest(resetPasswordSchema),
   userPasswordController.resetPassword,
+);
+
+router.post(
+  '/register', // ci:routes-exempt: public self-service signup; email verification required before login
+  strictLimiter,
+  validateRequest(registerSchema),
+  userAuthController.register,
+);
+
+router.post(
+  '/verify-email', // ci:routes-exempt: stateless emailed verification token
+  strictLimiter,
+  validateRequest(verifyEmailSchema),
+  userAuthController.verifyEmail,
 );
 
 // Authenticated surface.

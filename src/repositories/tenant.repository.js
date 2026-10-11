@@ -49,6 +49,23 @@ export const create = async (data) => {
 export const update = (id, patch) =>
   Tenant.findByIdAndUpdate(id, { $set: patch }, { new: true, runValidators: true, lean: true });
 
+/** Complete initialization only while the tenant remains pending/active. */
+export const completeInitialization = (id, patch) =>
+  Tenant.findOneAndUpdate(
+    { _id: id, status: { $in: ['pending', 'active'] } },
+    { $set: patch },
+    { new: true, runValidators: true, lean: true },
+  );
+
+/** Remove a registration tenant only while it is still an untouched draft. */
+export const deleteUninitialized = (id) =>
+  Tenant.findOneAndDelete({
+    _id: id,
+    status: 'pending',
+    onboardingStatus: 'not_started',
+    ownerId: null,
+  });
+
 /**
  * Paginated tenant list (Platform Admin surface). `filter.search` performs
  * a case-insensitive name/slug substring match; every other filter key is
@@ -155,6 +172,8 @@ export default {
   findByIdOrSlug,
   create,
   update,
+  completeInitialization,
+  deleteUninitialized,
   list,
   suspend,
   restore,

@@ -121,7 +121,13 @@ export const ensureDefaults = async ({ by = 'system' } = {}) => {
   for (const flag of DEFAULT_FLAGS) {
     const existing = await featureFlagRepository.findByKey(flag.key);
     if (existing) continue;
-    await featureFlagRepository.create({ ...flag, updatedBy: by });
+      try {
+        await featureFlagRepository.create({ ...flag, updatedBy: by });
+      } catch (error) {
+        if (error?.code !== 11000) throw error;
+        const createdByConcurrentInitializer = await featureFlagRepository.findByKey(flag.key);
+        if (!createdByConcurrentInitializer) throw error;
+      }
   }
   await invalidateCatalogue();
   return { seeded: true };
