@@ -37,3 +37,52 @@ test('production configuration rejects ephemeral or insecure fallbacks', () => {
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /REDIS_URL|STORAGE_PROVIDER/);
 });
+
+test('production configuration allows Razorpay to stay disabled (paywall off is valid)', () => {
+  // With Razorpay disabled, no Razorpay vars are required.
+  const result = load({ RAZORPAY_ENABLED: 'false' });
+  assert.equal(result.status, 0, result.stderr);
+});
+
+test('production configuration rejects Razorpay enabled without credentials', () => {
+  const result = load({
+    RAZORPAY_ENABLED: 'true',
+    RAZORPAY_KEY_ID: '',
+    RAZORPAY_KEY_SECRET: '',
+    RAZORPAY_WEBHOOK_SECRET: '',
+    RAZORPAY_ENVIRONMENT: 'test',
+    RAZORPAY_PLAN_MAPPING_JSON: '',
+  });
+  assert.notEqual(result.status, 0);
+  const stderr = result.stderr;
+  assert.match(stderr, /RAZORPAY_KEY_ID/);
+  assert.match(stderr, /RAZORPAY_KEY_SECRET/);
+  assert.match(stderr, /RAZORPAY_WEBHOOK_SECRET/);
+  assert.match(stderr, /RAZORPAY_PLAN_MAPPING_JSON/);
+});
+
+test('production configuration accepts Razorpay enabled with full credentials', () => {
+  const result = load({
+    RAZORPAY_ENABLED: 'true',
+    RAZORPAY_KEY_ID: 'rzp_test_abcdefghijklmn',
+    RAZORPAY_KEY_SECRET: 'test-secret-not-real',
+    RAZORPAY_WEBHOOK_SECRET: 'test-webhook-secret-not-real',
+    RAZORPAY_ENVIRONMENT: 'test',
+    RAZORPAY_PLAN_MAPPING_JSON:
+      '{"starter":{"amountMinor":49900,"currency":"INR","interval":"one-time"},"pro":{"amountMinor":99900,"currency":"INR","interval":"one-time"}}',
+  });
+  assert.equal(result.status, 0, result.stderr);
+});
+
+test('production configuration rejects Razorpay with invalid environment value', () => {
+  const result = load({
+    RAZORPAY_ENABLED: 'true',
+    RAZORPAY_KEY_ID: 'rzp_test_abcdefghijklmn',
+    RAZORPAY_KEY_SECRET: 'test-secret',
+    RAZORPAY_WEBHOOK_SECRET: 'test-webhook',
+    RAZORPAY_ENVIRONMENT: 'staging',
+    RAZORPAY_PLAN_MAPPING_JSON: '{"pro":{"amountMinor":99900,"currency":"INR","interval":"one-time"}}',
+  });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /RAZORPAY_ENVIRONMENT/);
+});

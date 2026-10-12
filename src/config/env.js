@@ -370,6 +370,21 @@ if (isProduction) {
   if (config.socket.corsOrigins.includes('*') || config.socket.corsOrigins.some((origin) => /localhost|127\.0\.0\.1/i.test(origin))) {
     invalid.push('SOCKET_CORS_ORIGIN without localhost or wildcard');
   }
+  // Razorpay: when enabled in production, all credentials must be present
+  // and the environment must be explicit. The plan mapping must contain at
+  // least one entry — an empty mapping means no plan is purchasable and
+  // production checkout would be effectively dead.
+  if (config.razorpay.enabled) {
+    if (!config.razorpay.keyId) invalid.push('RAZORPAY_KEY_ID');
+    if (!config.razorpay.keySecret) invalid.push('RAZORPAY_KEY_SECRET');
+    if (!config.razorpay.webhookSecret) invalid.push('RAZORPAY_WEBHOOK_SECRET');
+    if (!['test', 'live'].includes(config.razorpay.environment)) {
+      invalid.push('RAZORPAY_ENVIRONMENT (must be test or live)');
+    }
+    if (!config.razorpay.planMapping || Object.keys(config.razorpay.planMapping).length === 0) {
+      invalid.push('RAZORPAY_PLAN_MAPPING_JSON (at least one plan entry)');
+    }
+  }
   if (invalid.length) {
     throw new Error(`Invalid production configuration: ${invalid.join(', ')}`);
   }

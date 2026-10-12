@@ -62,6 +62,40 @@ app.use(accessLogMiddleware());
 
 // 2. Security + transport headers.
 app.use(helmet());
+
+// HSTS only in production (HTTPS). Browsers only apply HSTS over HTTPS,
+// so sending it over HTTP in development is unnecessary.
+if (!env.app.isProduction) {
+  app.use((req, res, next) => {
+    res.removeHeader('strict-transport-security');
+    next();
+  });
+}
+
+// Custom Content Security Policy suitable for a SaaS analytics platform
+// that serves embed tokens cross-origin and supports frontend scripts/styles.
+// Adjust directives if additional external resources are added.
+app.use(
+  (
+    req,
+    res,
+    next,
+  ) => {
+    res.setHeader(
+      'content-security-policy',
+      "default-src 'self'; " +
+        "script-src 'self'; " +
+        "style-src 'self' 'unsafe-inline'; " +
+        "img-src 'self' data:; " +
+        "connect-src 'self'; " +
+        "font-src 'self'; " +
+        "frame-src 'none'; " +
+        "object-src 'none'; " +
+        "base-uri 'self';",
+    );
+    next();
+  },
+);
 app.use(
   compression({
     filter: (req, res) => {
