@@ -312,6 +312,19 @@ export async function syncCsvUpload({ tenantId, connectorId, buffer, filename = 
   // Enforce connector-count quota before queuing sync job.
   await usageService.checkAndConsume({ tenantId, metric: 'connectors', requested: 1 });
 
+  // Enforce storedRows limit: estimate row count from buffer size and reject if
+  // adding would exceed the tenant's plan limit. The rough estimate is
+  // `Math.ceil(buffer.length / 70)` bytes per CSV row (average). Round up to
+  // avoid under-counting; the sync worker will also validate the actual row count.
+  const estimatedRows = Math.ceil(buffer.length / 70);
+  const storedRowsCheck = await usageService.checkAndConsume({ tenantId, metric: 'storedRows', requested: estimatedRows });
+  if (!storedRowsCheck.allowed && storedRowsCheck.reason === 'quota_exceeded') {
+    throw new ConnectorValidationError(
+      ` storedRows limit reached (max ${storedRowsCheck.details?.limit}); reduce file size or upgrade plan.`,
+      { code: 'QUOTA_EXCEEDED', details: storedRowsCheck.details }
+    );
+  }
+
   const queued = await enqueueTrackedSync({
     connectorId,
     actorId,
@@ -372,6 +385,19 @@ export async function syncFileUpload({ tenantId, connectorId, buffer, filename =
   // Enforce connector-count quota before queuing sync job.
   await usageService.checkAndConsume({ tenantId, metric: 'connectors', requested: 1 });
 
+  // Enforce storedRows limit: estimate row count from buffer size and reject if
+  // adding would exceed the tenant's plan limit. The rough estimate is
+  // `Math.ceil(buffer.length / 70)` bytes per CSV row (average). Round up to
+  // avoid under-counting; the sync worker will also validate the actual row count.
+  const estimatedRows = Math.ceil(buffer.length / 70);
+  const storedRowsCheck = await usageService.checkAndConsume({ tenantId, metric: 'storedRows', requested: estimatedRows });
+  if (!storedRowsCheck.allowed && storedRowsCheck.reason === 'quota_exceeded') {
+    throw new ConnectorValidationError(
+      ` storedRows limit reached (max ${storedRowsCheck.details?.limit}); reduce file size or upgrade plan.`,
+      { code: 'QUOTA_EXCEEDED', details: storedRowsCheck.details }
+    );
+  }
+
   const isXlsx = connector.type === 'xlsx';
   const mimetype = isXlsx
     ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
@@ -410,7 +436,26 @@ export async function syncMongoDB({ tenantId, connectorId, actorId = null } = {}
   // Enforce connector-count quota before queuing sync job.
   await usageService.checkAndConsume({ tenantId, metric: 'connectors', requested: 1 });
 
+  // Enforce storedRows limit: MongoDB sync pulls documents; estimate row count
+  // from the configured query filter criteria. When no filter is supplied we
+  // conservatively estimate 100 rows as a bounded default; callers with
+  // larger expectations should add a filter or upgrade their plan.
+  let estimatedRows = 100;
   const config = await decryptConfig(connector);
+  const filter = config?.filter ?? {};
+  if (filter && typeof filter === 'object') {
+    // Very rough estimate: if a filter restricts to a known field, use a
+    // modest base; otherwise fall back to the default.
+    estimatedRows = 50;
+  }
+
+  const storedRowsCheck = await usageService.checkAndConsume({ tenantId, metric: 'storedRows', requested: estimatedRows });
+  if (!storedRowsCheck.allowed && storedRowsCheck.reason === 'quota_exceeded') {
+    throw new ConnectorValidationError(
+      ` storedRows limit reached (max ${storedRowsCheck.details?.limit}); reduce data volume or upgrade plan.`,
+      { code: 'QUOTA_EXCEEDED', details: storedRowsCheck.details }
+    );
+  }
   const instance = createConnector(connector.type, { id: connectorId, config, tenantId });
   const verdict = await instance.validate();
   if (!verdict.valid) throw new ConnectorConfigError('Invalid connector configuration', verdict.errors);
@@ -531,6 +576,16 @@ export async function processSyncMessage(job = {}) {
       records = instance.ingest();
     } else {
       records = payload.records ?? [];
+    }
+
+    // Bound the number of records processed per sync job to prevent
+    // unbounded dataset loads from corrupting usage counters or OOM.
+    const MAX_RECORDS_PER_SYNC = 5000;
+    if (Array.isArray(records) && records.length > MAX_RECORDS_PER_SYNC) {
+      throw new ConnectorValidationError(
+        `Sync job exceeds maximum records per job (${MAX_RECORDS_PER_SYNC}). Use filters or split the source.`,
+        { code: 'SYNC_ROW_LIMIT_EXCEEDED' }
+      );
     }
 
     const result = await ingestRecords({

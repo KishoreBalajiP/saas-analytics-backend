@@ -225,6 +225,47 @@ export async function updateApiKey({ tenantId, keyId, actorId = null, patch = {}
   };
 }
 
+/** Rotate an API key: create a new key and revoke the existing one.
+ *  Returns the new key's secret (display once) and the old key's revocation status.
+ *
+ *  @param {Object} input
+ *  @param {string} input.tenantId
+ *  @param {string} input.keyId - the existing key to rotate
+ *  @param {string} [input.actorId] - who is performing the rotation
+ *  @param {string} [input.reason] - reason for rotation (audit)
+ *  @returns {Promise<{ newKey: { id, prefix, name, scopes, expiresAt }, oldKeyRevoked: boolean, secret: string }>}
+ */
+export async function rotateApiKey({ tenantId, keyId, actorId = null, reason = '' } = {}) {
+  // 1. Revoke the existing key.
+  await revokeApiKey({ tenantId, keyId, actorId, reason });
+
+  // 2. Create a replacement key with the same tenant, name, and scopes.
+  // We need the existing key's details; fetch them.
+  const existing = await getApiKey({ tenantId, keyId });
+  if (!existing) throw new Error('API key not found');
+
+  const newKey = await createApiKey({
+    tenantId,
+    name: existing.name,
+    scopes: existing.scopes,
+    // Default TTL; could also copy the old expiry.
+    expiresAt: null,
+    actorId,
+  });
+
+  return {
+    newKey: {
+      id: newKey.key.id,
+      prefix: newKey.key.prefix,
+      name: newKey.key.name,
+      scopes: newKey.key.scopes,
+      expiresAt: newKey.key.expiresAt,
+    },
+    oldKeyRevoked: true,
+    secret: newKey.secret,
+  };
+}
+
 export default {
   createApiKey,
   listApiKeys,
@@ -232,5 +273,6 @@ export default {
   revokeApiKey,
   authenticateApiKey,
   hasScope,
+  rotateApiKey,
   _meta: { scopes: API_KEY_SCOPES, statuses: API_KEY_STATUSES },
 };
