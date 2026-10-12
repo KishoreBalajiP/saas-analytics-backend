@@ -167,6 +167,10 @@ export const assignRole = async (adminId, roleId, { by = null, tenantId = null, 
 export const revokeRole = (adminId, roleId, { tenantId = null } = {}) =>
   AdminRole.deleteOne({ adminId, roleId, tenantId }).then((r) => r.deletedCount);
 
+/** Count currently-active super admins. Used to enforce the last-super rule. */
+export const countActiveSupers = () =>
+  Admin.countDocuments({ adminType: 'super', status: 'active' });
+
 export default {
   findById,
   findByEmail,
@@ -184,5 +188,6 @@ export default {
   listRolesForAdmin,
   assignRole,
   revokeRole,
+  countActiveSupers,
   _meta: { leanReturns: true, tenancy: 'platform' },
 };

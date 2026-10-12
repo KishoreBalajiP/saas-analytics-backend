@@ -178,7 +178,14 @@ export async function update({ id, patch = {}, by = null } = {}) {
   }
   if (Object.keys(set).length === 0) throw ApiError.badRequest('Nothing to update');
 
+  await assertNotLastActiveSuper({
+    targetId: id,
+    desiredAdminType: set.adminType,
+    actorId: by,
+  });
+
   const updated = await adminRepository.update(id, set, { by });
+  await invalidateScope(admin.tenantScope ?? null);
   return stripSecrets(updated);
 }
 
@@ -194,6 +201,11 @@ export async function update({ id, patch = {}, by = null } = {}) {
 export async function suspend({ id, by = null } = {}) {
   const admin = await adminRepository.findById(id);
   if (!admin) throw ApiError.notFound('Admin not found');
+  await assertNotLastActiveSuper({
+    targetId: id,
+    desiredStatus: 'suspended',
+    actorId: by,
+  });
   if (admin.status !== 'suspended') {
     await adminRepository.suspend(id, by);
     await sessionService.revokeAllForActor({ actorId: id, reason: 'admin_suspended' });
@@ -280,6 +292,63 @@ function stripSecrets(admin) {
   if (!admin) return admin;
   const { passwordHash, mfaSecret, ...safe } = admin;
   return safe;
+}
+
+/**
+ * Count currently-active super admins in the system. Used to enforce the
+ * "last active super admin" rule against accidental lockout.
+ *
+ * @returns {Promise<number>}
+ */
+export async function countActiveSupers() {
+  return adminRepository.countActiveSupers();
+}
+
+/**
+ * Throw if a pending mutation would leave the platform with zero active
+ * super admins. Centralised so suspend, restore, and adminType updates all
+ * share the same rule.
+ *
+ * @param {Object} opts
+ * @param {string} opts.targetId - the admin being mutated.
+ * @param {string} [opts.desiredAdminType] - new adminType if updating.
+ * @param {string} [opts.desiredStatus] - new status if changing status.
+ * @param {string} [opts.actorId] - the admin performing the mutation.
+ */
+export async function assertNotLastActiveSuper({
+  targetId,
+  desiredAdminType,
+  desiredStatus,
+  actorId = null,
+} = {}) {
+  const target = await adminRepository.findById(targetId);
+  if (!target) throw ApiError.notFound('Admin not found');
+  const willRemainActive =
+    (desiredStatus ?? target.status) !== 'suspended' &&
+    (desiredStatus ?? target.status) !== 'locked' &&
+    (desiredStatus ?? target.status) !== 'pending';
+  const willStillBeSuper = (desiredAdminType ?? target.adminType) === 'super';
+  if (!willRemainActive || !willStillBeSuper) {
+    if (target.adminType !== 'super' || target.status !== 'active') return;
+    const count = await adminRepository.countActiveSupers();
+    if (count <= 1) {
+      throw ApiError.conflict(
+        'Refusing to lock out the last active super administrator',
+        'LAST_SUPER_ADMIN',
+      );
+    }
+  }
+  if (actorId && String(actorId) === String(targetId)) {
+    if (target.adminType === 'super' && target.status === 'active') {
+      const count = await adminRepository.countActiveSupers();
+      if (count <= 1) {
+        throw ApiError.conflict(
+          'Refusing to demote the last active super administrator',
+          'LAST_SUPER_ADMIN',
+        );
+      }
+    }
+  }
 }
 
 export default {

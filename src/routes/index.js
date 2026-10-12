@@ -67,6 +67,7 @@ import externalApiRoutes from './externalApi.routes.js';
 
 // Phase 1.2 - platform management surface
 import adminAuthRoutes from './admin-auth.routes.js';
+import platformDashboardRoutes from './platform-dashboard.routes.js';
 import adminRoutes from './admin.routes.js';
 import tenantRoutes from './tenant.routes.js';
 import roleRoutes from './role.routes.js';
@@ -104,6 +105,7 @@ router.use('/external', externalApiRoutes);
 // Phase 1.2 - Platform Management surface (admin + tenant portals share
 // the same backend; RBAC differentiates the two).
 router.use('/admin-auth', adminAuthRoutes);
+router.use('/admin/dashboard', platformDashboardRoutes);
 router.use('/admin', adminRoutes);
 router.use('/tenants', tenantRoutes);
 router.use('/roles', roleRoutes);
