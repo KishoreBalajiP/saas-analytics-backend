@@ -126,6 +126,22 @@ export const adminListSchema = {
   },
 };
 
+export const reconcileSchema = {
+  query: {
+    limit: { type: 'integer', min: 1, max: 100 },
+  },
+};
+
+export const paginatedTenantParamSchema = {
+  params: {
+    tenantId: { type: 'objectId', required: true },
+  },
+  query: {
+    page: { type: 'integer', min: 1, max: 1000 },
+    limit: { type: 'integer', min: 1, max: 100 },
+  },
+};
+
 export default {
   createSchema,
   updateSchema,
@@ -136,4 +152,6 @@ export default {
   adminChangePlanSchema,
   adminSetStateSchema,
   adminListSchema,
+  reconcileSchema,
+  paginatedTenantParamSchema,
 };

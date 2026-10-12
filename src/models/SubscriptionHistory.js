@@ -30,6 +30,9 @@ export const HISTORY_TYPES = Object.freeze([
   'subscription.migrated',
   'subscription.override_applied',
   'subscription.override_revoked',
+  'subscription.payment_captured',
+  'subscription.payment_failed',
+  'subscription.payment_refunded',
 ]);
 
 const subscriptionHistorySchema = new mongoose.Schema(

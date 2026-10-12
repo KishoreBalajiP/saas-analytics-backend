@@ -18,6 +18,9 @@ import ApiError from '../utils/ApiError.js';
 import subscriptionService from '../services/subscription.service.js';
 import planService from '../services/plan.service.js';
 import { getProvider } from '../services/paymentProvider.adapter.js';
+import paymentTransactionRepository from '../repositories/paymentTransaction.repository.js';
+import billingReconcileService from '../services/billingReconcile.service.js';
+import WebhookEvent from '../models/WebhookEvent.js';
 import { emit as auditEmit } from '../services/auditLog.service.js';
 
 function actorOf(req) {
@@ -126,6 +129,79 @@ export const getTenantTimeline = asyncHandler(async (req, res) => {
   });
 });
 
+function sanitizeTransaction(txn) {
+  if (!txn) return null;
+  const { ...rest } = txn;
+  return rest;
+}
+
+export const listTransactions = asyncHandler(async (req, res) => {
+  const tenantId = ensureTenant(req.params.tenantId);
+  const { page, limit } = req.validated?.query ?? {};
+  const result = await paymentTransactionRepository.listForTenant(tenantId, {
+    page: page ?? 1,
+    limit: limit ?? 20,
+  });
+  return ApiResponse.ok(res, (result.docs ?? []).map(sanitizeTransaction), 'Payment transactions fetched', {
+    page: result.page,
+    limit: result.limit,
+    total: result.total,
+    pages: result.pages,
+  });
+});
+
+export const listWebhooks = asyncHandler(async (req, res) => {
+  const tenantId = ensureTenant(req.params.tenantId);
+  const { page = 1, limit = 20 } = req.validated?.query ?? {};
+  const txnOrderIds = new Set(
+    (await paymentTransactionRepository.listForTenant(tenantId, { page: 1, limit: 100 })).docs.map(
+      (t) => t.providerOrderId,
+    ),
+  );
+  const filter = { provider: 'razorpay' };
+  const total = await WebhookEvent.countDocuments(filter);
+  const docs = await WebhookEvent.find(filter).sort({ createdAt: -1 }).limit(200).lean();
+  // Only surface events correlated to this tenant's orders (plus
+  // unknown-order events, which need operator triage).
+  const related = docs.filter((d) => {
+    const orderId = d?.raw?.orderId ?? null;
+    if (!orderId) return true;
+    return txnOrderIds.has(orderId);
+  });
+  const safe = related.map((d) => ({
+    id: String(d._id),
+    eventId: d.eventId,
+    eventType: d.eventType,
+    processed: d.processed,
+    error: d.error ?? null,
+    processedAt: d.processedAt ?? null,
+    summary: d.raw ?? null,
+    createdAt: d.createdAt,
+  }));
+  return ApiResponse.ok(res, safe.slice((page - 1) * limit, page * limit), 'Webhook events fetched', {
+    page,
+    limit,
+    total: safe.length,
+    pages: Math.ceil(safe.length / limit),
+  });
+});
+
+export const triggerReconcile = asyncHandler(async (req, res) => {
+  const { limit } = req.validated?.query ?? {};
+  const result = await billingReconcileService.reconcilePending({
+    limit: limit ?? 25,
+    by: req.admin?.id ?? 'admin',
+  });
+  await auditEmit({
+    actor: actorOf(req),
+    action: 'billing.reconcile_triggered',
+    module: 'billing.subscriptions',
+    resource: { type: 'billing', id: 'reconcile' },
+    after: result,
+  });
+  return ApiResponse.ok(res, result, 'Reconciliation complete');
+});
+
 export default {
   listSubscriptions,
   getSubscriptionForTenant,
@@ -133,4 +209,7 @@ export default {
   adminSetState,
   createCheckoutSession,
   getTenantTimeline,
+  listTransactions,
+  listWebhooks,
+  triggerReconcile,
 };

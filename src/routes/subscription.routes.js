@@ -9,10 +9,13 @@
  *   authenticated user's tenant.
  *
  * ENDPOINTS (mounted under /tenants/:id)
+ *   - GET    /plans
  *   - GET    /subscription
  *   - GET    /subscription/timeline
  *   - POST   /subscription/cancel
  *   - POST   /subscription/change-plan
+ *   - POST   /subscription/checkout        (Razorpay order, server-priced)
+ *   - POST   /subscription/verify          (authoritative payment verify)
  *   - POST   /subscription/reactivate
  *   - GET    /entitlements
  *   - GET    /usage
@@ -25,11 +28,12 @@
  *     Owner in `tenantInitialization.service.js`).
  *   - Read endpoints require `iam.subscriptions.view` or
  *     `iam.entitlements.view` (granted to Owner and Manager).
- *   - The `POST .../checkout` endpoint is intentionally NOT here:
- *     the workspace never calls the payment provider directly. The
- *     admin change-plan / set-state endpoints are the workspace-safe
- *     mutation surface; checkout lives under `/admin/subscriptions`
- *     and is platform-only.
+ *   - `POST .../checkout` creates a Razorpay Order with server-
+ *     controlled pricing and returns only public fields (order id,
+ *     key id, amount, currency). `POST .../verify` authoritatively
+ *     verifies the payment before the lifecycle service activates
+ *     anything. Browser callbacks alone never grant entitlements.
+ *     Paid access is enforced at the entitlement resolver, not the UI.
  *   - The `ci:routes-exempt` annotation sits on the `router.<verb>(`
  *     line itself so the `check-routes` CI guard sees it inside the
  *     captured args; the file-level `authenticate` + `tenantIsolation`
@@ -81,6 +85,39 @@ router.post( // ci:routes-exempt: authenticate + tenantIsolation above
   permission('iam.subscriptions', 'update'),
   validate({ ...idParamSchema, ...subscriptionValidator.changePlanSchema }),
   subscriptionController.changePlan,
+);
+
+router.get( // ci:routes-exempt: authenticate + tenantIsolation above
+  '/plans',
+  permission('iam.subscriptions', 'view'),
+  validate(idParamSchema),
+  subscriptionController.listPurchasablePlans,
+);
+
+router.post( // ci:routes-exempt: authenticate + tenantIsolation above
+  '/subscription/checkout',
+  permission('iam.subscriptions', 'update'),
+  validate({
+    ...idParamSchema,
+    body: {
+      planId: { type: 'string', required: true, maxLength: 60 },
+    },
+  }),
+  subscriptionController.createCheckoutSession,
+);
+
+router.post( // ci:routes-exempt: authenticate + tenantIsolation above
+  '/subscription/verify',
+  permission('iam.subscriptions', 'update'),
+  validate({
+    ...idParamSchema,
+    body: {
+      razorpay_order_id: { type: 'string', required: true, maxLength: 100 },
+      razorpay_payment_id: { type: 'string', required: true, maxLength: 100 },
+      razorpay_signature: { type: 'string', required: true, maxLength: 256 },
+    },
+  }),
+  subscriptionController.verifyCheckout,
 );
 
 router.post( // ci:routes-exempt: authenticate + tenantIsolation above

@@ -26,6 +26,8 @@ import ApiResponse from '../utils/ApiResponse.js';
 import ApiError from '../utils/ApiError.js';
 import subscriptionService from '../services/subscription.service.js';
 import planService from '../services/plan.service.js';
+import billingService from '../services/billing.service.js';
+import billingPricing from '../services/billingPricing.service.js';
 
 function actorOf(req) {
   if (req.user) return { type: 'user', id: req.user.id };
@@ -142,6 +144,53 @@ export const changePlan = asyncHandler(async (req, res) => {
   return ApiResponse.ok(res, sub, 'Plan changed');
 });
 
+export const createCheckoutSession = asyncHandler(async (req, res) => {
+  const tenantId = resolveTenantId(req);
+  if (!tenantId) throw ApiError.badRequest('tenantId is required');
+  const { planId } = req.validated?.body ?? {};
+  const result = await billingService.createCheckout({
+    tenantId,
+    planCode: planId,
+    actor: actorOf(req),
+    by: attribution(req),
+  });
+  return ApiResponse.ok(res, result, result.reused ? 'Checkout resumed' : 'Checkout created');
+});
+
+export const verifyCheckout = asyncHandler(async (req, res) => {
+  const tenantId = resolveTenantId(req);
+  if (!tenantId) throw ApiError.badRequest('tenantId is required');
+  const { razorpay_order_id: orderId, razorpay_payment_id: paymentId, razorpay_signature: signature } =
+    req.validated?.body ?? {};
+  const result = await billingService.verifyCheckout({
+    tenantId,
+    orderId,
+    paymentId,
+    signature,
+    actor: actorOf(req),
+    by: attribution(req),
+  });
+  return ApiResponse.ok(res, result, 'Payment verified');
+});
+
+export const listPurchasablePlans = asyncHandler(async (req, res) => {
+  const { docs } = await planService.list({ page: 1, limit: 100 });
+  const priced = billingPricing.listPricedPlans();
+  const plans = docs
+    .filter((p) => (p.data?.status ?? 'active') === 'active')
+    .map((p) => ({
+      code: p.code,
+      name: p.name,
+      displayName: p.data?.displayName ?? p.name,
+      description: p.description ?? '',
+      tier: p.data?.tier ?? 0,
+      purchasable: billingPricing.isPurchasable(p.code),
+      price: priced[p.code] ?? null,
+    }))
+    .sort((a, b) => a.tier - b.tier);
+  return ApiResponse.ok(res, plans, 'Plans fetched');
+});
+
 export const reactivate = asyncHandler(async (req, res) => {
   const tenantId = resolveTenantId(req);
   if (!tenantId) throw ApiError.badRequest('tenantId is required');
@@ -158,5 +207,8 @@ export default {
   getTimeline,
   cancelSubscription,
   changePlan,
+  createCheckoutSession,
+  verifyCheckout,
+  listPurchasablePlans,
   reactivate,
 };

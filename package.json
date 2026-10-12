@@ -59,6 +59,7 @@
     "pino": "^9.5.0",
     "pino-pretty": "^13.0.0",
     "rate-limit-redis": "^4.3.1",
+    "razorpay": "^2.9.8",
     "socket.io": "^4.8.4",
     "ua-parser-js": "^2.0.10",
     "ulid": "^3.0.2",

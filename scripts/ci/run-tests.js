@@ -54,6 +54,12 @@ process.env.NODE_ENV = 'development';
 process.env.REDIS_URL = '';
 process.env.STORAGE_PROVIDER = 'local';
 process.env.MONGODB_URI = 'mongodb://127.0.0.1:27017/saas_analytics_test';
+// Disable rate limiting in tests to avoid flaky 429s when tests create many
+// ephemeral admin/user accounts.
+process.env.RATE_LIMIT_MAX = '10000';
+process.env.RATE_LIMIT_STRICT_MAX = '10000';
+process.env.EXTERNAL_API_RATE_LIMIT_MAX = '10000';
+process.env.EMBED_RATE_LIMIT_MAX = '10000';
 // Never allow the test process to open the developer or production SMTP
 // connection loaded from .env. Email tests use the service capture sink and
 // the noop transport instead.

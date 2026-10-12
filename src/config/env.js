@@ -238,13 +238,34 @@ const config = Object.freeze({
     port: num('SMTP_PORT', 587),
     secure: bool('MAIL_SECURE', num('SMTP_PORT', 587) === 465),
     user: str('MAIL_USER', ''),
-    password: mailPassword,
+    password: str('MAIL_PASSWORD', ''),
     from: str('MAIL_FROM', 'SaaS Analytics Platform <noreply@localhost>'),
   },
 
   scheduler: {
     enabled: bool('SCHEDULER_ENABLED', true),
     timezone: str('SCHEDULER_TIMEZONE', 'UTC'),
+  },
+
+  razorpay: {
+    enabled: bool('RAZORPAY_ENABLED', false),
+    keyId: str('RAZORPAY_KEY_ID', ''),
+    keySecret: str('RAZORPAY_KEY_SECRET', ''),
+    webhookSecret: str('RAZORPAY_WEBHOOK_SECRET', ''),
+    environment: String(str('RAZORPAY_ENVIRONMENT', 'test')).toLowerCase(),
+    planMapping: (() => {
+      const raw = str('RAZORPAY_PLAN_MAPPING_JSON', '');
+      if (!raw) return {};
+      try {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === 'object') {
+          return parsed;
+        }
+        return {};
+      } catch {
+        return {};
+      }
+    })(),
   },
 
   connectors: {
@@ -288,6 +309,10 @@ const config = Object.freeze({
     anomaly: {
       cron: str('JOB_ANOMALY_CRON', '0 * * * *'),
       enabled: bool('JOB_ANOMALY_ENABLED', false),
+    },
+    billingReconcile: {
+      cron: str('JOB_BILLING_RECONCILE_CRON', '*/15 * * * *'),
+      enabled: bool('JOB_BILLING_RECONCILE_ENABLED', false),
     },
   },
 

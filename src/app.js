@@ -80,10 +80,11 @@ app.use(cors(corsConfig));
 app.use(cookieParser());
 // Inbound webhooks are verified with an HMAC over the RAW request bytes, so
 // the webhook surface is buffered untouched BEFORE the JSON parser. This
-// middleware runs first for `/api/v1/webhooks/*`, sets `req.body` to a
-// Buffer and marks the request as parsed, which makes the `express.json`
-// below skip it for webhook calls (exact bytes preserved for signing).
+// middleware runs first for webhook paths, sets `req.body` to a Buffer and
+// marks the request as parsed, which makes `express.json` below skip it
+// (exact bytes preserved for signing).
 app.use(`${env.app.apiPrefix}/webhooks`, express.raw({ type: '*/*' }));
+app.use(`${env.app.apiPrefix}/billing/webhook`, express.raw({ type: '*/*' }));
 app.use(express.json({ limit: env.app.bodyLimit, strict: true }));
 app.use(express.urlencoded({ extended: true, limit: env.app.bodyLimit }));
 

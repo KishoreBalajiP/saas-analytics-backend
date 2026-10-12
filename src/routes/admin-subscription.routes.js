@@ -13,7 +13,10 @@
  *   - GET  /:tenantId/timeline          history (view)
  *   - POST /:tenantId/change-plan       change plan (override)
  *   - POST /:tenantId/set-state         administrative state change (override)
- *   - POST /:tenantId/checkout          provider adapter (501 in Phase 6)
+ *   - POST /:tenantId/checkout          provider adapter (501 when disabled)
+ *   - GET  /:tenantId/transactions      payment transactions (view)
+ *   - GET  /:tenantId/webhooks          correlated webhook events (view)
+ *   - POST /reconcile                   operator-triggered reconcile (override)
  *
  * SECURITY
  *   - All routes require `adminAuth` AND a `billing.subscriptions.*` key.
@@ -74,6 +77,27 @@ router.post( // ci:routes-exempt: adminAuth above
   '/:tenantId/checkout',
   permission('billing.subscriptions', 'override'),
   adminSubscriptionController.createCheckoutSession,
+);
+
+router.get( // ci:routes-exempt: adminAuth above
+  '/:tenantId/transactions',
+  permission('billing.subscriptions', 'view'),
+  validate(subscriptionValidator.tenantIdParamSchema),
+  adminSubscriptionController.listTransactions,
+);
+
+router.get( // ci:routes-exempt: adminAuth above
+  '/:tenantId/webhooks',
+  permission('billing.subscriptions', 'view'),
+  validate(subscriptionValidator.tenantIdParamSchema),
+  adminSubscriptionController.listWebhooks,
+);
+
+router.post( // ci:routes-exempt: adminAuth above
+  '/reconcile',
+  permission('billing.subscriptions', 'override'),
+  validate(subscriptionValidator.reconcileSchema),
+  adminSubscriptionController.triggerReconcile,
 );
 
 export default router;
