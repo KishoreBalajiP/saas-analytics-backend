@@ -87,6 +87,16 @@ import alertRoutes from './alert.routes.js';
 import supportRoutes from './support.routes.js';
 import invitationRoutes from './invitation.routes.js';
 
+// Phase 6 - Workspace subscription / entitlement self-service
+// (workspace auth, not the platform-admin /tenants surface).
+import subscriptionRoutes from './subscription.routes.js';
+
+// Phase 6 - Platform Admin plan / subscription / entitlement surface.
+import adminPlanRoutes from './admin-plan.routes.js';
+import adminSubscriptionRoutes from './admin-subscription.routes.js';
+import adminEntitlementRoutes from './admin-entitlement.routes.js';
+import billingWebhookRoutes from './billing-webhook.routes.js';
+
 const router = Router();
 
 // Phase 1 - retained mounts (kept first for stability)
@@ -124,5 +134,15 @@ router.use('/reports', reportRoutes);
 router.use('/alerts', alertRoutes);
 router.use('/support', supportRoutes);
 router.use('/invitations', invitationRoutes);
+
+// Phase 6 - Workspace subscription / entitlement self-service
+// (workspace auth, not the platform-admin /tenants surface).
+router.use('/tenants/:id', subscriptionRoutes);
+
+// Phase 6 - Platform Admin plan / subscription / entitlement surface.
+router.use('/admin/plans', adminPlanRoutes);
+router.use('/admin/subscriptions', adminSubscriptionRoutes);
+router.use('/admin/entitlements', adminEntitlementRoutes);
+router.use('/billing/webhook', billingWebhookRoutes);
 
 export default router;

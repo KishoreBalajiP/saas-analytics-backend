@@ -1,0 +1,139 @@
+/**
+ * Subscription repository (Phase 6 - implemented).
+ *
+ * PURPOSE
+ *   Data-access surface for the single canonical Subscription per tenant.
+ *   All write methods return lean objects and never expose internal fields
+ *   that the service should not see.
+ *
+ * RESPONSIBILITY (database access ONLY - no business logic)
+ *   - findByTenantId(tenantId)        get the current subscription
+ *   - findById(id)                    direct id lookup (admin surface)
+ *   - list({ page, limit, filter })   paginated admin list
+ *   - upsertForTenant(tenantId, doc)  idempotent create-or-update by tenantId
+ *   - update(id, patch, { by })       partial update with optimistic concurrency
+ *   - appendHistory(tenantId, entry)  append a SubscriptionHistory row
+ *   - listHistory(tenantId, opts)     paginated history (admin timeline)
+ *   - listExpiring(state, before)     background-job helper
+ *
+ * CODING GUIDELINES
+ *   - `tenantId` is the partition key; every method takes it explicitly
+ *     because `tenantScope` is intentionally not applied.
+ *   - The unique index on `tenantId` makes `upsertForTenant` safe under
+ *     concurrent calls (MongoDB serialises the index upsert).
+ *   - `update` and `upsertForTenant` use the optimisticConcurrency
+ *     plugin: callers MUST pass `{ __v }` if they have read the doc
+ *     first. A `null` match is treated as "don't care" (background
+ *     jobs / migrations).
+ */
+
+import { Subscription } from '../models/Subscription.js';
+import { SubscriptionHistory } from '../models/SubscriptionHistory.js';
+
+function safeId(id) {
+  try {
+    return typeof id === 'string' ? id : String(id);
+  } catch {
+    return null;
+  }
+}
+
+export const findByTenantId = async (tenantId) => {
+  if (!tenantId) return null;
+  return Subscription.findOne({ tenantId: safeId(tenantId) }).lean();
+};
+
+export const findById = async (id) => {
+  if (!id) return null;
+  return Subscription.findById(safeId(id)).lean();
+};
+
+export const list = async ({ page = 1, limit = 20, filter = {} } = {}) => {
+  const result = await Subscription.paginate(filter, {
+    page,
+    limit,
+    lean: true,
+    sort: { updatedAt: -1 },
+  });
+  return {
+    docs: result.docs,
+    total: result.totalDocs,
+    page: result.page,
+    limit: result.limit,
+    pages: result.totalPages,
+  };
+};
+
+/**
+ * Idempotent create-or-update by `tenantId`. The unique index on `tenantId`
+ * makes this safe under concurrent calls.
+ */
+export const upsertForTenant = async (tenantId, doc, { by = null } = {}) => {
+  if (!tenantId) throw new Error('tenantId is required');
+  const filter = { tenantId: safeId(tenantId) };
+  const update = {
+    $set: { ...doc, tenantId: safeId(tenantId), updatedBy: by },
+    $setOnInsert: { createdBy: by },
+  };
+  const options = { new: true, upsert: true, setDefaultsOnInsert: true, lean: true, runValidators: true };
+  return Subscription.findOneAndUpdate(filter, update, options);
+};
+
+/** Patch an existing subscription by id. */
+export const update = async (id, patch, { by = null, expectedVersion = null } = {}) => {
+  if (!id) return null;
+  const filter = { _id: safeId(id) };
+  if (expectedVersion !== null) filter.__v = expectedVersion;
+  const updated = await Subscription.findOneAndUpdate(
+    filter,
+    { $set: { ...patch, updatedBy: by } },
+    { new: true, runValidators: true, lean: true },
+  );
+  return updated;
+};
+
+export const appendHistory = async (tenantId, entry) => {
+  if (!tenantId) throw new Error('tenantId is required');
+  const row = {
+    tenantId: safeId(tenantId),
+    occurredAt: new Date(),
+    ...entry,
+  };
+  const created = await SubscriptionHistory.create(row);
+  return created.toObject();
+};
+
+export const listHistory = async (tenantId, { page = 1, limit = 20 } = {}) => {
+  if (!tenantId) return { docs: [], total: 0, page, limit, pages: 0 };
+  const filter = { tenantId: safeId(tenantId) };
+  const total = await SubscriptionHistory.countDocuments(filter);
+  const docs = await SubscriptionHistory.find(filter)
+    .sort({ occurredAt: -1 })
+    .skip((page - 1) * limit)
+    .limit(limit)
+    .lean();
+  return { docs, total, page, limit, pages: Math.ceil(total / limit) };
+};
+
+/** Background-job helper: list subscriptions whose grace/period end is near. */
+export const listExpiring = async ({ state, before } = {}) => {
+  if (!state || !before) return [];
+  const filter = { state };
+  if (state === 'past_due') filter.graceEndsAt = { $lte: before };
+  if (state === 'active' || state === 'trialing') {
+    filter.currentPeriodEnd = { $lte: before };
+  }
+  return Subscription.find(filter).limit(500).lean();
+};
+
+export default {
+  findByTenantId,
+  findById,
+  list,
+  upsertForTenant,
+  update,
+  appendHistory,
+  listHistory,
+  listExpiring,
+  _meta: { tenancy: 'platform', unique: ['tenantId'] },
+};
