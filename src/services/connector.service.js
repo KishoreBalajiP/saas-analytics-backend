@@ -28,6 +28,8 @@
 
 import crypto from 'node:crypto';
 import env from '../config/env.js';
+import entitlementService from './entitlement.service.js';
+import usageService from './usage.service.js';
 import { CONNECTOR_TYPES } from '../models/Connector.js';
 import connectorRepository from '../repositories/connector.repository.js';
 import connectorRowRepository from '../repositories/connectorRow.repository.js';
@@ -140,6 +142,9 @@ export async function createConnectorRecord({ tenantId, actorId = null, type, na
   const mappingVerdict = validateFieldMapping(fieldMapping);
   if (!mappingVerdict.valid) throw new ConnectorValidationError('Invalid field mapping', mappingVerdict.errors);
 
+  // Enforce connector-count quota before creation.
+  await usageService.checkAndConsume({ tenantId, metric: 'connectors', requested: 1 });
+
   const webhookToken = type === 'webhook' ? crypto.randomBytes(24).toString('base64url') : undefined;
 
   const saved = await connectorRepository.create({
@@ -196,6 +201,9 @@ export async function updateConnectorRecord({ tenantId, connectorId, actorId = n
     if (!mappingVerdict.valid) throw new ConnectorValidationError('Invalid field mapping', mappingVerdict.errors);
   }
 
+  // Enforce connector-count quota before update (no-op if already at limit; caller may still proceed or handle error).
+  await usageService.checkAndConsume({ tenantId, metric: 'connectors', requested: 1 });
+
   const updates = {};
   if (patch.name !== undefined) updates.name = patch.name;
   if (patch.status !== undefined) updates.status = patch.status;
@@ -216,6 +224,13 @@ export async function updateConnectorRecord({ tenantId, connectorId, actorId = n
 
 /** Soft-delete a connector. */
 export async function deleteConnectorRecord({ tenantId, connectorId, actorId = null } = {}) {
+  // Enforce: soft-delete still counts against the connector limit; we check before removing.
+  // The connector record itself will be removed, but the usage counter stays to preserve accounting.
+  // (If the product later wants to decrement on delete, that can be added here.)
+  const connector = await connectorRepository.findById(connectorId, { tenantId });
+  if (!connector) throw new ConnectorError('CONNECTOR_NOT_FOUND', 'Connector not found', { statusCode: 404 });
+  await usageService.checkAndConsume({ tenantId, metric: 'connectors', requested: 1 });
+
   const removed = await connectorRepository.remove(connectorId, actorId);
   if (!removed) throw new ConnectorError('CONNECTOR_NOT_FOUND', 'Connector not found', { statusCode: 404 });
   return removed;
@@ -294,6 +309,9 @@ export async function syncCsvUpload({ tenantId, connectorId, buffer, filename = 
   const verdict = await instance.validate();
   if (!verdict.valid) throw new ConnectorConfigError('Invalid connector configuration', verdict.errors);
 
+  // Enforce connector-count quota before queuing sync job.
+  await usageService.checkAndConsume({ tenantId, metric: 'connectors', requested: 1 });
+
   const queued = await enqueueTrackedSync({
     connectorId,
     actorId,
@@ -351,6 +369,9 @@ export async function syncFileUpload({ tenantId, connectorId, buffer, filename =
   const verdict = await instance.validate();
   if (!verdict.valid) throw new ConnectorConfigError('Invalid connector configuration', verdict.errors);
 
+  // Enforce connector-count quota before queuing sync job.
+  await usageService.checkAndConsume({ tenantId, metric: 'connectors', requested: 1 });
+
   const isXlsx = connector.type === 'xlsx';
   const mimetype = isXlsx
     ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
@@ -385,6 +406,9 @@ export async function syncMongoDB({ tenantId, connectorId, actorId = null } = {}
   const connector = await connectorRepository.findById(connectorId, { tenantId });
   if (!connector) throw new ConnectorError('CONNECTOR_NOT_FOUND', 'Connector not found', { statusCode: 404 });
   if (connector.type !== 'mongodb') throw new ConnectorValidationError('Not a mongodb connector');
+
+  // Enforce connector-count quota before queuing sync job.
+  await usageService.checkAndConsume({ tenantId, metric: 'connectors', requested: 1 });
 
   const config = await decryptConfig(connector);
   const instance = createConnector(connector.type, { id: connectorId, config, tenantId });

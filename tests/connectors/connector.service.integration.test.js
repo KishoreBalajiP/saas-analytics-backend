@@ -8,8 +8,11 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import mongoose from 'mongoose';
 import { useMongo } from '../helpers/index.js';
 import connectorService from '../../src/services/connector.service.js';
+import planService from '../../src/services/plan.service.js';
+import { factories } from '../helpers/factories.js';
 import connectorRepository from '../../src/repositories/connector.repository.js';
 import connectorRowRepository from '../../src/repositories/connectorRow.repository.js';
 import { computeSignature } from '../../src/modules/connectors/webhook/webhook.verify.js';
@@ -20,6 +23,11 @@ useMongo();
 const TENANT_A = 'tenant-a';
 const TENANT_B = 'tenant-b';
 const SECRET = 'integration-test-signing-secret-0001';
+
+// Tenant plan: use `pro` plan (connectors: max 10 hard) so quota enforcement
+// does not block legitimate test operations. The starter plan has max 5
+// connectors hard, which would cause test failures when previous tests have
+// already created connectors for the same tenant.
 
 /** Poll until `predicate()` is truthy or the timeout elapses. */
 async function waitFor(predicate, { timeout = 2000, interval = 10 } = {}) {
@@ -162,6 +170,38 @@ test('webhook: unknown token fails closed like a bad signature', async () => {
 });
 
 test('csv: enqueued sync streams, maps and persists rows idempotently', async () => {
+  // Ensure the plan catalogue is seeded (free, starter, pro, enterprise)
+  // so that planService.getByCode() can resolve the `pro` plan.
+  await planService.ensureDefaults();
+
+  // Ensure tenant `tenant-a` uses the `pro` plan (connectors: max 10 hard)
+  // so that quota enforcement does not block the test operations. The starter
+  // plan has max 5 connectors hard, which would cause test failures when previous
+  // tests have already created connectors for the same tenant.
+  const { ObjectId } = mongoose.Types;
+
+  // Create tenant `tenant-a` with the `pro` plan so that the entitlement
+  // service resolves the correct plan limits (connectors: max 10 hard)
+  // instead of falling back to `starter` (max 5 hard).
+  let tenant = await factories.tenant.create({ planId: 'pro', slug: 'tenant-a' });
+
+  // Ensure a subscription exists for the tenant with planId `pro`.
+  const Subscription = mongoose.model('Subscription');
+  let sub = await Subscription.findOne({ tenantId: TENANT_A });
+  if (!sub) {
+    sub = new Subscription({
+      tenantId: TENANT_A,
+      planId: 'pro',
+      state: 'active',
+      currentPeriodStart: new Date(),
+      currentPeriodEnd: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+    });
+    await sub.save();
+  } else {
+    sub.planId = 'pro';
+    await sub.save();
+  }
+
   const created = await connectorService.createConnectorRecord({
     tenantId: TENANT_A,
     type: 'csv',

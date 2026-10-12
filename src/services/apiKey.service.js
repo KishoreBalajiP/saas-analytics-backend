@@ -18,6 +18,8 @@
  */
 
 import crypto from 'node:crypto';
+import entitlementService from './entitlement.service.js';
+import usageService from './usage.service.js';
 import { generateToken, sha256, safeEqual } from '../utils/crypto.js';
 import env from '../config/env.js';
 import apiKeyRepository from '../repositories/apiKey.repository.js';
@@ -54,6 +56,9 @@ function validateScopes(scopes) {
  */
 export async function createApiKey({ tenantId, name, scopes, expiresAt = null, actorId = null } = {}) {
   validateScopes(scopes);
+
+  // Enforce apiCallsPer-day quota before key creation.
+  await usageService.checkAndConsume({ tenantId, metric: 'apiCallsPerDay', requested: 1 });
 
   const activeCount = await apiKeyRepository.countByStatus({ tenantId, status: 'active' });
   if (activeCount >= env.security.apiKeys.maxActivePerTenant) {

@@ -22,6 +22,8 @@
 
 import mongoose from 'mongoose';
 import ApiError from '../utils/ApiError.js';
+import entitlementService from './entitlement.service.js';
+import usageService from './usage.service.js';
 import reportRepository from '../repositories/report.repository.js';
 import dashboardRepository from '../repositories/dashboard.repository.js';
 import widgetRepository from '../repositories/widget.repository.js';
@@ -284,6 +286,9 @@ export async function create({
   if (typeof name !== 'string' || !name.trim()) throw ApiError.badRequest('report name is required');
   if (!REPORT_FORMATS.includes(format)) throw ApiError.badRequest('invalid report format');
   if (!REPORT_SOURCES.includes(source)) throw ApiError.badRequest('invalid report source');
+
+  // Enforce report-count quota before creation.
+  await usageService.checkAndConsume({ tenantId, metric: 'reports', requested: 1 });
 
   let resolvedQuery = null;
   if (source === 'widget') {

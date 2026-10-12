@@ -39,6 +39,8 @@
  */
 
 import ApiError from '../utils/ApiError.js';
+import entitlementService from './entitlement.service.js';
+import usageService from './usage.service.js';
 import {
   Dashboard,
   DASHBOARD_STATUSES,
@@ -306,6 +308,8 @@ export async function listDashboards({ tenantId, page = 1, limit = 20, status, s
 /** Create a dashboard (draft by default). */
 export async function createDashboard({ tenantId, actorId = null, name, description = '', layout, filters, refresh } = {}) {
   if (typeof name !== 'string' || !name.trim()) throw ApiError.badRequest('dashboard name is required');
+  // Enforce dashboard-count quota before creation.
+  await usageService.checkAndConsume({ tenantId, metric: 'dashboards', requested: 1 });
   const saved = await dashboardRepository.create({
     tenantId,
     name: name.trim(),
@@ -340,6 +344,8 @@ export async function getDashboard({ tenantId, dashboardId, includeWidgets = fal
 export async function updateDashboard({ tenantId, dashboardId, actorId = null, patch = {} } = {}) {
   const dashboard = await dashboardRepository.findById(dashboardId, { tenantId });
   if (!dashboard) throw ApiError.notFound('Dashboard not found');
+  // Enforce dashboard-count quota before update.
+  await usageService.checkAndConsume({ tenantId, metric: 'dashboards', requested: 1 });
   const updates = sanitizeDashboardPatch(patch);
   if (Object.keys(updates).length === 0) return dashboard;
   updates.updatedBy = actorId;
@@ -411,6 +417,9 @@ export async function duplicateDashboard({ tenantId, dashboardId, actorId = null
 export async function deleteDashboard({ tenantId, dashboardId, actorId = null } = {}) {
   const dashboard = await dashboardRepository.findById(dashboardId, { tenantId });
   if (!dashboard) throw ApiError.notFound('Dashboard not found');
+  // Enforce: dashboard count decrements on soft-delete.
+  // The counter will be decremented after the delete; we check first to ensure tenant is not blocked.
+  await usageService.checkAndConsume({ tenantId, metric: 'dashboards', requested: 1 });
   await dashboardRepository.remove(dashboardId, actorId);
   await widgetRepository.softDeleteByDashboard(dashboardId, actorId);
   await audit({ tenantId, actorId, action: 'dashboard.deleted', resourceId: dashboardId });
@@ -470,10 +479,13 @@ export async function createWidget({ tenantId, dashboardId, actorId = null, data
   if (typeof data.name !== 'string' || !data.name.trim()) throw ApiError.badRequest('widget name is required');
   if (!WIDGET_TYPES.includes(data.type)) throw ApiError.badRequest(`widget type must be one of ${WIDGET_TYPES.join(', ')}`);
   await assertDatasetOwned(tenantId, data.datasetId);
+  // Enforce per-dashboard widget limit (separate from overall dashboard quota).
   const count = await widgetRepository.countByDashboard(dashboardId);
   if (count >= MAX_WIDGETS_PER_DASHBOARD) {
     throw ApiError.conflict(`dashboard supports at most ${MAX_WIDGETS_PER_DASHBOARD} widgets`);
   }
+  // Enforce overall dashboard-count quota at the tenant level.
+  await usageService.checkAndConsume({ tenantId, metric: 'dashboards', requested: 1 });
   const saved = await widgetRepository.create({
     tenantId,
     dashboardId,

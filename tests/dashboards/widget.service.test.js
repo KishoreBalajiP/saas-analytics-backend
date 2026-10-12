@@ -10,6 +10,7 @@ import mongoose from 'mongoose';
 import { useMongo, resetMongo } from '../helpers/index.js';
 import * as cacheService from '../../src/services/cache.service.js';
 import * as dashboardService from '../../src/services/dashboard.service.js';
+import planService from '../../src/services/plan.service.js';
 import connectorRepository from '../../src/repositories/connector.repository.js';
 import widgetRepository from '../../src/repositories/widget.repository.js';
 
@@ -127,7 +128,51 @@ test('position is clamped into the supported grid bounds', async () => {
 });
 
 test('per-dashboard widget limit is enforced', async () => {
+  // Ensure the plan catalogue is seeded so planService.getByCode() can resolve `pro`.
+  await planService.ensureDefaults();
+
+  // Ensure tenant `tenant-a` uses the `pro` plan (dashboards: max 50 soft)
+  // so that the widget limit test works correctly with the enforced limit.
+  // The starter plan has dashboards: { max: 25, hard: true } and hardcoded
+  // MAX_WIDGETS_PER_DASHBOARD is 30, so we create 30 widgets and expect
+  // the 31st to be rejected by the per-dashboard count guard.
+  const { model } = mongoose;
+  const tenantRepo = model('Tenant');
+  let tenant = await tenantRepo.findOne({ slug: 'test-tenants' });
+  if (!tenant) {
+    tenant = new tenantRepo({
+      name: 'Test Tenant',
+      slug: 'test-tenants',
+      planId: 'pro',
+      status: 'active',
+    });
+    await tenant.save();
+  } else {
+    tenant.planId = 'pro';
+    await tenant.save();
+  }
+
+  // Also ensure the subscription has planId `pro` so the entitlement service
+  // resolves the correct plan limits instead of falling back to `starter`.
+  const Subscription = mongoose.model('Subscription');
+  let sub = await Subscription.findOne({ tenantId: TA });
+  if (!sub) {
+    sub = new Subscription({
+      tenantId: TA,
+      planId: 'pro',
+      state: 'active',
+      currentPeriodStart: new Date(),
+      currentPeriodEnd: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+    });
+    await sub.save();
+  } else {
+    sub.planId = 'pro';
+    await sub.save();
+  }
+
   const { dashboard, connector } = await seed();
+  // MAX_WIDGETS_PER_DASHBOARD is 30 (hardcoded) — create exactly the
+  // allowed number and verify the next widget is rejected.
   for (let i = 0; i < 30; i += 1) {
     await dashboardService.createWidget({
       tenantId: TA, dashboardId: String(dashboard._id),

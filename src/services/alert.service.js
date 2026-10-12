@@ -19,6 +19,8 @@
  */
 
 import ApiError from '../utils/ApiError.js';
+import entitlementService from './entitlement.service.js';
+import usageService from './usage.service.js';
 import alertRepository from '../repositories/alert.repository.js';
 import notificationRepository from '../repositories/notification.repository.js';
 import dashboardRepository from '../repositories/dashboard.repository.js';
@@ -233,6 +235,9 @@ export async function createRule({
     throw ApiError.badRequest('alert threshold is required and must be a number');
   }
   if (!ALERT_SOURCES.includes(source)) throw ApiError.badRequest('invalid alert source');
+
+  // Enforce alert-count quota before rule creation.
+  await usageService.checkAndConsume({ tenantId, metric: 'alerts', requested: 1 });
 
   let resolvedQuery = null;
   if (source === 'widget') {

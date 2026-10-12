@@ -1,5 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import env from '../config/env.js';
+import entitlementService from './entitlement.service.js';
+import usageService from './usage.service.js';
 import ApiError from '../utils/ApiError.js';
 import { hash as hashPassword } from '../utils/password.js';
 import emailService from './email.service.js';
@@ -52,6 +54,8 @@ export async function create({ tenantId, email, name = '', roleName = 'Owner', i
   if (!invitedBy) throw ApiError.badRequest('Inviter is required');
   const invitedEmail = String(email ?? '').trim().toLowerCase();
   if (!invitedEmail) throw ApiError.badRequest('Invited email is required');
+  // Enforce member-seat quota before creating an invitation.
+  await usageService.checkAndConsume({ tenantId, metric: 'members', requested: 1 });
   const existing = await invitationRepository.findPendingByEmail({ tenantId, invitedEmail });
   if (existing && existing.expiresAt > new Date()) {
     return { invitation: safeInvitation(existing), delivered: false, alreadyPending: true };
