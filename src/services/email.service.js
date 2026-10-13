@@ -24,7 +24,11 @@
  *   `send()` with a template registry.
  */
 
-import { createMailer, createNoopMailer } from './mail.transport.js';
+import {
+  createMailer,
+  createNoopMailer,
+  isDeliveryConfigured as transportIsDeliveryConfigured,
+} from './mail.transport.js';
 import logger from '../utils/logger.js';
 
 let transport = null;
@@ -97,6 +101,26 @@ export function captureInto(sink) {
  */
 export function stopCapture() {
   captureSink = null;
+}
+
+/**
+ * Whether a real transport is configured for delivery. `false` means sends
+ * are routed through the in-memory `noop` stub and nothing is delivered.
+ *
+ * @returns {boolean}
+ */
+export function isDeliveryConfigured() {
+  return transportIsDeliveryConfigured();
+}
+
+/**
+ * Whether a capture sink is installed (tests) so sends are recorded rather
+ * than delivered over the network.
+ *
+ * @returns {boolean}
+ */
+export function isCapturing() {
+  return captureSink !== null;
 }
 
 /* -------------------------------- API ----------------------------------- */
@@ -224,6 +248,8 @@ export default {
   getTransport,
   captureInto,
   stopCapture,
+  isDeliveryConfigured,
+  isCapturing,
   send,
   sendMany,
   verify,

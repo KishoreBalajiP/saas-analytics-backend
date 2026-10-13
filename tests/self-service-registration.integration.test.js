@@ -317,3 +317,107 @@ test('fresh owner completes the authenticated CSV-to-dashboard onboarding flow',
   assert.equal(resumedConnectors.json.meta.total, 1);
   assert.equal(resumedDashboards.json.meta.total, 1);
 });
+
+function tokenFromEmail(text) {
+  return new URL(text.match(/https?:\/\/[^\s]+/u)[0]).searchParams.get('token');
+}
+
+test('registration reports delivery truthfully when no mail transport is configured', async () => {
+  // Simulate a deployment with no SMTP/capture: the message must NOT be
+  // reported as sent, and the token must record why.
+  stopCapture();
+  const res = await api('/api/v1/auth/register', {
+    method: 'POST',
+    body: {
+      fullName: 'No Mail Owner',
+      email: 'no-mail@example.com',
+      password: 'Password123!',
+      workspaceName: 'No Mail Workspace',
+      workspaceSlug: 'no-mail-workspace',
+    },
+  });
+
+  assert.equal(res.status, 201);
+  assert.equal(res.json.data.verificationSent, false);
+
+  const row = await EmailVerificationToken.findOne({
+    tenantId: res.json.data.tenant.id,
+    status: 'pending',
+  }).lean();
+  assert.equal(row.deliveryStatus, 'unconfigured');
+  assert.ok(row.deliveryError);
+});
+
+test('resend issues a fresh link, invalidates the old one, and stays generic', async () => {
+  const emails = [];
+  captureInto(emails);
+  const signup = await api('/api/v1/auth/register', {
+    method: 'POST',
+    body: {
+      fullName: 'Resend Owner',
+      email: 'resend-owner@example.com',
+      password: 'Password123!',
+      workspaceName: 'Resend Workspace',
+      workspaceSlug: 'resend-workspace',
+    },
+  });
+  assert.equal(signup.status, 201);
+  const firstToken = tokenFromEmail(emails[0].text);
+
+  const resend = await api('/api/v1/auth/resend-verification', {
+    method: 'POST',
+    headers: { 'X-Tenant-Id': 'resend-workspace' },
+    body: { email: 'resend-owner@example.com' },
+  });
+  assert.equal(resend.status, 200);
+  assert.equal(resend.json.data.ok, true);
+  assert.equal(emails.length, 2);
+  const secondToken = tokenFromEmail(emails[1].text);
+  assert.notEqual(firstToken, secondToken);
+
+  const staleVerify = await api('/api/v1/auth/verify-email', {
+    method: 'POST',
+    body: { token: firstToken },
+  });
+  assert.equal(staleVerify.status, 400);
+
+  const freshVerify = await api('/api/v1/auth/verify-email', {
+    method: 'POST',
+    body: { token: secondToken },
+  });
+  assert.equal(freshVerify.status, 200);
+});
+
+test('resend requires a tenant selector and returns a generic response for unknown emails', async () => {
+  const missingTenant = await api('/api/v1/auth/resend-verification', {
+    method: 'POST',
+    body: { email: 'someone@example.com' },
+  });
+  assert.equal(missingTenant.status, 400);
+
+  const unknownEmail = await api('/api/v1/auth/resend-verification', {
+    method: 'POST',
+    headers: { 'X-Tenant-Id': 'any-workspace-slug' },
+    body: { email: 'ghost@example.com' },
+  });
+  assert.equal(unknownEmail.status, 200);
+  assert.equal(unknownEmail.json.data.ok, true);
+});
+
+test('resend is throttled per account regardless of existence', async () => {
+  const headers = { 'X-Tenant-Id': 'throttle-workspace' };
+  const first = await api('/api/v1/auth/resend-verification', {
+    method: 'POST',
+    headers,
+    body: { email: 'throttle@example.com' },
+  });
+  assert.equal(first.status, 200);
+
+  const second = await api('/api/v1/auth/resend-verification', {
+    method: 'POST',
+    headers,
+    body: { email: 'throttle@example.com' },
+  });
+  assert.equal(second.status, 429);
+  assert.equal(second.json.code, 'RATE_LIMITED');
+});

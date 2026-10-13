@@ -19,6 +19,18 @@ const emailVerificationTokenSchema = new mongoose.Schema(
     status: { type: String, enum: ['pending', 'used', 'expired'], default: 'pending', index: true },
     expiresAt: { type: Date, required: true, index: { expires: 0 } },
     usedAt: { type: Date, default: null },
+    // Delivery truth: whether the verification email actually left the
+    // process. `unconfigured` means no mail transport is available (the
+    // message was never sent), `failed` means the provider rejected it.
+    // This is persisted so operators can tell "user never received" apart
+    // from "user did not click the link".
+    deliveryStatus: {
+      type: String,
+      enum: ['pending', 'sent', 'failed', 'unconfigured'],
+      default: 'pending',
+    },
+    deliveryError: { type: String, default: null },
+    lastSentAt: { type: Date, default: null },
   },
   { timestamps: true },
 );

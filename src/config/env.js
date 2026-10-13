@@ -158,11 +158,20 @@ const config = Object.freeze({
       accessTokenTtl: str('JWT_ACCESS_TTL', '15m'),
       refreshTokenTtl: str('JWT_REFRESH_TTL', '30d'),
       cookieName: str('AUTH_COOKIE_NAME', 'saas_session'),
-      cookieSameSite: str('AUTH_COOKIE_SAMESITE', 'Lax'),
+      // A deployed SPA and API almost always live on different sites (e.g.
+      // vercel.app + onrender.com). A `Lax` cookie is NOT sent on those
+      // cross-site refreshes, silently logging users out on reload, so the
+      // production default is `None` (which requires `COOKIE_SECURE=true`).
+      // Development keeps `Lax` because localhost is same-site over http.
+      cookieSameSite: str('AUTH_COOKIE_SAMESITE', isProduction ? 'None' : 'Lax'),
       loginMaxAttempts: num('LOGIN_MAX_ATTEMPTS', 5),
       loginLockoutMs: num('LOGIN_LOCKOUT_MS', 15 * 60 * 1000),
       passwordResetTokenTtlMs: num('PASSWORD_RESET_TTL_MS', 15 * 60 * 1000),
       passwordResetTokenLength: num('PASSWORD_RESET_TOKEN_LENGTH', 32),
+      // Email-verification link lifetime and the minimum gap between two
+      // resend requests for the same account (anti-spam + anti-abuse).
+      verificationTokenTtlMs: num('EMAIL_VERIFICATION_TTL_MS', 15 * 60 * 1000),
+      verificationResendCooldownMs: num('EMAIL_VERIFICATION_RESEND_COOLDOWN_MS', 60 * 1000),
       mfaIssuer: str('MFA_ISSUER', 'saas-analytics'),
     },
     rateLimit: {
@@ -363,6 +372,9 @@ if (isProduction) {
     invalid.push('MAIL_PROVIDER=smtp, SMTP_HOST, and MAIL_PASSWORD');
   }
   if (!config.security.cookieSecure) invalid.push('COOKIE_SECURE=true');
+  if (config.security.auth.cookieSameSite.toLowerCase() === 'none' && !config.security.cookieSecure) {
+    invalid.push('COOKIE_SECURE=true (required when AUTH_COOKIE_SAMESITE=None)');
+  }
   if (!config.cors.clientUrl || /localhost|127\.0\.0\.1/i.test(config.cors.clientUrl)) invalid.push('CLIENT_URL');
   if (config.cors.origins.includes('*') || config.cors.origins.some((origin) => /localhost|127\.0\.0\.1/i.test(origin))) {
     invalid.push('CORS_ORIGINS without localhost or wildcard');
@@ -409,6 +421,21 @@ if (isProduction) {
         .join(', ')}. ` +
         'Replace these with the deployed frontend domain before the final Render deployment, ' +
         'otherwise browser CORS and Socket.IO connections will be rejected.',
+    );
+  }
+
+  // Cross-site refresh symptom: when the SPA and API are on different
+  // registrable domains, a SameSite=Lax/Strict cookie is dropped on the
+  // /auth/refresh XHR, so users are logged out on every reload. Flag the
+  // misconfiguration loudly rather than letting it fail silently.
+  const sameSite = config.security.auth.cookieSameSite.toLowerCase();
+  if (sameSite !== 'none') {
+    /* eslint-disable-next-line no-console */
+    console.warn(
+      `[config] WARNING: AUTH_COOKIE_SAMESITE=${config.security.auth.cookieSameSite} in production. ` +
+        'If the frontend and API are on different sites, the refresh cookie will not be sent ' +
+        'cross-site and users will be signed out on reload. Set AUTH_COOKIE_SAMESITE=None ' +
+        '(with COOKIE_SECURE=true) for cross-site deployments.',
     );
   }
 }

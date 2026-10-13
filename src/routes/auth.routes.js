@@ -11,6 +11,9 @@
  *   - POST /logout              revoke the current session
  *   - POST /password/forgot     request a reset link (rate-limited)
  *   - POST /password/reset      complete the reset with the emailed token
+ *   - POST /register            public self-service signup (email verification required)
+ *   - POST /verify-email        consume a stateless verification token
+ *   - POST /resend-verification re-issue a verification link (throttled, generic)
  *   - GET  /me                  current tenant user profile (authenticated)
  *
  * SECURITY
@@ -38,6 +41,7 @@ import {
   resetPasswordSchema,
   registerSchema,
   verifyEmailSchema,
+  resendVerificationSchema,
 } from '../validators/auth.validator.js';
 import { userAuthController } from '../modules/iam/auth/auth.controller.js';
 import { userPasswordController } from '../modules/iam/auth/password.controller.js';
@@ -94,6 +98,13 @@ router.post(
   strictLimiter,
   validateRequest(verifyEmailSchema),
   userAuthController.verifyEmail,
+);
+
+router.post(
+  '/resend-verification', // ci:routes-exempt: public, throttled; generic response (no enumeration)
+  strictLimiter,
+  validateRequest(resendVerificationSchema),
+  userAuthController.resendVerification,
 );
 
 // Authenticated surface.

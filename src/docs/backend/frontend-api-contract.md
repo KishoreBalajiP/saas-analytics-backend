@@ -94,10 +94,10 @@ All endpoints mounted under `/auth`. All public credential endpoints are `strict
   }
 }
 ```
-- **Side effect:** `Set-Cookie: saas_session=<refreshToken>; HttpOnly; Secure; SameSite=Lax; Max-Age=2592000`
-- **Errors:** 401 invalid credentials (generic), 403 tenant not active, 422 validation failed, 429 too many attempts, 423 account locked
+- **Side effect:** `Set-Cookie: saas_session=<refreshToken>; HttpOnly; Secure; SameSite=<AUTH_COOKIE_SAMESITE>; Max-Age=2592000`
+- **Errors:** 401 invalid credentials (generic, code `UNAUTHORIZED`), 403 `EMAIL_NOT_VERIFIED` (unverified owner), 403 `TENANT_NOT_ACTIVE`, 403 `ACCOUNT_SUSPENDED`, 422 validation failed, 429 too many attempts, 423 account locked
 - **Permission:** none (public)
-- **Frontend notes:** store `accessToken` in memory; backend sets refresh as HttpOnly cookie. Use the cookie for `/auth/refresh` automatically.
+- **Frontend notes:** store `accessToken` in memory; backend sets refresh as HttpOnly cookie. Use the cookie for `/auth/refresh` automatically. On `403 EMAIL_NOT_VERIFIED`, guide the user to resend verification (see below) rather than treating it as a bad password.
 
 ### `POST /auth/refresh`
 - **Authentication:** refresh token via `Cookie: saas_session=…` OR `body.refreshToken`
@@ -136,6 +136,27 @@ All endpoints mounted under `/auth`. All public credential endpoints are `strict
 - **Headers:** `X-Tenant-Id`
 - **Request:** `{ "token": "...", "newPassword": "string >= 8 chars" }`
 - **Response 200:** `{ ok: true }`; revokes all sessions for the user.
+
+### `POST /auth/register`
+- **Authentication:** none (public, throttled)
+- **Request:** `{ "fullName", "email", "password" (>= 8), "workspaceName", "workspaceSlug"? }`
+- **Response 201 `data`:** `{ ok, email, verificationSent, tenant: { id, name, slug, status, onboardingStatus }, owner: { id, name } }`
+- **Delivery truth:** `verificationSent` is `true` ONLY when the mail transport actually accepted the message. When no mail transport is configured it is `false` and the token is marked `unconfigured` server-side; the client must not claim an email was sent.
+- **Errors:** 409 `WORKSPACE_SLUG_TAKEN` (workspace URL in use - guide to sign in / resend), 422 validation failed, 429 throttled
+- **Frontend notes:** registration never signs the user in; the account stays `unverified` until the emailed token is consumed. A failed final step is rolled back (no orphan workspace), so retrying is safe.
+
+### `POST /auth/verify-email`
+- **Authentication:** none (stateless emailed token)
+- **Request:** `{ "token": "..." }`
+- **Response 200 `data`:** `{ ok, verified, email, tenant: { id, name, slug, status, onboardingStatus } }`
+- **Errors:** 400 invalid/expired/used token, 403 workspace suspended/not eligible
+
+### `POST /auth/resend-verification`
+- **Authentication:** none (public, throttled)
+- **Headers:** `X-Tenant-Id: <tenantSlug>` (required)
+- **Request:** `{ "email": "user@example.com" }`
+- **Response 200:** always `{ ok: true }` (no enumeration). A new link is only issued for an account still `unverified`.
+- **Errors:** 429 `RATE_LIMITED` (resend cooldown; independent of account existence)
 
 ---
 

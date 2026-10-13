@@ -49,6 +49,26 @@ function resolveType() {
 }
 
 /**
+ * Expose the effective transport type so callers can tell real delivery
+ * (SMTP) apart from the in-memory `noop` stub. Feature code must use this to
+ * avoid reporting a message as "sent" when nothing left the process.
+ *
+ * @returns {string} transport type (`smtp` | `noop`).
+ */
+export function getTransportType() {
+  return resolveType();
+}
+
+/**
+ * Whether a real, configurable transport is available for delivery.
+ *
+ * @returns {boolean} true only when SMTP is fully configured.
+ */
+export function isDeliveryConfigured() {
+  return resolveType() === TRANSPORT_TYPES.SMTP;
+}
+
+/**
  * Create a `nodemailer` transport for the configured provider.
  *
  * @returns {object} nodemailer transport.
@@ -87,4 +107,10 @@ export function createNoopMailer() {
   return { transport, sent };
 }
 
-export default { createMailer, createNoopMailer, TRANSPORT_TYPES };
+export default {
+  createMailer,
+  createNoopMailer,
+  getTransportType,
+  isDeliveryConfigured,
+  TRANSPORT_TYPES,
+};

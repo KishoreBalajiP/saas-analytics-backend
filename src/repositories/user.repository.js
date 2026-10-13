@@ -81,6 +81,13 @@ export const create = async (data) => {
   return doc.toObject();
 };
 
+/**
+ * Hard-delete a user. Reserved for registration rollback of a freshly
+ * created account whose workspace never finished provisioning - normal
+ * deletions must go through `softDelete`.
+ */
+export const hardDelete = (id) => User.findByIdAndDelete(id);
+
 /** Suspend a user inside a tenant. Returns the updated doc or null. */
 export const suspend = (id, tenantId, by) =>
   User.findOneAndUpdate(
@@ -125,6 +132,7 @@ export default {
   setLockedUntil,
   touchLastLogin,
   softDelete,
+  hardDelete,
   list,
   create,
   suspend,

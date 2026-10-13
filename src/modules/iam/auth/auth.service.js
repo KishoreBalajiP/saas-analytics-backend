@@ -29,6 +29,7 @@
 
 import env from '../../../config/env.js';
 import ApiError from '../../../utils/ApiError.js';
+import { ERROR_CODES } from '../../../config/constants.js';
 import { createChildLogger } from '../../../utils/logger.js';
 import { hash as hashPassword, verify as verifyPassword } from '../../../utils/password.js';
 import { sign as signJwt, parseExpiresIn, JWT_AUDIENCES } from '../../../utils/jwt.js';
@@ -40,6 +41,7 @@ import loginAttemptRepository from '../../../repositories/loginAttempt.repositor
 import sessionService from './session.service.js';
 import mfaService from './mfa.service.js';
 import emailVerificationService from '../../../services/emailVerification.service.js';
+import emailVerificationTokenRepository from '../../../repositories/emailVerificationToken.repository.js';
 import tenantInitializationService from '../../../services/tenantInitialization.service.js';
 
 const logger = createChildLogger({ module: 'services/auth' });
@@ -153,11 +155,15 @@ export async function login({
 
   if (account.status === 'suspended') {
     await recordAttempt({ ...attemptMeta, actorId, success: false, reason: 'suspended' });
-    throw ApiError.forbidden('Account is suspended');
+    const err = ApiError.forbidden('Account is suspended');
+    err.code = ERROR_CODES.ACCOUNT_SUSPENDED;
+    throw err;
   }
   if (account.status === 'unverified') {
     await recordAttempt({ ...attemptMeta, actorId, success: false, reason: 'email_unverified' });
-    throw ApiError.forbidden('Email verification required');
+    const err = ApiError.forbidden('Email verification required');
+    err.code = ERROR_CODES.EMAIL_NOT_VERIFIED;
+    throw err;
   }
 
   // Tenant gate: only `active` tenants may authenticate. A missing tenant
@@ -172,7 +178,9 @@ export async function login({
     }
     if (tenant.status !== 'active') {
       await recordAttempt({ ...attemptMeta, actorId, success: false, reason: 'tenant_not_active' });
-      throw ApiError.forbidden('Tenant is not active');
+      const err = ApiError.forbidden('Tenant is not active');
+      err.code = ERROR_CODES.TENANT_NOT_ACTIVE;
+      throw err;
     }
   }
   if (account.status === 'locked' || isLockedOut(account)) {
@@ -498,6 +506,16 @@ function slugify(value) {
     .slice(0, 50) || 'workspace';
 }
 
+/**
+ * A workspace URL collision. Carries a machine code so the client can guide
+ * the user to sign in / resend verification instead of showing a dead end.
+ */
+function slugTakenError() {
+  const err = ApiError.conflict('This workspace URL is already taken');
+  err.code = ERROR_CODES.WORKSPACE_SLUG_TAKEN;
+  return err;
+}
+
 export async function register({ fullName, email, password, workspaceName, workspaceSlug }) {
   const normalizedName = String(fullName ?? '').trim();
   const normalizedEmail = String(email ?? '').trim().toLowerCase();
@@ -520,7 +538,7 @@ export async function register({ fullName, email, password, workspaceName, works
   const slug = slugify(workspaceSlug || normalizedWorkspaceName);
   const existingTenant = await tenantRepository.findBySlug(slug);
   if (existingTenant) {
-    throw ApiError.conflict('This workspace URL is already taken');
+    throw slugTakenError();
   }
 
   const passwordHash = await hashPassword(normalizedPassword);
@@ -535,7 +553,7 @@ export async function register({ fullName, email, password, workspaceName, works
       createdBy: 'public-signup',
     });
   } catch (error) {
-    if (error?.code === 11000) throw ApiError.conflict('This workspace URL is already taken');
+    if (error?.code === 11000) throw slugTakenError();
     throw error;
   }
 
@@ -551,16 +569,38 @@ export async function register({ fullName, email, password, workspaceName, works
     });
   } catch (error) {
     await tenantRepository.deleteUninitialized(tenant._id);
-    if (error?.code === 11000) throw ApiError.conflict('This workspace URL is already taken');
+    if (error?.code === 11000) throw slugTakenError();
     throw error;
   }
 
-  const verification = await emailVerificationService.create({
-    tenantId: String(tenant._id),
-    userId: String(user._id),
-    email: normalizedEmail,
-    name: normalizedName,
-  });
+  // Issuing the verification token is the last provisioning step. If it
+  // fails we must roll the workspace back to a clean state, otherwise the
+  // owner is stranded: the tenant + user exist but no link was created, and
+  // a retry hits a 409 because the slug is now taken.
+  let verification;
+  try {
+    verification = await emailVerificationService.create({
+      tenantId: String(tenant._id),
+      userId: String(user._id),
+      email: normalizedEmail,
+      name: normalizedName,
+    });
+  } catch (error) {
+    try {
+      await emailVerificationTokenRepository.deleteByUser({
+        tenantId: String(tenant._id),
+        userId: String(user._id),
+      });
+      await userRepository.hardDelete(user._id);
+      await tenantRepository.deleteUninitialized(tenant._id);
+    } catch (cleanupError) {
+      logger.error(
+        { err: { message: cleanupError?.message } },
+        'registration rollback failed; orphaned workspace may remain',
+      );
+    }
+    throw error;
+  }
 
   return {
     ok: true,
@@ -578,6 +618,22 @@ export async function register({ fullName, email, password, workspaceName, works
       name: normalizedName,
     },
   };
+}
+
+/**
+ * Re-send a verification email to an unverified workspace owner.
+ *
+ * `tenantIdentifier` may be a workspace slug (from `X-Tenant-Id`) or a
+ * tenant id. The response is always generic so it cannot be used to probe
+ * which emails have accounts.
+ *
+ * @param {Object} params
+ * @param {string} params.tenantIdentifier
+ * @param {string} params.email
+ * @returns {Promise<{ ok: true }>}
+ */
+export async function resendVerification({ tenantIdentifier, email }) {
+  return emailVerificationService.resend({ tenantIdentifier, email });
 }
 
 export async function verifyEmail({ token }) {
@@ -599,6 +655,7 @@ export async function verifyEmail({ token }) {
 export default {
   login,
   register,
+  resendVerification,
   verifyEmail,
   refresh,
   logout,

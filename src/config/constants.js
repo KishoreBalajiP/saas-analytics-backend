@@ -47,6 +47,13 @@ export const ERROR_CODES = Object.freeze({
   INTERNAL_ERROR: 'INTERNAL_ERROR',
   NOT_IMPLEMENTED: 'NOT_IMPLEMENTED',
   SERVICE_UNAVAILABLE: 'SERVICE_UNAVAILABLE',
+  // Auth-specific codes the frontend branches on for precise UX. The HTTP
+  // status alone cannot distinguish "wrong password" from "email not
+  // verified" from "workspace URL taken".
+  EMAIL_NOT_VERIFIED: 'EMAIL_NOT_VERIFIED',
+  ACCOUNT_SUSPENDED: 'ACCOUNT_SUSPENDED',
+  TENANT_NOT_ACTIVE: 'TENANT_NOT_ACTIVE',
+  WORKSPACE_SLUG_TAKEN: 'WORKSPACE_SLUG_TAKEN',
 });
 
 /** Pagination defaults for future list endpoints. */

@@ -99,6 +99,15 @@ export const verifyEmailSchema = {
 };
 
 /** @type {import('../index.js').Schema} */
+export const resendVerificationSchema = {
+  body: {
+    email: 'email|required',
+  },
+  params: {},
+  query: {},
+};
+
+/** @type {import('../index.js').Schema} */
 export const mfaVerifySchema = {
   body: {
     code: { ...mfaToken, required: true },
@@ -115,6 +124,7 @@ export default {
   resetPasswordSchema,
   registerSchema,
   verifyEmailSchema,
+  resendVerificationSchema,
   mfaVerifySchema,
   _meta: { sprint: '1 - auth validators implemented' },
 };

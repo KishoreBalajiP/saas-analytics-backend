@@ -141,6 +141,19 @@ export function createAuthController(portal) {
       const result = await authService.verifyEmail({ token });
       return ApiResponse.ok(res, result, 'Email verified successfully');
     }),
+
+    resendVerification: asyncHandler(async (req, res) => {
+      const { email } = req.validated.body;
+      const result = await authService.resendVerification({
+        tenantIdentifier: null,
+        email,
+      });
+      return ApiResponse.ok(
+        res,
+        result,
+        'If an unverified account exists for that email, a new verification link has been sent.',
+      );
+    }),
   };
 }
 
