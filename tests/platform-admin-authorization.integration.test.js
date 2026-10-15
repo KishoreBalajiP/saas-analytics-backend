@@ -19,6 +19,7 @@ import { startHttp, stopHttp, api } from './helpers/http.js';
 import { factories } from './helpers/factories.js';
 import { shortToken } from '../src/utils/id.js';
 import adminService from '../src/services/admin.service.js';
+import adminBootstrapService from '../src/services/adminBootstrap.service.js';
 import roleService from '../src/services/role.service.js';
 import permissionService from '../src/services/permission.service.js';
 import rbacCache from '../src/services/rbac.cache.service.js';
@@ -122,6 +123,41 @@ describe('Platform Admin Authorization Foundation', () => {
     });
     const res = await api('/api/v1/admin/admins', { headers: bearer(token) });
     assert.equal(res.status, 200);
+  });
+
+  test('bootstrapped super admin receives platform permissions and can open dashboard', async () => {
+    const created = await adminBootstrapService.bootstrapAdmin({
+      email: 'bootstrap-super@example.test',
+      password: PASSWORD,
+      adminType: 'super',
+    });
+    const login = await api('/api/v1/admin-auth/login', {
+      method: 'POST',
+      body: { email: created.admin.email, password: PASSWORD },
+    });
+    assert.equal(login.status, 200);
+    const token = login.json.data.accessToken;
+
+    const me = await api('/api/v1/admin-auth/me', { headers: bearer(token) });
+    assert.equal(me.status, 200);
+    assert.equal(me.json.data.type, 'super');
+    assert.ok(me.json.data.roles.includes('super'));
+    assert.ok(me.json.data.permissions.includes('iam.tenants.view'));
+
+    const dashboard = await api('/api/v1/admin/dashboard/summary', { headers: bearer(token) });
+    assert.equal(dashboard.status, 200);
+  });
+
+  test('dashboard summary rejects unauthenticated and tenant-user requests', async () => {
+    const anonymous = await api('/api/v1/admin/dashboard/summary');
+    assert.equal(anonymous.status, 401);
+
+    const { token, loginStatus } = await createTenantAndUser();
+    if (loginStatus !== 200 || !token) {
+      assert.fail('tenant fixture must be able to authenticate');
+    }
+    const tenant = await api('/api/v1/admin/dashboard/summary', { headers: bearer(token) });
+    assert.equal(tenant.status, 401);
   });
 
   test('platform admin can list tenants with view permission', async () => {

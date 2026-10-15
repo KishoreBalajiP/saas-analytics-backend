@@ -43,6 +43,8 @@ import mfaService from './mfa.service.js';
 import emailVerificationService from '../../../services/emailVerification.service.js';
 import emailVerificationTokenRepository from '../../../repositories/emailVerificationToken.repository.js';
 import tenantInitializationService from '../../../services/tenantInitialization.service.js';
+import permissionService from '../../../services/permission.service.js';
+import roleService from '../../../services/role.service.js';
 
 const logger = createChildLogger({ module: 'services/auth' });
 const AUTH = env.security.auth;
@@ -371,10 +373,24 @@ export async function getProfile({ portal, actorId }) {
   if (!cfg) throw ApiError.badRequest('Unknown portal');
   const account = await cfg.findById(actorId);
   if (!account) throw ApiError.notFound('Account not found');
+  const adminAccess = portal === 'admin'
+    ? await Promise.all([
+        roleService.resolveActorRoles({ actorType: 'admin', actorId, tenantId: null }),
+        permissionService.resolveActorPermissions({ actorType: 'admin', actorId, tenantId: null }),
+      ])
+    : null;
+
   return {
     ...buildActorSummary(account),
     ...(portal === 'admin'
-      ? { type: account.adminType, mfaEnabled: Boolean(account.mfaEnabled), tenantScope: account.tenantScope ?? null }
+      ? {
+          type: account.adminType,
+          adminType: account.adminType,
+          roles: adminAccess[0],
+          permissions: adminAccess[1],
+          mfaEnabled: Boolean(account.mfaEnabled),
+          tenantScope: account.tenantScope ?? null,
+        }
       : { tenantId: account.tenantId ?? null }),
   };
 }
