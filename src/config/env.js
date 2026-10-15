@@ -114,6 +114,12 @@ if (!['argon2', 'scrypt'].includes(kdf)) {
 
 /* --------------------------- configuration object ------------------------ */
 
+const clientUrl = str('CLIENT_URL', 'http://localhost:3000');
+const corsOrigins = list('CORS_ORIGINS', []).length ? list('CORS_ORIGINS', []) : [clientUrl];
+const socketCorsOrigins = list('SOCKET_CORS_ORIGIN', []).length
+  ? list('SOCKET_CORS_ORIGIN', [])
+  : corsOrigins;
+
 const config = Object.freeze({
   app: {
     name: str('APP_NAME', 'SaaS Analytics Platform'),
@@ -143,10 +149,8 @@ const config = Object.freeze({
   },
 
   cors: {
-    origins: list('CORS_ORIGINS', []).length
-      ? list('CORS_ORIGINS', [])
-      : [str('CLIENT_URL', 'http://localhost:3000')],
-    clientUrl: str('CLIENT_URL', 'http://localhost:3000'),
+    origins: corsOrigins,
+    clientUrl,
   },
 
   security: {
@@ -212,7 +216,7 @@ const config = Object.freeze({
   },
 
   socket: {
-    corsOrigins: list('SOCKET_CORS_ORIGIN', ['http://localhost:3000']),
+    corsOrigins: socketCorsOrigins,
     pingIntervalMs: num('SOCKET_PING_INTERVAL_MS', 25000),
     pingTimeoutMs: num('SOCKET_PING_TIMEOUT_MS', 20000),
     maxHttpBufferSize: num('SOCKET_MAX_HTTP_BUFFER_SIZE', 1000000),
@@ -377,10 +381,10 @@ if (isProduction) {
   }
   if (!config.cors.clientUrl || /localhost|127\.0\.0\.1/i.test(config.cors.clientUrl)) invalid.push('CLIENT_URL');
   if (config.cors.origins.includes('*') || config.cors.origins.some((origin) => /localhost|127\.0\.0\.1/i.test(origin))) {
-    invalid.push('CORS_ORIGINS without localhost or wildcard');
+    invalid.push('CORS_ORIGINS must be a real origin (no localhost or wildcard)');
   }
   if (config.socket.corsOrigins.includes('*') || config.socket.corsOrigins.some((origin) => /localhost|127\.0\.0\.1/i.test(origin))) {
-    invalid.push('SOCKET_CORS_ORIGIN without localhost or wildcard');
+    invalid.push('SOCKET_CORS_ORIGIN must be a real origin (no localhost or wildcard)');
   }
   // Razorpay: when enabled in production, all credentials must be present
   // and the environment must be explicit. The plan mapping must contain at
