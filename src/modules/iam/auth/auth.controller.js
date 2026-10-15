@@ -24,6 +24,7 @@
 import env from '../../../config/env.js';
 import asyncHandler from '../../../utils/asyncHandler.js';
 import ApiResponse from '../../../utils/ApiResponse.js';
+import ApiError from '../../../utils/ApiError.js';
 import { createChildLogger } from '../../../utils/logger.js';
 import { parseExpiresIn } from '../../../utils/jwt.js';
 import authService from './auth.service.js';
@@ -144,8 +145,10 @@ export function createAuthController(portal) {
 
     resendVerification: asyncHandler(async (req, res) => {
       const { email } = req.validated.body;
+      const tenantIdentifier = req.headers?.['x-tenant-id'];
+      if (!tenantIdentifier) throw ApiError.badRequest('Workspace slug is required');
       const result = await authService.resendVerification({
-        tenantIdentifier: null,
+        tenantIdentifier,
         email,
       });
       return ApiResponse.ok(

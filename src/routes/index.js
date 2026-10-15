@@ -86,6 +86,7 @@ import reportRoutes from './report.routes.js';
 import alertRoutes from './alert.routes.js';
 import supportRoutes from './support.routes.js';
 import invitationRoutes from './invitation.routes.js';
+import accessRequestRoutes from './access-request.routes.js';
 
 // Phase 6 - Workspace subscription / entitlement self-service
 // (workspace auth, not the platform-admin /tenants surface).
@@ -134,6 +135,7 @@ router.use('/reports', reportRoutes);
 router.use('/alerts', alertRoutes);
 router.use('/support', supportRoutes);
 router.use('/invitations', invitationRoutes);
+router.use('/access-requests', accessRequestRoutes);
 
 // Phase 6 - Workspace subscription / entitlement self-service
 // (workspace auth, not the platform-admin /tenants surface).
