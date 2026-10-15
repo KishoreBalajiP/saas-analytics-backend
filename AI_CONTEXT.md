@@ -37,6 +37,12 @@ Phase 4+.
 **Status convention** used everywhere: `Implemented` / `Partial` /
 `Stub (fail-closed)` / `Planned` / `Future`. Never paraphrase these labels.
 
+**Audit reconciliation (2026-10-15):** The current repository has completed
+Sprints 0–9. Use `src/docs/STATUS.md` as the canonical implementation status;
+the historical Sprint 7/Sprint 8 text below is retained as context only.
+The verified baseline is 561 passing backend tests, 5/5 CI guards, and two
+moderate transitive `npm audit --omit=dev` findings under `exceljs`.
+
 ---
 
 ## 2. Current Status
@@ -45,11 +51,11 @@ Phase 4+.
 | --- | --- |
 | Current version | `1.0.0` |
 | Current phase | Phase 2 — Implementation |
-| Current sprint | Sprint 7 — Reports, Alerts, Notifications & Scheduling (complete) |
-| Next sprint | Sprint 8 — Monitoring + Support (planned; includes the originally-planned Governance surfaces) |
-| Current progress | ~80 % of Phase 2 |
-| Last completed milestone | Sprint 7 close — reports (CRUD + scheduled run + JSON/CSV/XLSX export + history), alerts (CRUD + real-engine evaluation + events + cooldown + notifications), notifications inbox. 367 tests pass, 5/5 CI guards green, 0 npm audit vulns. |
-| Next milestone | Sprint 8 — Monitoring + Support + Governance surfaces (`/access-logs/*`, `/compliance/*`, `AuditLog` consumer, scheduler tick) |
+| Current sprint | Sprint 9 — External API + API Keys + Embed + Product Delivery (complete) |
+| Next sprint | Phase 3 — Enterprise features (future) |
+| Current progress | 100% of Phase 2 implementation scope |
+| Last completed milestone | Sprint 9 close — external API, tenant-scoped API keys, embed tokens, XLSX/MongoDB connectors, governance, monitoring, and support. 561 tests pass, 5/5 CI guards green. |
+| Next milestone | Phase 3 enterprise planning and approved hardening work |
 
 Facts as of Sprint 6 close:
 
@@ -89,8 +95,9 @@ Facts as of Sprint 6 close:
   (404 unknown, 400 foreign/deleted dataset). `/dashboards/*` sits behind
   `permission('dashboards', …)`; running a widget also needs
   `analytics.view`.
-- `npm test` → **367 pass, 0 fail**. `npm run ci:guards` → 5/5 green.
-  `npm audit` → 0 vulnerabilities.
+- `npm test` → **561 pass, 0 fail**. `npm run ci:guards` → 5/5 green.
+  `npm audit --omit=dev` reports 2 moderate transitive `uuid` findings under
+  `exceljs`; remediation requires a compatibility review.
 - The next work is **Sprint 8 — Monitoring + Support** (the originally-
   planned Governance surfaces — `/access-logs/*`, `/compliance/*`,
   `AuditLog` consumer — are pulled into Sprint 8 alongside the

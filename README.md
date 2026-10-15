@@ -172,6 +172,10 @@ database; this repository does not perform that mutation automatically.
 
 ## Sprint Status
 
+The current repository implements Sprints 0–9. `src/docs/STATUS.md` is the
+canonical implementation inventory; Phase 3 enterprise capabilities remain
+future work.
+
 Sprint 0 ships shared infrastructure; Sprints 1–3 ship authentication,
 IAM/RBAC and multi-tenancy; Sprint 4 ships the Connector Platform;
 Sprint 5 ships the Analytics Engine + Master Data; Sprint 6 ships
@@ -188,8 +192,8 @@ Dashboards & Widgets. See `src/docs/STATUS.md` for the daily-read state and
 | 5      | Analytics Engine + Master Data (query engine, history, exports, reference catalogue) | done |
 | 6      | Dashboards & Widgets (authoring, lifecycle, sharing, execution, cache) | done |
 | 7      | Reports, Alerts, Notifications & Scheduling (re-scoped from Governance; scheduled report generation + JSON/CSV/XLSX export, threshold alerts via the analytics engine with cooldown + notifications, notification inbox) | done |
-| 8      | Monitoring + Support                                        | planned|
-| 9      | Reports + Embed                                             | planned|
+| 8      | Governance, Audit Export, Compliance, Monitoring, Support    | done   |
+| 9      | External API, API Keys, Embed, Product Delivery              | done   |
 
 ## Deployment
 
