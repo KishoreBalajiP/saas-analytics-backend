@@ -2,7 +2,8 @@
  * Access Log Service (Sprint 8 - implemented).
  *
  * PURPOSE
- *   Captures every authenticated HTTP request (high cardinality) with
+ *   Captures identity-bearing HTTP requests (users, admins, API keys, the
+ *   sign-in surface; see `middleware/accessLog.middleware.js`) with
  *   buffered/batched writes, offers aggregations for ops dashboards, and
  *   drives async exports of the trace through the shared export queue.
  *
@@ -11,10 +12,19 @@
  *   - list(filters) / getTopPaths / getTopErrors
  *   - requestExport / getExportStatus / processExport
  *   - countImpersonationsToday(adminId) (support budget enforcement)
+ *   - listLoginAttempts(filters)        (every sign-in attempt, for admins;
+ *     roadmap 2.5, finding gov.08)
  *
  * CODING GUIDELINES
  *   - Writes are batched: `capture` buffers and flushes every N events or
  *     T milliseconds. Capture failures never throw into the request path.
+ *   - `flush()` writes what is buffered AND waits for batches already being
+ *     written, so graceful shutdown (`jobs/shutdown.js`, step `access-log`,
+ *     wired in `jobs/background.js#defaultShutdownDeps`) loses nothing that
+ *     was captured before it ran.
+ *   - Exports honour the same filters as `GET /access-logs`
+ *     (`utils/auditFilters.js#sanitizeAccessLogFilters`) and emit the row id
+ *     in the CSV `id` column.
  *   - Only allowlisted fields are persisted, so secrets (Authorization,
  *     cookies, bodies) can never reach the collection.
  *   - Every filter value is coerced to a safe scalar; raw input can never
@@ -22,9 +32,12 @@
  *   - Aggregations are server-side via the repository.
  */
 
+import env from '../config/env.js';
 import ApiError from '../utils/ApiError.js';
+import clock from '../utils/clock.js';
 import logger from '../utils/logger.js';
 import accessLogRepository from '../repositories/accessLog.repository.js';
+import loginAttemptRepository from '../repositories/loginAttempt.repository.js';
 import auditExportRepository from '../repositories/auditExport.repository.js';
 import * as storageService from './storage.service.js';
 import { emit as emitAudit } from './auditLog.service.js';
@@ -34,8 +47,11 @@ export const BATCH_SIZE = 100;
 export const FLUSH_INTERVAL_MS = 2000;
 /** Hard cap on exported rows per request. */
 export const MAX_EXPORT_ROWS = 10000;
-/** How long a stored access-log export artifact stays downloadable. */
-export const EXPORT_ARTIFACT_TTL_MS = 24 * 60 * 60 * 1000;
+/**
+ * How long a stored access-log export artifact stays downloadable
+ * (RETENTION_EXPORT_DAYS, same window as audit exports).
+ */
+export const EXPORT_ARTIFACT_TTL_MS = (env.retention.exportDays > 0 ? env.retention.exportDays : 1) * 24 * 60 * 60 * 1000;
 
 const CSV_HEADER = [
   'id', 'occurredAt', 'actorType', 'actorId', 'tenantId',
@@ -51,6 +67,8 @@ const ACTOR_TYPES = new Set(['admin', 'user', 'service', 'system']);
 /** In-memory buffer awaiting the next batched flush. */
 let buffer = [];
 let flushTimer = null;
+/** Batches currently being written (so `flush()` can wait for them). */
+const inflight = new Set();
 
 /**
  * Buffer one access-log capture. Safe to call on the hot path: never throws,
@@ -85,9 +103,31 @@ export async function flush() {
     clearTimeout(flushTimer);
     flushTimer = null;
   }
-  if (buffer.length === 0) return 0;
-  const batch = buffer;
-  buffer = [];
+  const pending = [...inflight];
+  let written = 0;
+  if (buffer.length > 0) {
+    const batch = buffer;
+    buffer = [];
+    const write = writeBatch(batch);
+    inflight.add(write);
+    try {
+      written = await write;
+    } finally {
+      inflight.delete(write);
+    }
+  }
+  // Batches started by an earlier (timer or size) flush finish first, so a
+  // shutdown flush returns only once everything captured is persisted.
+  await Promise.allSettled(pending);
+  return written;
+}
+
+/** Number of captures waiting in the buffer (monitoring, tests). */
+export function pendingCount() {
+  return buffer.length;
+}
+
+async function writeBatch(batch) {
   try {
     const saved = await accessLogRepository.insertMany(batch);
     return saved.length;
@@ -133,6 +173,46 @@ export async function getTopErrors({ tenantId, filters = {}, limit = 10 } = {}) 
     range: toRange(filters),
     limit,
   });
+}
+
+/**
+ * Paginated read of the sign-in attempt trail (`LoginAttempt`: every
+ * attempt, with email, ip, user agent, outcome and reason). The audit trail
+ * keeps failed logins de-duplicated per window; this is the per-attempt
+ * record. `tenantId` is the caller's boundary (null = platform scope, which
+ * includes admin-portal attempts); every filter value is coerced to a
+ * scalar.
+ *
+ * @param {Object} [opts]
+ * @param {string|null} [opts.tenantId] - boundary (scoped admins).
+ * @param {Object} [opts.filters] - { tenantId, actorId, actorType, email,
+ *   ip, success, reason, dateFrom, dateTo }.
+ * @param {number} [opts.page=1]
+ * @param {number} [opts.limit=20]
+ */
+export async function listLoginAttempts({ tenantId, filters = {}, page = 1, limit = 20 } = {}) {
+  const filter = {};
+  const source = filters && typeof filters === 'object' && !Array.isArray(filters) ? filters : {};
+  for (const key of ['actorId', 'ip', 'reason']) {
+    const value = scalarString(source[key]);
+    if (value !== null) filter[key] = value;
+  }
+  const email = scalarString(source.email);
+  if (email !== null) filter.email = email.toLowerCase();
+  const actorType = scalarString(source.actorType);
+  if (actorType === 'user' || actorType === 'admin') filter.actorType = actorType;
+  if (source.success === true || source.success === 'true') filter.success = true;
+  if (source.success === false || source.success === 'false') filter.success = false;
+  const range = toRange(source);
+  if (range) filter.occurredAt = range;
+
+  if (tenantId !== undefined && tenantId !== null) {
+    filter.tenantId = String(tenantId);
+  } else {
+    const requested = scalarString(source.tenantId);
+    if (requested !== null) filter.tenantId = requested;
+  }
+  return loginAttemptRepository.search({ filter, page, limit });
 }
 
 /**
@@ -196,7 +276,9 @@ export async function processExport({ exportId } = {}) {
   }
 
   try {
-    const filter = buildFilter({ ...(row.filters ?? {}), tenantId: row.tenantId ?? undefined });
+    // A tenant-scoped export is pinned to its tenant; a platform export may
+    // still filter by tenant.
+    const filter = buildFilter({ ...(row.filters ?? {}), tenantId: row.tenantId ?? row.filters?.tenantId ?? undefined });
     const rows = await collectRows(filter);
     const format = row.format === 'csv' ? 'csv' : 'json';
     const ext = format === 'csv' ? 'csv' : 'json';
@@ -212,7 +294,7 @@ export async function processExport({ exportId } = {}) {
         generatedAt: new Date().toISOString(),
         filters: row.filters ?? {},
         count: rows.length,
-        rows,
+        rows: rows.map((r) => ({ id: String(r._id), ...r })),
       });
     }
 
@@ -220,7 +302,7 @@ export async function processExport({ exportId } = {}) {
       storageKey,
       fileName,
       recordCount: rows.length,
-      expiresAt: new Date(Date.now() + EXPORT_ARTIFACT_TTL_MS),
+      expiresAt: new Date(clock.now().getTime() + EXPORT_ARTIFACT_TTL_MS),
     });
 
     await emitAudit({
@@ -267,6 +349,8 @@ function sanitizeEntry(entry) {
   out.userAgent = scalarString(entry.userAgent) ?? null;
   out.requestId = scalarString(entry.requestId) ?? null;
   out.event = scalarString(entry.event) ?? 'request';
+  // support: operator attribution for support-session requests.
+  out.impersonatedBy = scalarString(entry.impersonatedBy) ?? null;
   if (entry.error && typeof entry.error === 'object') {
     out.error = {
       code: scalarString(entry.error.code) ?? null,
@@ -341,11 +425,20 @@ async function collectRows(filter) {
   return rows;
 }
 
+/** CSV cell value: `id` is the row's `_id`, error fields are nested. */
+function csvValue(row, field) {
+  if (field === 'id') return row._id != null ? String(row._id) : '';
+  if (field === 'errorCode') return row.error?.code ?? '';
+  if (field === 'errorMessage') return row.error?.message ?? '';
+  if (field === 'occurredAt' && row.occurredAt instanceof Date) return row.occurredAt.toISOString();
+  return row[field] ?? '';
+}
+
 /** Serialise rows to CSV with a stable header and RFC-4180 quoting. */
 function toCsv(rows) {
   const lines = [CSV_HEADER.join(',')];
   for (const row of rows) {
-    lines.push(CSV_HEADER.map((field) => escapeCsv(row[field] ?? '')).join(','));
+    lines.push(CSV_HEADER.map((field) => escapeCsv(csvValue(row, field))).join(','));
   }
   return lines.join('\n');
 }
@@ -391,9 +484,11 @@ function escapeRegex(value) {
 export default {
   capture,
   flush,
+  pendingCount,
   list,
   getTopPaths,
   getTopErrors,
+  listLoginAttempts,
   requestExport,
   getExportStatus,
   processExport,

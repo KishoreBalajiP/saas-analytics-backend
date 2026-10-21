@@ -21,9 +21,18 @@
 
 import { EmbedToken } from '../models/EmbedToken.js';
 
+/**
+ * Tenant-scoped reads must never run without a tenant id: an undefined
+ * tenant would otherwise drop the filter and match across tenants.
+ */
+function requireTenant(tenantId) {
+  if (!tenantId) throw new Error('tenantId is required for tenant-scoped EmbedToken access');
+  return tenantId;
+}
+
 /** Paginated token list for a tenant, optionally scoped to a dashboard. */
 export const list = async ({ tenantId, dashboardId, filter = {}, page = 1, limit = 20 } = {}) => {
-  const query = { tenantId, ...(dashboardId ? { dashboardId } : {}), ...filter };
+  const query = { tenantId: requireTenant(tenantId), ...(dashboardId ? { dashboardId } : {}), ...filter };
   const result = await EmbedToken.paginate(query, {
     page,
     limit,
@@ -41,7 +50,7 @@ export const list = async ({ tenantId, dashboardId, filter = {}, page = 1, limit
 
 /** Find a token by id within a tenant. */
 export const findById = (id, { tenantId } = {}) =>
-  EmbedToken.findOne({ _id: id, ...(tenantId ? { tenantId } : {}) }).lean();
+  EmbedToken.findOne({ _id: id, tenantId: requireTenant(tenantId) }).lean();
 
 /** Find a token by its SHA-256 hash (global, unique). */
 export const findByTokenHash = (tokenHash) => EmbedToken.findOne({ tokenHash }).lean();

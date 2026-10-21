@@ -15,8 +15,15 @@
  *   - DELETE /:connectorId             - soft delete
  *   - POST   /:connectorId/validate    - validate stored config (no ingest)
  *   - GET    /:connectorId/rows        - ingested rows (paginated)
- *   - POST   /:connectorId/preview     - CSV header/sample preview (multipart `file`)
- *   - POST   /:connectorId/sync        - enqueue CSV sync (multipart `file`)
+ *   - GET    /:connectorId/sync-runs   - sync history (paginated; `status` filter)
+ *   - POST   /:connectorId/preview     - CSV/XLSX header/sample preview (multipart `file`)
+ *   - POST   /:connectorId/sync        - enqueue CSV/XLSX sync (multipart `file`)
+ *   - POST   /:connectorId/sync-mongodb - enqueue a MongoDB pull sync
+ *
+ * UPLOADS
+ *   `connectorFileUpload` sniffs the content and rejects oversize files with
+ *   413 FILE_TOO_LARGE and unsupported / mismatched types with 415
+ *   UNSUPPORTED_FILE_TYPE / FILE_TYPE_MISMATCH before any parsing.
  *
  * MIDDLEWARE ORDER
  *   authenticate -> resolveTenant -> permission('connectors', <action>) -> handler
@@ -31,7 +38,7 @@ import { Router } from 'express';
 import { authenticate } from '../middleware/auth.middleware.js';
 import { resolveTenant } from '../middleware/tenant.middleware.js';
 import { permission } from '../middleware/permission.middleware.js';
-import { upload } from '../middleware/upload.middleware.js';
+import { connectorFileUpload } from '../middleware/upload.middleware.js';
 import connectorController from '../controllers/connector.controller.js';
 
 const router = Router();
@@ -49,11 +56,14 @@ router.patch('/:connectorId', authenticate, resolveTenant, permission('connector
 router.delete('/:connectorId', authenticate, resolveTenant, permission('connectors', 'delete'), connectorController.remove);
 router.post('/:connectorId/validate', authenticate, resolveTenant, permission('connectors', 'view'), connectorController.validate);
 router.get('/:connectorId/rows', authenticate, resolveTenant, permission('connectors', 'view'), connectorController.listRows);
+// datasets: typed dataset schema.
+router.get('/:connectorId/schema', authenticate, resolveTenant, permission('connectors', 'view'), connectorController.getSchema);
+router.get('/:connectorId/sync-runs', authenticate, resolveTenant, permission('connectors', 'view'), connectorController.listSyncRuns);
 // One registration per public path. The service dispatches CSV/XLSX behavior
 // from the persisted connector type; duplicate Express registrations would
 // shadow XLSX requests behind the first CSV handler.
-router.post('/:connectorId/preview', authenticate, resolveTenant, permission('connectors', 'preview'), upload.single('file'), connectorController.previewFile);
-router.post('/:connectorId/sync', authenticate, resolveTenant, permission('connectors', 'sync'), upload.single('file'), connectorController.syncFile);
+router.post('/:connectorId/preview', authenticate, resolveTenant, permission('connectors', 'preview'), connectorFileUpload, connectorController.previewFile);
+router.post('/:connectorId/sync', authenticate, resolveTenant, permission('connectors', 'sync'), connectorFileUpload, connectorController.syncFile);
 router.post('/:connectorId/sync-mongodb', authenticate, resolveTenant, permission('connectors', 'sync'), connectorController.syncMongoDB);
 
 export default router;

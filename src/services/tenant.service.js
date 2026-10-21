@@ -22,6 +22,7 @@
  *     resolved by the controller.
  */
 
+import mongoose from 'mongoose';
 import { shortToken } from '../utils/id.js';
 import ApiError from '../utils/ApiError.js';
 import tenantRepository from '../repositories/tenant.repository.js';
@@ -33,6 +34,8 @@ import * as tenantLifecycle from './tenantLifecycle.service.js';
 import { getStatistics } from './tenantStatistics.service.js';
 import * as tenantSettings from './tenantSettings.service.js';
 import * as tenantInvitation from './tenantInvitation.service.js';
+// members: ownership transfer is a first-class operation (roadmap 2.10).
+import { transferOwnership } from './tenantOwnership.service.js';
 
 /** Profile fields a caller may update on a tenant. Status/slug are excluded. */
 const UPDATABLE_FIELDS = [
@@ -122,8 +125,18 @@ export async function create({ tenant = {}, owner = {}, initialize = false, by =
   return { tenant: created };
 }
 
-/** Paginated tenant list (platform admin surface). */
-export async function list({ filter = {}, page = 1, limit = 20 } = {}) {
+/**
+ * Paginated tenant list (platform admin surface). `onlyTenantId` confines
+ * the list to one tenant (a tenant-scoped admin's scope); a scope that is
+ * not a valid tenant id matches nothing.
+ */
+export async function list({ filter = {}, onlyTenantId = null, page = 1, limit = 20 } = {}) {
+  if (onlyTenantId) {
+    if (!mongoose.isValidObjectId(String(onlyTenantId))) {
+      return { docs: [], total: 0, page, limit, pages: 0 };
+    }
+    return tenantRepository.list({ filter: { ...filter, _id: String(onlyTenantId) }, page, limit });
+  }
   return tenantRepository.list({ filter, page, limit });
 }
 
@@ -237,25 +250,17 @@ export async function billing({ tenantId } = {}) {
   };
 }
 
-/** Reassign the tenant owner. The user must already exist in the tenant. */
-export async function changeOwner({ tenantId, userId, by = null } = {}) {
-  const tenant = await tenantRepository.findById(tenantId);
-  if (!tenant) throw ApiError.notFound('Tenant not found');
-  const user = await userRepository.findById(userId);
-  if (!user || String(user.tenantId) !== String(tenantId)) {
-    throw ApiError.notFound('User not found in this tenant');
-  }
-  const updated = await tenantRepository.update(tenantId, { ownerId: String(userId), updatedBy: by });
-  await auditEmit({
-    actor: actorOf(by),
-    action: 'tenant.owner_changed',
-    module: 'iam.tenants',
-    resource: { type: 'tenant', id: tenantId },
-    tenantId,
-    before: { ownerId: tenant.ownerId },
-    after: { ownerId: updated.ownerId },
+/**
+ * Reassign the tenant owner (platform admin, break-glass). Delegates to the
+ * ownership service (roadmap 2.10, ten.07): the target must be an active
+ * member; it is granted the Owner role, the previous owner is downgraded to
+ * Admin, and the change is audited with the reason.
+ */
+export async function changeOwner({ tenantId, userId, by = null, reason = null } = {}) {
+  const { tenant } = await transferOwnership({
+    tenantId, toUserId: userId, by, actorType: 'admin', reason,
   });
-  return updated;
+  return tenant;
 }
 
 /** Escape regex metacharacters so user input can be a safe `$regex`. */

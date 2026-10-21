@@ -52,8 +52,43 @@ export const ERROR_CODES = Object.freeze({
   // verified" from "workspace URL taken".
   EMAIL_NOT_VERIFIED: 'EMAIL_NOT_VERIFIED',
   ACCOUNT_SUSPENDED: 'ACCOUNT_SUSPENDED',
+  ACCOUNT_NOT_ACTIVE: 'ACCOUNT_NOT_ACTIVE',
+  MFA_REQUIRED: 'MFA_REQUIRED',
+  // Session and request-replay codes (auth hardening).
+  SESSION_EXPIRED: 'SESSION_EXPIRED',
+  SESSION_REVOKED: 'SESSION_REVOKED',
+  SESSION_COOKIE_MISSING: 'SESSION_COOKIE_MISSING',
+  IDEMPOTENCY_KEY_INVALID: 'IDEMPOTENCY_KEY_INVALID',
+  IDEMPOTENCY_KEY_REUSED: 'IDEMPOTENCY_KEY_REUSED',
+  IDEMPOTENCY_IN_PROGRESS: 'IDEMPOTENCY_IN_PROGRESS',
   TENANT_NOT_ACTIVE: 'TENANT_NOT_ACTIVE',
   WORKSPACE_SLUG_TAKEN: 'WORKSPACE_SLUG_TAKEN',
+  // Plan limits (roadmap 1.3): one typed code for every hard-limit refusal,
+  // and a distinct code when the subscription state blocks writes.
+  QUOTA_EXCEEDED: 'QUOTA_EXCEEDED',
+  SUBSCRIPTION_WRITE_BLOCKED: 'SUBSCRIPTION_WRITE_BLOCKED',
+  // members: workspace membership guards (roadmap 2.10). STEP_UP_FAILED is
+  // shared with adminauth and declared there.
+  LAST_OWNER: 'LAST_OWNER',
+  ROLE_CEILING: 'ROLE_CEILING',
+  MEMBERSHIP_BUSY: 'MEMBERSHIP_BUSY',
+  DELETION_PENDING: 'DELETION_PENDING',
+  // roles: platform role model (roadmap 2.1): a tenant-scoped admin reached
+  // outside its tenant, a role above the admin's type, the last-super guard.
+  ADMIN_SCOPE_DENIED: 'ADMIN_SCOPE_DENIED',
+  ROLE_ABOVE_ADMIN_TYPE: 'ROLE_ABOVE_ADMIN_TYPE',
+  LAST_SUPER_ADMIN: 'LAST_SUPER_ADMIN',
+  // retention: an export / report artefact whose download window has passed
+  // (410). The client should request a new export instead of retrying.
+  EXPORT_EXPIRED: 'EXPORT_EXPIRED',
+  // adminauth: MFA enrolment policy and step-up re-authentication.
+  MFA_ENROLLMENT_REQUIRED: 'MFA_ENROLLMENT_REQUIRED',
+  STEP_UP_REQUIRED: 'STEP_UP_REQUIRED',
+  STEP_UP_FAILED: 'STEP_UP_FAILED',
+  // billing: the tenant's plan does not include a feature (requireFeature).
+  FEATURE_NOT_AVAILABLE: 'FEATURE_NOT_AVAILABLE',
+  // mfa-tenant: an Owner must use MFA before requiring it for the workspace.
+  MFA_NOT_ENABLED: 'MFA_NOT_ENABLED',
 });
 
 /** Pagination defaults for future list endpoints. */

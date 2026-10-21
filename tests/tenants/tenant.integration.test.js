@@ -77,9 +77,9 @@ async function seedRootAdmin() {
   });
   const role = await roleService.create({ tenantId: null, name: `root_${shortToken(8)}` });
   for (const action of TENANT_KEYS) {
-    await roleService.addPermission({ roleId: role._id, permissionKey: `iam.tenants.${action}`, by: admin._id });
+    await roleService.addPermission({ roleId: role._id, permissionKey: `iam.tenants.${action}`, by: null /* fixture seeding */ });
   }
-  await adminService.assignRole({ adminId: admin._id, roleId: role._id, by: admin._id });
+  await adminService.assignRole({ adminId: admin._id, roleId: role._id, by: null /* fixture seeding */ });
   return admin;
 }
 

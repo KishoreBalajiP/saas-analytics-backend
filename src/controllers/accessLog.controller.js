@@ -7,7 +7,7 @@
  *
  * RESPONSIBILITY
  *   - listAccessLogs, getTopPaths, getTopErrors, requestExport,
- *     getExportStatus
+ *     getExportStatus, listLoginAttempts
  *
  * CODING GUIDELINES
  *   - Admin-only access via `adminAuth` + permission middleware on the
@@ -21,9 +21,13 @@ import asyncHandler from '../utils/asyncHandler.js';
 import ApiResponse from '../utils/ApiResponse.js';
 import accessLogService from '../services/accessLog.service.js';
 
-/** Resolve the caller's tenant boundary (null = platform-wide). */
+/**
+ * Resolve the caller's tenant boundary (null = platform-wide). The
+ * cross-tenant scope `*` is platform-wide, not a tenant called "*".
+ */
 function boundary(req) {
-  return req.admin?.tenantId ?? null;
+  const scope = req.admin?.tenantId ?? null;
+  return scope && scope !== '*' ? String(scope) : null;
 }
 
 /** GET /access-logs - filter + paginate the trace. */
@@ -68,6 +72,25 @@ export const getTopErrors = asyncHandler(async (req, res) => {
   return ApiResponse.ok(res, data, 'Top errors');
 });
 
+/** GET /access-logs/login-attempts - every sign-in attempt (gov.08). */
+export const listLoginAttempts = asyncHandler(async (req, res) => {
+  const {
+    tenantId, actorId, actorType, email, ip, success, reason, dateFrom, dateTo, page, limit,
+  } = req.validated?.query ?? {};
+  const data = await accessLogService.listLoginAttempts({
+    tenantId: boundary(req),
+    filters: { tenantId, actorId, actorType, email, ip, success, reason, dateFrom, dateTo },
+    page: page ?? 1,
+    limit: limit ?? 20,
+  });
+  return ApiResponse.ok(res, data.docs, 'Login attempts fetched', {
+    page: data.page,
+    limit: data.limit,
+    total: data.total,
+    pages: data.pages,
+  });
+});
+
 /** POST /access-logs/export - request an async export (JSON or CSV). */
 export const requestExport = asyncHandler(async (req, res) => {
   const { format = 'json', filters = {} } = req.validated?.body ?? {};
@@ -90,5 +113,5 @@ export const getExportStatus = asyncHandler(async (req, res) => {
 });
 
 export default {
-  listAccessLogs, getTopPaths, getTopErrors, requestExport, getExportStatus,
+  listAccessLogs, getTopPaths, getTopErrors, requestExport, getExportStatus, listLoginAttempts,
 };

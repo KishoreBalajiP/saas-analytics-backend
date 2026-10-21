@@ -34,7 +34,55 @@
  */
 
 import { applyFieldMapping, deriveSourceRowId } from './field-mapping.js';
-import { ConnectorValidationError } from './errors.js';
+import { ConnectorError, ConnectorValidationError, CONNECTOR_ERROR_CODES } from './errors.js';
+
+/**
+ * Bound an (async) iterable of records by wall-clock time. Each `next()` is
+ * raced against the remaining budget, so a source that stops producing
+ * (a stalled socket, a hung cursor) fails the job instead of holding a
+ * worker slot forever.
+ *
+ * @param {Array|Iterable|AsyncIterable} records
+ * @param {number} timeoutMs - total budget for consuming the source.
+ * @returns {AsyncIterable}
+ * @throws {ConnectorError} `CONNECTOR_SYNC_TIMEOUT` when the budget runs out.
+ */
+export async function* withDeadline(records, timeoutMs) {
+  const iterator = typeof records?.[Symbol.asyncIterator] === 'function'
+    ? records[Symbol.asyncIterator]()
+    : records[Symbol.iterator]();
+  const deadline = Date.now() + timeoutMs;
+  const timeoutError = () => new ConnectorError(
+    CONNECTOR_ERROR_CODES.SYNC_TIMEOUT,
+    `The sync did not finish within ${Math.round(timeoutMs / 1000)} seconds and was stopped.`,
+    { statusCode: 504 },
+  );
+  let timer = null;
+  let finished = false;
+  try {
+    while (true) {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) throw timeoutError();
+      const step = await Promise.race([
+        Promise.resolve(iterator.next()),
+        new Promise((_, reject) => { timer = setTimeout(() => reject(timeoutError()), remaining); }),
+      ]);
+      clearTimeout(timer);
+      if (step.done) {
+        finished = true;
+        return;
+      }
+      yield step.value;
+    }
+  } finally {
+    clearTimeout(timer);
+    // Ask the source to clean up (close cursors / sockets). Not awaited: a
+    // stalled source would never settle the call.
+    if (!finished && typeof iterator.return === 'function') {
+      Promise.resolve().then(() => iterator.return()).catch(() => {});
+    }
+  }
+}
 
 /**
  * Run a record batch through the ingestion pipeline.
@@ -113,4 +161,4 @@ export async function ingestRecords({
   return result;
 }
 
-export default { ingestRecords };
+export default { ingestRecords, withDeadline };

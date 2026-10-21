@@ -14,8 +14,14 @@
  * RESPONSIBILITY
  *   - `runWithActor(actor, fn)` / `runWithContext({ actor, requestId }, fn)`
  *     - run `fn` with the identity visible to all async descendants.
- *   - `getCurrentActor()` / `getCurrentRequestId()` - read the context from
- *     a plugin hook, service, or worker.
+ *   - `runWithRequestContext({ requestId, ip, userAgent }, fn)` - the
+ *     request's network context, set once per request by
+ *     `middleware/requestId.middleware.js` (no identity yet). Nested
+ *     `runWithContext` calls inherit `ip` / `userAgent` (and the request id
+ *     when they do not pass one).
+ *   - `getCurrentActor()` / `getCurrentRequestId()` /
+ *     `getCurrentRequestMeta()` - read the context from a plugin hook,
+ *     service, or worker (audit rows and security events use it).
  *   - Returns `null` / `undefined` outside a context (no fabricated actor).
  *
  * SECURITY RULES
@@ -37,18 +43,44 @@ const storage = new AsyncLocalStorage();
  * @returns {*} the result of `fn`.
  */
 export function runWithActor(actor, fn) {
-  return storage.run({ actor: actor ?? null, requestId: null }, fn);
+  const parent = storage.getStore();
+  return storage.run({
+    actor: actor ?? null,
+    requestId: parent?.requestId ?? null,
+    ip: parent?.ip ?? null,
+    userAgent: parent?.userAgent ?? null,
+  }, fn);
 }
 
 /**
- * Run `fn` with a full context (actor + requestId).
+ * Run `fn` with a full context (actor + requestId). Network context (`ip`,
+ * `userAgent`) is inherited from an enclosing request context unless given.
  *
- * @param {{ actor?: Object|null, requestId?: string|null }} ctx
+ * @param {{ actor?: Object|null, requestId?: string|null, ip?: string|null, userAgent?: string|null }} ctx
  * @param {Function} fn
  * @returns {*} the result of `fn`.
  */
-export function runWithContext({ actor = null, requestId = null } = {}, fn) {
-  return storage.run({ actor: actor ?? null, requestId: requestId ?? null }, fn);
+export function runWithContext({ actor = null, requestId = null, ip, userAgent } = {}, fn) {
+  const parent = storage.getStore();
+  return storage.run({
+    actor: actor ?? null,
+    requestId: requestId ?? parent?.requestId ?? null,
+    ip: ip ?? parent?.ip ?? null,
+    userAgent: userAgent ?? parent?.userAgent ?? null,
+  }, fn);
+}
+
+/**
+ * Run `fn` with the request's network context and no identity. Set once per
+ * request by the request-id middleware; auth middleware later nests an
+ * actor context inside it.
+ *
+ * @param {{ requestId?: string|null, ip?: string|null, userAgent?: string|null }} ctx
+ * @param {Function} fn
+ * @returns {*}
+ */
+export function runWithRequestContext({ requestId = null, ip = null, userAgent = null } = {}, fn) {
+  return storage.run({ actor: null, requestId: requestId ?? null, ip: ip ?? null, userAgent: userAgent ?? null }, fn);
 }
 
 /** @returns {{ type: string, id: string|null, tenantId?: string|null, email?: string|null } | null} */
@@ -63,4 +95,25 @@ export function getCurrentRequestId() {
   return store?.requestId ?? null;
 }
 
-export default { runWithActor, runWithContext, getCurrentActor, getCurrentRequestId };
+/**
+ * Network context of the current request (all null outside a request).
+ *
+ * @returns {{ requestId: string|null, ip: string|null, userAgent: string|null }}
+ */
+export function getCurrentRequestMeta() {
+  const store = storage.getStore();
+  return {
+    requestId: store?.requestId ?? null,
+    ip: store?.ip ?? null,
+    userAgent: store?.userAgent ?? null,
+  };
+}
+
+export default {
+  runWithActor,
+  runWithContext,
+  runWithRequestContext,
+  getCurrentActor,
+  getCurrentRequestId,
+  getCurrentRequestMeta,
+};

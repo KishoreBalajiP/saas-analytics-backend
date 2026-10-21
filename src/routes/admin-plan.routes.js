@@ -15,7 +15,9 @@
  *   - POST   /ensure-defaults   idempotent seed (adminAuth + billing.plans.create)
  *
  * SECURITY
- *   - All routes require `adminAuth` AND a `billing.plans.*` permission.
+ *   - All routes require `adminAuth` AND a `billing.plans.*` permission,
+ *     and are platform-wide (`adminScope.platform()`): tenant-scoped admins
+ *     are refused because the plan catalogue is shared by every tenant.
  *   - The middleware order is `adminAuth -> permission(...) -> validate -> handler`.
  *   - Workspace APIs do not mount this router; only the platform-admin
  *     surface reaches it.
@@ -27,6 +29,7 @@
 import { Router } from 'express';
 import { adminAuth } from '../middleware/adminAuth.middleware.js';
 import { permission } from '../middleware/permission.middleware.js';
+import { adminScope } from '../middleware/adminScope.middleware.js';
 import { validate } from '../validators/index.js';
 import planValidator from '../validators/plan.validator.js';
 import adminPlanController from '../controllers/adminPlan.controller.js';
@@ -37,6 +40,7 @@ router.use(adminAuth);
 router.get( // ci:routes-exempt: adminAuth above
   '/',
   permission('billing.plans', 'view'),
+  adminScope.platform(),
   validate(planValidator.listSchema),
   adminPlanController.listPlans,
 );
@@ -44,6 +48,7 @@ router.get( // ci:routes-exempt: adminAuth above
 router.get( // ci:routes-exempt: adminAuth above
   '/:id',
   permission('billing.plans', 'view'),
+  adminScope.platform(),
   validate(planValidator.idParamSchema),
   adminPlanController.getPlan,
 );
@@ -51,6 +56,7 @@ router.get( // ci:routes-exempt: adminAuth above
 router.post( // ci:routes-exempt: adminAuth above
   '/',
   permission('billing.plans', 'create'),
+  adminScope.platform(),
   validate(planValidator.createSchema),
   adminPlanController.createPlan,
 );
@@ -58,6 +64,7 @@ router.post( // ci:routes-exempt: adminAuth above
 router.patch( // ci:routes-exempt: adminAuth above
   '/:id',
   permission('billing.plans', 'update'),
+  adminScope.platform(),
   validate({ ...planValidator.updateSchema, params: planValidator.updateSchema.params }),
   adminPlanController.updatePlan,
 );
@@ -65,6 +72,7 @@ router.patch( // ci:routes-exempt: adminAuth above
 router.post( // ci:routes-exempt: adminAuth above
   '/:id/archive',
   permission('billing.plans', 'archive'),
+  adminScope.platform(),
   validate(planValidator.idParamSchema),
   adminPlanController.archivePlan,
 );
@@ -72,6 +80,7 @@ router.post( // ci:routes-exempt: adminAuth above
 router.post( // ci:routes-exempt: adminAuth above
   '/:id/disable',
   permission('billing.plans', 'update'),
+  adminScope.platform(),
   validate(planValidator.idParamSchema),
   adminPlanController.disablePlan,
 );
@@ -79,6 +88,7 @@ router.post( // ci:routes-exempt: adminAuth above
 router.post( // ci:routes-exempt: adminAuth above
   '/:id/enable',
   permission('billing.plans', 'update'),
+  adminScope.platform(),
   validate(planValidator.idParamSchema),
   adminPlanController.enablePlan,
 );
@@ -86,6 +96,7 @@ router.post( // ci:routes-exempt: adminAuth above
 router.post( // ci:routes-exempt: adminAuth above
   '/ensure-defaults',
   permission('billing.plans', 'create'),
+  adminScope.platform(),
   adminPlanController.ensureDefaults,
 );
 

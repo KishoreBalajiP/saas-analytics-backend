@@ -11,6 +11,7 @@
  *   - topErrorsSchema - query filters for GET /access-logs/top-errors
  *   - exportSchema    - body filters + format for POST /access-logs/export
  *   - exportStatusSchema - params for GET /access-logs/export/:exportId
+ *   - loginAttemptsSchema - query filters for GET /access-logs/login-attempts
  *
  * CODING GUIDELINES
  *   - Every filter is validated as a plain string/integer; the service layer
@@ -81,11 +82,37 @@ export const exportStatusSchema = {
   query: {},
 };
 
+/** Query filters for the sign-in attempt trail (roadmap 2.5, gov.08). */
+export const loginAttemptsSchema = {
+  body: {},
+  params: {},
+  query: {
+    tenantId: { type: 'string', minLength: 1, maxLength: 64 },
+    actorId: { type: 'string', minLength: 1, maxLength: 64 },
+    actorType: { type: 'string', oneOf: ['user', 'admin'] },
+    email: { type: 'string', minLength: 1, maxLength: 320 },
+    ip: { type: 'string', minLength: 1, maxLength: 100 },
+    success: { type: 'boolean' },
+    reason: {
+      type: 'string',
+      oneOf: [
+        'invalid_credentials', 'account_locked', 'mfa_required', 'mfa_failed', 'success', 'suspended',
+        'unknown_email', 'unknown_tenant', 'tenant_not_active', 'email_unverified',
+      ],
+    },
+    dateFrom: dateParam,
+    dateTo: dateParam,
+    page: { type: 'integer', min: 1 },
+    limit: { type: 'integer', min: 1, max: 100 },
+  },
+};
+
 export default {
   listSchema,
   topPathsSchema,
   topErrorsSchema,
   exportSchema,
   exportStatusSchema,
+  loginAttemptsSchema,
   _meta: { phase: '8 - implemented' },
 };

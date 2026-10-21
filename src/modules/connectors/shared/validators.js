@@ -20,6 +20,11 @@
  */
 
 import { ConnectorConfigError } from './errors.js';
+import env from '../../../config/env.js';
+import { parseMongoUri, disallowedMongoOptions, hostPolicyViolation } from '../../../utils/netGuard.js';
+
+/** Upper bound for a webhook connector's timestamp tolerance (seconds). */
+export const MAX_WEBHOOK_TOLERANCE_SECONDS = 3600;
 
 /**
  * Validate a connector config for the given type.
@@ -52,8 +57,9 @@ export function validateConfig(type, config = {}) {
       } else if (secret.length < 16) {
         errors.push({ field: 'config.signingSecret', message: 'signingSecret must be at least 16 characters' });
       }
-      if (config.toleranceSeconds !== undefined && (typeof config.toleranceSeconds !== 'number' || config.toleranceSeconds <= 0)) {
-        errors.push({ field: 'config.toleranceSeconds', message: 'toleranceSeconds must be a positive number' });
+      if (config.toleranceSeconds !== undefined && (typeof config.toleranceSeconds !== 'number' || !Number.isFinite(config.toleranceSeconds)
+        || config.toleranceSeconds <= 0 || config.toleranceSeconds > MAX_WEBHOOK_TOLERANCE_SECONDS)) {
+        errors.push({ field: 'config.toleranceSeconds', message: `toleranceSeconds must be a positive number of at most ${MAX_WEBHOOK_TOLERANCE_SECONDS}` });
       }
       if (config.requireTimestamp !== undefined && typeof config.requireTimestamp !== 'boolean') {
         errors.push({ field: 'config.requireTimestamp', message: 'requireTimestamp must be a boolean' });
@@ -66,8 +72,12 @@ export function validateConfig(type, config = {}) {
       if (config.hasHeader !== undefined && typeof config.hasHeader !== 'boolean') {
         errors.push({ field: 'config.hasHeader', message: 'hasHeader must be a boolean' });
       }
-      if (config.sheet !== undefined && (typeof config.sheet !== 'string' || config.sheet.length === 0)) {
-        errors.push({ field: 'config.sheet', message: 'sheet must be a non-empty string (sheet name or index)' });
+      // A sheet NAME (non-empty string) or a zero-based sheet INDEX (integer).
+      const sheetOk = config.sheet === undefined
+        || (typeof config.sheet === 'string' && config.sheet.length > 0 && config.sheet.length <= 128)
+        || (Number.isInteger(config.sheet) && config.sheet >= 0 && config.sheet < 1000);
+      if (!sheetOk) {
+        errors.push({ field: 'config.sheet', message: 'sheet must be a sheet name or a zero-based sheet index' });
       }
       return { valid: errors.length === 0, errors };
     }
@@ -76,13 +86,21 @@ export function validateConfig(type, config = {}) {
       if (typeof config.uri !== 'string' || config.uri.length === 0) {
         errors.push({ field: 'config.uri', message: 'uri is required for mongodb connectors' });
       } else {
-        try {
-          const parsed = new URL(config.uri);
-          if (!['mongodb:', 'mongodb+srv:'].includes(parsed.protocol)) {
-            errors.push({ field: 'config.uri', message: `unsupported URI protocol "${parsed.protocol}"` });
+        const parsed = parseMongoUri(config.uri);
+        if (!parsed) {
+          errors.push({ field: 'config.uri', message: 'uri must be a mongodb:// or mongodb+srv:// connection string' });
+        } else {
+          // Strict allow-list: any option not explicitly permitted is refused.
+          const rejected = disallowedMongoOptions(parsed);
+          if (rejected.length) {
+            errors.push({ field: 'config.uri', message: `connection option(s) not allowed or with an unsupported value: ${rejected.join(', ')}` });
           }
-        } catch {
-          errors.push({ field: 'config.uri', message: 'uri is not a valid MongoDB connection string' });
+          // Egress policy (no DNS here; resolution happens at create/update
+          // time in the service and again when the worker connects).
+          const violation = parsed.hosts
+            .map((h) => hostPolicyViolation(h.host, parsed.srv ? null : (h.port ?? 27017), { allowPrivate: env.connectors.allowPrivateNetworks }))
+            .find(Boolean);
+          if (violation) errors.push({ field: 'config.uri', message: violation });
         }
       }
       if (typeof config.database !== 'string' || config.database.length === 0) {

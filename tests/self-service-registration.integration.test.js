@@ -47,6 +47,7 @@ test('public registration creates a pending tenant and blocks login before verif
       email: 'ada@example.com',
       password: 'Password123!',
       workspaceName: 'Ada Analytics',
+      acceptTerms: true, // onboarding: consent is required
       workspaceSlug: 'ada-analytics',
     },
   });
@@ -82,6 +83,7 @@ test('verification token activates the tenant and allows login', async () => {
       email: 'grace@example.com',
       password: 'Password123!',
       workspaceName: 'Grace Ops',
+      acceptTerms: true, // onboarding: consent is required
       workspaceSlug: 'grace-ops',
     },
   });
@@ -131,6 +133,7 @@ test('verification cannot reactivate a suspended workspace', async () => {
       email: 'katherine@example.com',
       password: 'Password123!',
       workspaceName: 'Orbital Analytics',
+      acceptTerms: true, // onboarding: consent is required
       workspaceSlug: 'orbital-analytics',
     },
   });
@@ -157,6 +160,7 @@ test('expired verification tokens cannot activate an owner or tenant', async () 
       email: 'expired-owner@example.com',
       password: 'Password123!',
       workspaceName: 'Expired Link Workspace',
+      acceptTerms: true, // onboarding: consent is required
       workspaceSlug: 'expired-link-workspace',
     },
   });
@@ -185,6 +189,7 @@ test('concurrent verification provisions one owner and consumes the token once',
       email: 'concurrent-owner@example.com',
       password: 'Password123!',
       workspaceName: 'Concurrent Verify Workspace',
+      acceptTerms: true, // onboarding: consent is required
       workspaceSlug: 'concurrent-verify-workspace',
     },
   });
@@ -210,6 +215,7 @@ test('concurrent registration for the same workspace URL has one winner', async 
       email: 'grace@example.com',
       password: 'Password123!',
       workspaceName: 'Concurrent Analytics',
+      acceptTerms: true, // onboarding: consent is required
       workspaceSlug: 'concurrent-analytics',
     },
   });
@@ -228,6 +234,7 @@ test('fresh owner completes the authenticated CSV-to-dashboard onboarding flow',
       email: 'e2e-owner@example.com',
       password: 'Password123!',
       workspaceName: 'End To End Workspace',
+      acceptTerms: true, // onboarding: consent is required
       workspaceSlug: 'end-to-end-workspace',
     },
   });
@@ -333,6 +340,7 @@ test('registration reports delivery truthfully when no mail transport is configu
       email: 'no-mail@example.com',
       password: 'Password123!',
       workspaceName: 'No Mail Workspace',
+      acceptTerms: true, // onboarding: consent is required
       workspaceSlug: 'no-mail-workspace',
     },
   });
@@ -358,6 +366,7 @@ test('resend issues a fresh link, invalidates the old one, and stays generic', a
       email: 'resend-owner@example.com',
       password: 'Password123!',
       workspaceName: 'Resend Workspace',
+      acceptTerms: true, // onboarding: consent is required
       workspaceSlug: 'resend-workspace',
     },
   });

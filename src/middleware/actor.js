@@ -17,7 +17,9 @@
 
 /**
  * @param {import('express').Request} req
- * @returns {{ id: string, type: 'admin'|'user', tenantId: string|null, email: string|null } | null}
+ * @returns {{ id: string, type: 'admin'|'user', tenantId: string|null, email: string|null, impersonatedBy?: string } | null}
+ *   `impersonatedBy` (support, roadmap 2.3) is the operator admin id when a
+ *   tenant user's request comes from a read-only support session.
  */
 export function getActor(req) {
   if (req.admin) {
@@ -29,12 +31,15 @@ export function getActor(req) {
     };
   }
   if (req.user) {
-    return {
+    const actor = {
       id: req.user.id,
       type: 'user',
       tenantId: req.user.tenantId ?? null,
       email: req.user.email ?? null,
     };
+    // support: operator attribution for support sessions.
+    if (req.user.impersonatedBy) actor.impersonatedBy = req.user.impersonatedBy;
+    return actor;
   }
   return null;
 }

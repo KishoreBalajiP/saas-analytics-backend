@@ -16,7 +16,8 @@ import { ConnectorRow } from '../../src/models/ConnectorRow.js';
 
 const PASSWORD = 'Password123!';
 
-before(async () => { await startMongo(); await startHttp(); });
+let baseUrl;
+before(async () => { await startMongo(); baseUrl = await startHttp(); });
 beforeEach(async () => { await resetMongo(); await rbacCache.clearAll(); });
 after(async () => { await stopHttp(); await stopMongo(); });
 
@@ -86,9 +87,21 @@ test('report CRUD, tenant isolation, RBAC and run/export over HTTP', async () =>
   assert.equal(ready.lastRun.status, 'ready');
   assert.ok(ready.lastRun.rowCount >= 1, 'artefact should contain rows');
 
+  assert.equal(ready.lastRun.rowCount, 2, 'every row of the dataset');
+  assert.equal(ready.lastRun.truncated, false);
+
   const dl = await api(`/api/v1/reports/${reportId}/download`, { headers: auth });
   assert.equal(dl.status, 200);
-  assert.ok(dl.json.data.url, 'download returns a presigned url');
+  assert.ok(dl.json.data.url, 'download returns a signed url');
+  assert.equal(dl.json.data.format, 'csv');
+  assert.equal(dl.json.data.rowCount, 2);
+  assert.equal(dl.json.data.truncated, false);
+  assert.match(dl.json.data.fileName, /^monthly-.*\.csv$/);
+  assert.equal(dl.json.data.runId, ready.runs.at(-1)._id);
+  const file = await fetch(`${baseUrl}${dl.json.data.url}`);
+  assert.equal(file.status, 200);
+  assert.equal(file.headers.get('content-type'), 'text/csv; charset=utf-8');
+  assert.equal((await file.text()).trim().split('\n').length, 3, 'header + 2 rows');
 
   const del = await api(`/api/v1/reports/${reportId}`, { method: 'DELETE', headers: auth });
   assert.equal(del.status, 204);
@@ -108,6 +121,29 @@ test('report routes are 401 without a token and 403 without permission', async (
   const noRightsAuth = { authorization: `Bearer ${login.json.data.accessToken}`, 'X-Tenant-Id': tenantId };
   const denied = await api('/api/v1/reports', { method: 'POST', headers: noRightsAuth, body: { name: 'Nope' } });
   assert.equal(denied.status, 403);
+});
+
+test('report downloads need reports.export and stay inside the workspace', async () => {
+  const { tenantId, auth } = await onboard();
+  const datasetId = await seedDataset(tenantId);
+  const created = await api('/api/v1/reports', { method: 'POST', headers: auth, body: { name: 'Sales', source: 'query', query: { datasetId }, format: 'xlsx' } });
+  const reportId = created.json.data._id;
+  const none = await api(`/api/v1/reports/${reportId}/download`, { headers: auth });
+  assert.equal(none.status, 404, 'nothing generated yet');
+  await api(`/api/v1/reports/${reportId}/run`, { method: 'POST', headers: auth, body: {} });
+  const ready = await pollReady(auth, reportId);
+  assert.equal(ready.lastRun.status, 'ready');
+  assert.equal(ready.lastRun.format, 'xlsx');
+  assert.match(ready.lastRun.fileName, /\.xlsx$/);
+
+  const email = `nobody-${shortToken(10).toLowerCase()}@example.com`;
+  await userRepository.create({ tenantId, email, status: 'active', passwordHash: await hash(PASSWORD), profile: { name: 'Nobody' } });
+  const login = await api('/api/v1/auth/login', { method: 'POST', headers: { 'X-Tenant-Id': tenantId }, body: { email, password: PASSWORD } });
+  const noRights = { authorization: `Bearer ${login.json.data.accessToken}`, 'X-Tenant-Id': tenantId };
+  assert.equal((await api(`/api/v1/reports/${reportId}/download`, { headers: noRights })).status, 403);
+
+  const other = await onboard();
+  assert.equal((await api(`/api/v1/reports/${reportId}/download`, { headers: other.auth })).status, 404);
 });
 
 test('invalid report input is 422 and cross-tenant access is 404', async () => {

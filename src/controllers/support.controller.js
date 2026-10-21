@@ -16,6 +16,9 @@
 import asyncHandler from '../utils/asyncHandler.js';
 import ApiResponse from '../utils/ApiResponse.js';
 import * as supportService from '../services/support.service.js';
+// support: access redesign (roadmap 2.3).
+import * as supportAccessService from '../services/supportAccess.service.js';
+import * as supportDiagnosticsService from '../services/supportDiagnostics.service.js';
 
 /** Pull the acting context off an authenticated request. */
 function ctx(req) {
@@ -27,10 +30,10 @@ function ctx(req) {
   };
 }
 
-/** POST /support/impersonate - start an impersonation session. */
+/** POST /support/impersonate - start a read-only support session. */
 export const impersonate = asyncHandler(async (req, res) => {
-  const { targetUserId, reason } = req.validated?.body ?? {};
-  const data = await supportService.impersonate({ ...ctx(req), targetUserId, reason });
+  const { targetUserId, reason, ticket } = req.validated?.body ?? {};
+  const data = await supportService.impersonate({ ...ctx(req), targetUserId, reason, ticket });
   return ApiResponse.ok(res, data, 'Impersonation started');
 });
 
@@ -69,6 +72,77 @@ export const broadcastNotification = asyncHandler(async (req, res) => {
   return ApiResponse.ok(res, data, 'Broadcast queued');
 });
 
+/* ---------------- support: access redesign (roadmap 2.3) ----------------- */
+
+function pageMeta(result) {
+  return { page: result.page, limit: result.limit, total: result.total, pages: result.pages };
+}
+
+/** GET /support/tenants/:id/diagnostics - sanitised operational facts. */
+export const getTenantDiagnostics = asyncHandler(async (req, res) => {
+  const tenantId = req.validated?.params?.id;
+  const data = await supportDiagnosticsService.getTenantDiagnostics({ ...ctx(req), tenantId });
+  return ApiResponse.ok(res, data, 'Tenant diagnostics');
+});
+
+/** GET /support/access-grants - consent and break-glass grants (scoped). */
+export const listAccessGrants = asyncHandler(async (req, res) => {
+  const { tenantId, status, kind, page, limit } = req.validated?.query ?? {};
+  const result = await supportAccessService.listGrantsForAdmin({ actor: req.admin, tenantId, status, kind, page, limit });
+  return ApiResponse.ok(res, result.docs, 'Support access grants', pageMeta(result));
+});
+
+/** POST /support/access-grants/break-glass - request incident access. */
+export const requestBreakGlass = asyncHandler(async (req, res) => {
+  const { tenantId, reason, ticket } = req.validated?.body ?? {};
+  const data = await supportAccessService.requestBreakGlass({ ...ctx(req), tenantId, reason, ticket });
+  return ApiResponse.created(res, data, 'Break-glass access requested');
+});
+
+/** POST /support/access-grants/:id/approve - a super admin approves. */
+export const approveBreakGlass = asyncHandler(async (req, res) => {
+  const data = await supportAccessService.approveBreakGlass({
+    ...ctx(req),
+    grantId: req.validated?.params?.id,
+    reason: req.validated?.body?.reason,
+  });
+  return ApiResponse.ok(res, data, 'Break-glass access approved');
+});
+
+/** POST /support/access-grants/:id/deny - a super admin denies. */
+export const denyBreakGlass = asyncHandler(async (req, res) => {
+  const data = await supportAccessService.denyBreakGlass({
+    ...ctx(req),
+    grantId: req.validated?.params?.id,
+    reason: req.validated?.body?.reason,
+  });
+  return ApiResponse.ok(res, data, 'Break-glass access denied');
+});
+
+/** POST /support/access-grants/:id/revoke - give up a grant early. */
+export const revokeAccessGrant = asyncHandler(async (req, res) => {
+  const data = await supportAccessService.revokeGrantAsAdmin({
+    ...ctx(req),
+    grantId: req.validated?.params?.id,
+    reason: req.validated?.body?.reason,
+  });
+  return ApiResponse.ok(res, data, 'Support access revoked');
+});
+
+/** GET /support/impersonations - support sessions (scoped). */
+export const listImpersonations = asyncHandler(async (req, res) => {
+  const { tenantId, status, mine, page, limit } = req.validated?.query ?? {};
+  const result = await supportAccessService.listImpersonationsForAdmin({
+    actor: req.admin,
+    tenantId,
+    status,
+    mine: mine === true,
+    page,
+    limit,
+  });
+  return ApiResponse.ok(res, result.docs, 'Support sessions', pageMeta(result));
+});
+
 export default {
   impersonate,
   stopImpersonation,
@@ -76,5 +150,13 @@ export default {
   revokeAllSessions,
   getTenantLookups,
   broadcastNotification,
+  // support:
+  getTenantDiagnostics,
+  listAccessGrants,
+  requestBreakGlass,
+  approveBreakGlass,
+  denyBreakGlass,
+  revokeAccessGrant,
+  listImpersonations,
   _meta: { phase: '8 - implemented' },
 };

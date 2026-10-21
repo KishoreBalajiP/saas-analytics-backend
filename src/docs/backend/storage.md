@@ -81,14 +81,16 @@ The public service is `services/storage.service.js`. It applies the
 | `delete(key)` | `Promise<void>` |
 | `exists(key)` | `Promise<boolean>` |
 | `list(prefix, options)` | `Promise<string[]>` |
-| `createWriteStream(key)` | `Promise<WritableStream>` |
-| `presignedUrl(key, options)` | `Promise<string>` |
+| `createWriteStream(key, options)` | `Promise<WritableStream & { completed }>`: write, `end()`, then `await stream.completed` (`{ key, size }` once stored; managed multipart upload on S3) |
+| `createReadStream(key)` | `Promise<ReadableStream>` |
+| `presignedUrl(key, options)` | `Promise<string>` (S3 honours `contentType` and `contentDisposition`) |
 | `close()` | `Promise<void>` |
 
 ## Key Conventions
 
 - `<connectorId>/<kind>/<file>` for connector artefacts.
-- `<tenantId>/reports/<runId>.csv` for report outputs.
+- `reports/<tenantId>/<reportId>/<runId>.<csv|json|xlsx>` for report artefacts.
+- `exports/<tenantId>/<exportId>.<csv|json|xlsx>` for analytics exports.
 - `embed/<tokenHash>` for embed artefacts.
 - Path traversal is rejected by the local driver.
 
@@ -106,14 +108,32 @@ await put('connectors/csv/' + connectorId + '/sample.csv', buffer, {
 
 ### Stream a report
 
+Report runs and analytics exports use `artifact.service.writeQueryArtifact`,
+which streams an engine cursor into a storage write stream (CSV, JSON or
+XLSX) and honours backpressure:
+
 ```js
 import { createWriteStream } from '../services/storage.service.js';
 
-const stream = await createWriteStream('reports/' + runId + '.csv');
+const stream = await createWriteStream('reports/' + tenantId + '/' + reportId + '/' + runId + '.csv', { contentType: 'text/csv; charset=utf-8' });
 stream.write(headerLine);
-for await (const row of rows) stream.write(row);
+for await (const row of rows) if (!stream.write(row)) await once(stream, 'drain');
 stream.end();
+const { size } = await stream.completed;
 ```
+
+### Hand a user a download link
+
+```js
+import { signedDownloadUrl } from '../services/storage.service.js';
+
+// Authorise first (tenant + permission): the URL is the credential.
+const { url, expiresAt } = await signedDownloadUrl(key, { fileName, contentType }); // TTL: ARTIFACT_DOWNLOAD_URL_TTL_SECONDS
+```
+
+With S3 this is a presigned S3 URL (attachment disposition + content type).
+With local storage it is `/api/v1/files/<token>`: an HMAC-signed grant for
+exactly that key, served by `routes/file.routes.js` until it expires.
 
 ### Generate a presigned URL for browser download
 

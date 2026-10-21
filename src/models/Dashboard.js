@@ -17,10 +17,11 @@
  *   `src/docs/DECISIONS.md`.
  *
  * SHARING
- *   `shares` holds email-address grants (`viewer`) used as the foundation
- *   for the future embed/signed-link surface. There is no public,
- *   unauthenticated read path yet; share grants are stored, revocable and
- *   audited, but do not bypass RBAC.
+ *   (vizbuilder, roadmap 3.5) `visibility` is `workspace` (every member with
+ *   `dashboards.*` RBAC, the default) or `restricted` (only the creator,
+ *   `dashboards.assign` holders and the `shares` principals). A share grants
+ *   a tenant user or role `view` or `edit`; it never bypasses RBAC (the
+ *   route permission still applies). Enforced in dashboard.service.js.
  *
  * PLUGINS
  *   tenantScope, softDelete, paginate, optimisticConcurrency, audit
@@ -37,14 +38,24 @@ import { tenantScope, softDelete, paginate, optimisticConcurrency, audit } from 
 export const MODEL_NAME = 'Dashboard';
 export const DASHBOARD_STATUSES = Object.freeze(['draft', 'published', 'archived']);
 
-/** Date-range presets a dashboard (or widget) filter bar can resolve to. */
+/**
+ * Date-range presets a dashboard (or widget) filter bar can resolve to.
+ * Mirrors `DATE_PRESETS` in `services/analytics.engine.js` (the contract
+ * owner; a test keeps the two in sync). Relative presets are stored as
+ * presets and resolved at execution time in the workspace time zone.
+ */
 export const DATE_RANGE_PRESETS = Object.freeze([
   'today',
   'yesterday',
   'last_7_days',
   'last_30_days',
   'this_month',
+  'last_month',
   'previous_month',
+  'this_quarter',
+  'last_quarter',
+  'this_year',
+  'last_year',
   'custom',
 ]);
 
@@ -61,13 +72,18 @@ export const DASHBOARD_LIMITS = Object.freeze({
   WIDGET_CACHE_TTL_SEC: 300,
 });
 
+// vizbuilder: share principals and levels.
+export const DASHBOARD_VISIBILITY = Object.freeze(['workspace', 'restricted']);
+export const SHARE_PRINCIPALS = Object.freeze(['user', 'role']);
+export const SHARE_LEVELS = Object.freeze(['view', 'edit']);
+
 const shareSchema = new mongoose.Schema(
   {
-    email: { type: String, required: true, trim: true, lowercase: true },
-    role: { type: String, enum: ['viewer'], default: 'viewer' },
-    enabled: { type: Boolean, default: true },
-    expiresAt: { type: Date, default: null },
+    principalType: { type: String, enum: [...SHARE_PRINCIPALS], required: true },
+    principalId: { type: String, required: true },
+    level: { type: String, enum: [...SHARE_LEVELS], default: 'view' },
     createdBy: { type: String, default: null },
+    createdAt: { type: Date, default: Date.now },
   },
   { _id: true, timestamps: false },
 );
@@ -83,10 +99,13 @@ const dashboardSchema = new mongoose.Schema(
       default: { columns: 12, rowHeight: 80 },
     },
     // Dashboard-level default filters: `{ dateRange?, filters?, filtersOp? }`.
-    // A widget's own query overrides these at execution time.
+    // A widget's own query overrides these at execution time. `dateRange`
+    // is `{ field, preset }` (or custom `from`/`to`), validated by the
+    // analytics query contract.
     filters: { type: mongoose.Schema.Types.Mixed, default: null },
     // Dashboard-level auto-refresh foundation (UI ticks, not enforced server-side yet).
     refresh: { type: mongoose.Schema.Types.Mixed, default: { enabled: false, intervalSec: 300 } },
+    visibility: { type: String, enum: [...DASHBOARD_VISIBILITY], default: 'workspace' },
     shares: { type: [shareSchema], default: [] },
     createdBy: { type: String, default: null },
     updatedBy: { type: String, default: null },
@@ -96,6 +115,7 @@ const dashboardSchema = new mongoose.Schema(
 
 dashboardSchema.index({ tenantId: 1, status: 1 });
 dashboardSchema.index({ tenantId: 1, name: 1 });
+dashboardSchema.index({ tenantId: 1, 'shares.principalType': 1, 'shares.principalId': 1 });
 
 dashboardSchema.plugin(tenantScope);
 dashboardSchema.plugin(softDelete);

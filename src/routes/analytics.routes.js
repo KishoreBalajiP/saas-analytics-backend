@@ -11,6 +11,8 @@
  *   - GET  /queries         list past runs           permission analytics.view
  *   - GET  /queries/:id     fetch a run              permission analytics.view
  *   - POST /export          schedule async export    permission analytics.export
+ *   - GET  /exports/:id     export status (own)      permission analytics.export
+ *   - GET  /exports/:id/download  signed URL (own)   permission analytics.export
  *
  * MIDDLEWARE ORDER
  *   authenticate -> resolveTenant -> permission('analytics', <action>) -> handler
@@ -55,6 +57,22 @@ router.post(
   permission('analytics', 'export'),
   validate(analyticsValidator.exportSchema),
   analyticsController.exportAsync,
+);
+router.get(
+  '/exports/:id',
+  authenticate,
+  resolveTenant,
+  permission('analytics', 'export'),
+  validate(analyticsValidator.exportIdSchema),
+  analyticsController.getExport,
+);
+router.get(
+  '/exports/:id/download',
+  authenticate,
+  resolveTenant,
+  permission('analytics', 'export'),
+  validate(analyticsValidator.exportIdSchema),
+  analyticsController.downloadExport,
 );
 
 export default router;

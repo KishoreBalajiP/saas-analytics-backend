@@ -5,6 +5,11 @@
  * `src/routes/alert.routes.js`. The alert model is SINGLE-CONDITION
  * (metric / condition / threshold), matching `alert.service.createRule`.
  *
+ * METRIC: `metric` must name an output of the rule's query (a metric alias,
+ * or `count` when the query has no metrics) and `groupEvaluation` is one of
+ * total | any | all; both are checked in `alert.service.js` (400
+ * ALERT_METRIC_INVALID / field errors).
+ *
  * SECURITY: `query` / `schedule` / `notification` are passed through as
  * objects and re-sanitised inside `alert.service.js` (which whitelists
  * `QUERY_FIELDS`, schedule fields, and `ALERT_CHANNELS`). No raw expression
@@ -28,6 +33,7 @@ export const alertCreateSchema = {
     widgetId: 'objectId',
     query: 'object',
     metric: 'string',
+    groupEvaluation: 'string',
     condition: 'string|required',
     threshold: 'number|required',
     thresholdHigh: 'number',
@@ -48,6 +54,7 @@ export const alertUpdateSchema = {
     widgetId: 'objectId',
     query: 'object',
     metric: 'string',
+    groupEvaluation: 'string',
     condition: 'string',
     threshold: 'number',
     thresholdHigh: 'number',

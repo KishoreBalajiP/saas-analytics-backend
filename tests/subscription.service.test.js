@@ -84,16 +84,23 @@ test('cancel + reactivate round-trips through the state graph', async () => {
   await planService.ensureDefaults('test');
   const tenant = await makeTenant('pro');
   await subscriptionService.createForTenant({ tenantId: tenant._id.toString(), planId: 'pro' });
+  // billing: cancel at period end, then undo while the prepaid term runs.
   const canceled = await subscriptionService.cancel({
     tenantId: tenant._id.toString(),
-    immediate: true,
     reason: 'no longer needed',
   });
   assert.equal(canceled.state, 'canceled');
-  assert.equal(canceled.canceledAt, canceled.canceledAt);
+  assert.equal(canceled.cancelAtPeriodEnd, true);
   const reactivated = await subscriptionService.reactivate({ tenantId: tenant._id.toString() });
   assert.equal(reactivated.state, 'active');
   assert.equal(reactivated.canceledAt, null);
+  assert.equal(String(reactivated.currentPeriodEnd), String(canceled.currentPeriodEnd), 'reactivation never extends the term');
+  // An immediate cancel ends the term: reactivation is refused.
+  await subscriptionService.cancel({ tenantId: tenant._id.toString(), immediate: true, reason: 'now' });
+  await assert.rejects(
+    () => subscriptionService.reactivate({ tenantId: tenant._id.toString() }),
+    (err) => err instanceof ApiError && err.statusCode === 409,
+  );
 });
 
 test('setState requires a reason and records previousState', async () => {

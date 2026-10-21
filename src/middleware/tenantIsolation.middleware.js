@@ -27,6 +27,7 @@
 
 import ApiError from '../utils/ApiError.js';
 import { getActor } from './actor.js';
+import { auditDenied } from './audit.middleware.js';
 
 /** Wildcard tenantScope meaning "may reach any tenant". */
 export const CROSS_TENANT_SCOPE = '*';
@@ -58,16 +59,16 @@ export function tenantIsolation(opts = {}) {
     if (!requested) return next();
 
     const actor = getActor(req);
-    if (!actor) return next(ApiError.forbidden('Authenticated identity is required'));
+    if (!actor) return next(auditDenied(req, ApiError.forbidden('Authenticated identity is required'), 'no_identity'));
 
     if (actor.type === 'user') {
       if (actor.tenantId && actor.tenantId === requested) return next();
-      return next(ApiError.forbidden('You cannot access data from another tenant'));
+      return next(auditDenied(req, ApiError.forbidden('You cannot access data from another tenant'), 'cross_tenant', { requestedTenantId: requested }));
     }
 
     // Admin: '*' scope reaches anything; otherwise the scoped grant must match.
     if (actor.tenantId === CROSS_TENANT_SCOPE || actor.tenantId === requested) return next();
-    return next(ApiError.forbidden('Your scope does not cover this tenant'));
+    return next(auditDenied(req, ApiError.forbidden('Your scope does not cover this tenant'), 'tenant_scope', { requestedTenantId: requested }));
   };
 }
 

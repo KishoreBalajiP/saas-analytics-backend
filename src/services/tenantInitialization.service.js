@@ -36,10 +36,17 @@ import roleRepository from '../repositories/role.repository.js';
 import permissionRepository from '../repositories/permission.repository.js';
 import { UserRole } from '../models/UserRole.js';
 import { BUILTIN_MODULES, IAM_MODULES } from '../models/Module.js';
+// members: tenant-only workspace module (roadmap 2.10).
+import { MEMBERS_MODULES } from '../models/Module.js';
 import * as tenantSettings from './tenantSettings.service.js';
 import * as featureFlagService from './featureFlag.service.js';
 import { emit as auditEmit } from './auditLog.service.js';
 import { invalidateScope } from './rbac.cache.service.js';
+import usageService from './usage.service.js';
+// billing: every initialised workspace gets its subscription (free plan, or
+// a trial when the tenant's plan defines trialDays).
+import subscriptionService from './subscription.service.js';
+import logger from '../utils/logger.js';
 
 /** Tenant-relevant modules and the actions their permissions expose. */
 const TENANT_PERMISSION_ACTIONS = Object.freeze({
@@ -49,7 +56,8 @@ const TENANT_PERMISSION_ACTIONS = Object.freeze({
   feature_flags: ['view', 'configure', 'update', 'delete'],
   analytics: ['view', 'create', 'update', 'delete', 'export'],
   connectors: ['view', 'create', 'update', 'delete', 'configure', 'preview', 'sync'],
-  dashboards: ['view', 'create', 'update', 'delete'],
+  // vizbuilder: 'assign' = manage sharing on every dashboard.
+  dashboards: ['view', 'create', 'update', 'delete', 'assign'],
   reports: ['view', 'create', 'update', 'delete', 'export'],
   notifications: ['view', 'configure', 'update', 'delete'],
   alerts: ['view', 'create', 'update', 'delete', 'evaluate'],
@@ -58,6 +66,22 @@ const TENANT_PERMISSION_ACTIONS = Object.freeze({
   // External-API credentials + public embed surface (Sprint 9).
   api_keys: ['view', 'create', 'update', 'delete'],
   embed: ['view', 'create', 'delete'],
+  // Workspace billing self-service (subscription.routes.js).
+  'iam.subscriptions': ['view', 'update'],
+  'iam.entitlements': ['view'],
+  // ai-catalogue: metric definitions (manage = create/edit/archive drafts; approve = publish a version).
+  metrics: ['view', 'manage', 'approve'],
+  // mfa-tenant: workspace security policy (MFA required) and
+  // Owner-assisted member MFA reset (`/workspace/security`).
+  security: ['view', 'configure'],
+  // rls: dataset grants, row rules, user attributes (`/data-access`).
+  data_access: ['view', 'configure'],
+  // members: Owner-only workspace powers (roadmap 2.10): transfer ownership
+  // and delete the workspace. Never assignable to custom roles.
+  workspace: ['transfer', 'delete'],
+  // backups: workspace data export (roadmap 2.9). `view` lists exports,
+  // `export` requests one and downloads the archive.
+  data_exports: ['view', 'export'],
 });
 
 /**
@@ -90,6 +114,8 @@ const DEFAULT_ROLES = Object.freeze({
       ...P('analytics', ['view', 'create', 'update', 'delete', 'export']),
       ...P('connectors', ['view', 'create', 'update', 'delete', 'configure', 'preview', 'sync']),
       ...P('dashboards', ['view', 'create', 'update', 'delete']),
+      // vizbuilder:
+      ...P('dashboards', ['assign']),
       ...P('reports', ['view', 'create', 'update', 'delete', 'export']),
       ...P('notifications', ['view', 'configure', 'update', 'delete']),
       ...P('master_data', ['view']),
@@ -97,6 +123,21 @@ const DEFAULT_ROLES = Object.freeze({
       ...P('alerts', ['view', 'create', 'update', 'delete', 'evaluate']),
       ...P('api_keys', ['view', 'create', 'update', 'delete']),
       ...P('embed', ['view', 'create', 'delete']),
+      // Billing: view plans/usage and pay. Plan changes to paid plans only
+      // happen through checkout + payment verification.
+      ...P('iam.subscriptions', ['view', 'update']),
+      ...P('iam.entitlements', ['view']),
+      // ai-catalogue: metric definitions.
+      ...P('metrics', ['view', 'manage', 'approve']),
+      // mfa-tenant: only the Owner changes the MFA policy or resets a
+      // member's MFA.
+      ...P('security', ['view', 'configure']),
+      // rls: the Owner administers data access (and is not restricted by it).
+      ...P('data_access', ['view', 'configure']),
+      // members: Owner-only workspace powers (roadmap 2.10).
+      ...P('workspace', ['transfer', 'delete']),
+      // backups: only the Owner may export all workspace data by default.
+      ...P('data_exports', ['view', 'export']),
     ],
   },
   Admin: {
@@ -117,6 +158,16 @@ const DEFAULT_ROLES = Object.freeze({
       ...P('alerts', ['view', 'create', 'update', 'evaluate']),
       ...P('api_keys', ['view', 'create', 'update']),
       ...P('embed', ['view', 'create']),
+      // ai-catalogue: metric definitions.
+      ...P('metrics', ['view', 'manage', 'approve']),
+      // mfa-tenant: Admins see the policy and who has MFA.
+      ...P('security', ['view']),
+      // rls: Admins can read the data access rules.
+      ...P('data_access', ['view']),
+      // members: Admins change roles below their own and remove non-owners
+      // (roadmap 2.10; the ceiling is enforced by tenantMember.service.js).
+      ...P('users', ['delete']),
+      ...P('roles', ['assign']),
     ],
   },
   Manager: {
@@ -133,6 +184,10 @@ const DEFAULT_ROLES = Object.freeze({
       ...P('master_data', ['view']),
       ...P('api_keys', ['view']),
       ...P('embed', ['view']),
+      // config: read which feature flags are on for the workspace.
+      ...P('feature_flags', ['view']),
+      // ai-catalogue: propose metric drafts; approval stays with Owner/Admin.
+      ...P('metrics', ['view', 'manage']),
     ],
   },
   Viewer: {
@@ -147,6 +202,10 @@ const DEFAULT_ROLES = Object.freeze({
       ...P('notifications', ['view']),
       ...P('alerts', ['view']),
       ...P('master_data', ['view']),
+      // config: read which feature flags are on for the workspace.
+      ...P('feature_flags', ['view']),
+      // ai-catalogue: read the metric catalogue.
+      ...P('metrics', ['view']),
     ],
   },
 });
@@ -182,6 +241,10 @@ async function ensureModules({ by }) {
   }
   for (const key of IAM_MODULES) {
     await ensureModule(key, { name: `IAM ${titleCase(key.split('.')[1])}`, by });
+  }
+  // members: tenant-only workspace module (roadmap 2.10).
+  for (const key of MEMBERS_MODULES) {
+    await ensureModule(key, { name: titleCase(key), by });
   }
 }
 
@@ -315,6 +378,17 @@ export async function initialize({ tenantId, owner = {}, by = null } = {}) {
 
   await invalidateScope(tenantId);
 
+  // Seed the usage counters from what exists now (the owner holds a seat).
+  // Never fail onboarding over it: the daily reconcile corrects counters.
+  await usageService.reconcile({ tenantId: String(tenantId), dryRun: false, by: by ?? 'system' }).catch(() => null);
+
+  // billing (finding bil.09): provision the default subscription now. A
+  // failure never fails onboarding: a tenant without a row resolves the
+  // free plan anyway and the row is created on first billing access.
+  await subscriptionService
+    .ensureForTenant({ tenantId: String(tenantId), by, reason: 'Workspace initialization' })
+    .catch((err) => logger.warn({ err: { message: err?.message }, tenantId: String(tenantId) }, 'Default subscription provisioning failed'));
+
   await auditEmit({
     actor,
     action: 'tenant.initialized',
@@ -334,8 +408,38 @@ function titleCase(value) {
   return String(value).replace(/[._]/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
+/**
+ * Idempotently bring an existing tenant's default roles up to the current
+ * catalogue (new permission keys added since the tenant was initialised).
+ * Only attaches permissions; never removes grants or touches custom roles.
+ *
+ * @returns {Promise<{ attached: number }>}
+ */
+export async function syncDefaultRolePermissions({ tenantId, by = 'migration', dryRun = false } = {}) {
+  if (!tenantId) throw ApiError.badRequest('tenantId is required');
+  if (!dryRun) {
+    await ensureModules({ by });
+    await ensurePermissions({ by });
+  }
+  let attached = 0;
+  for (const [name, def] of Object.entries(DEFAULT_ROLES)) {
+    const role = await roleRepository.findByName({ tenantId, name });
+    if (!role) continue;
+    for (const permissionKey of def.permissions) {
+      const permission = await permissionRepository.findPermissionByKey(permissionKey);
+      if (!permission) continue;
+      if (dryRun) { attached += 1; continue; }
+      const joined = await roleRepository.attachPermission(role._id, permission._id, by);
+      if (joined) attached += 1;
+    }
+  }
+  if (!dryRun && attached) await invalidateScope(String(tenantId));
+  return { attached };
+}
+
 export default {
   initialize,
+  syncDefaultRolePermissions,
   DEFAULT_ROLES,
   TENANT_PERMISSION_ACTIONS,
   PLATFORM_PERMISSION_ACTIONS,

@@ -27,6 +27,7 @@ import assert from 'node:assert/strict';
 import { startMongo, stopMongo, resetMongo } from './helpers/mongo.js';
 import { startHttp, stopHttp, api } from './helpers/http.js';
 import { factories } from './helpers/factories.js';
+import { entitleTenant } from './helpers/billing.js';
 import planService from '../src/services/plan.service.js';
 import rbacCache from '../src/services/rbac.cache.service.js';
 import permissionRepository from '../src/repositories/permission.repository.js';
@@ -220,8 +221,11 @@ test('workspace Owner can fetch their subscription (lazy provisioning)', async (
     headers: { authorization: `Bearer ${token}` },
   });
   assert.equal(res.status, 200);
+  // billing: lazy provisioning never grants a paid plan; the tenant record's
+  // plan defines a trial (starter: 14 days), so the workspace starts on it.
   assert.equal(res.json.data.planId, 'starter');
-  assert.equal(res.json.data.state, 'active');
+  assert.equal(res.json.data.state, 'trialing');
+  assert.equal(res.json.data.access.state, 'trialing');
 });
 
 test('workspace Manager (no update permission) cannot cancel a subscription', async () => {
@@ -238,10 +242,12 @@ test('workspace Manager (no update permission) cannot cancel a subscription', as
 test('workspace Owner can cancel and reactivate their subscription', async () => {
   const { tenant, ownerUser } = await seedTenantWithOwner();
   const token = await loginUser(ownerUser.email, tenant._id.toString());
+  // billing: cancel at period end, then undo while the paid term runs.
+  await entitleTenant(tenant._id.toString(), 'pro');
   const cancel = await api(`${PREFIX}/tenants/${tenant._id}/subscription/cancel`, {
     method: 'POST',
     headers: { authorization: `Bearer ${token}` },
-    body: { immediate: true, reason: 'Test cancel' },
+    body: { reason: 'Test cancel' },
   });
   assert.equal(cancel.status, 200);
   assert.equal(cancel.json.data.state, 'canceled');

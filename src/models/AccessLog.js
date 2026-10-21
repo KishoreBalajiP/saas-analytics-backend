@@ -11,9 +11,11 @@
  *   - NEVER stores request/response bodies, and never stores header values
  *     (Authorization is captured only in redacted form `Bearer ***`).
  *   - `tenantId` is nullable (platform-admin requests have no tenant scope).
- *   - Append-only at the application level: rows are written once via the
- *     repository and pruned only by the retention/cleanup job.
+ *   - Append-only at the application level (`plugins/appendOnly.js`): every
+ *     update/delete query is rejected unless it passes `bypassAppendOnly`,
+ *     which only the retention purge does.
  *   - `event` tags a subset of captures for ops analysis (e.g. `impersonate`).
+ *   - `impersonatedBy` attributes support-session requests to the operator.
  *
  * INDEXES
  *   - { tenantId: 1, occurredAt: -1 }
@@ -24,6 +26,7 @@
 
 import mongoose from 'mongoose';
 import { paginate } from './plugins/index.js';
+import { appendOnly } from './plugins/appendOnly.js';
 
 export const MODEL_NAME = 'AccessLog';
 export const ACTOR_TYPES = Object.freeze(['admin', 'user', 'service', 'system']);
@@ -44,6 +47,9 @@ const accessLogSchema = new mongoose.Schema(
     userAgent: { type: String, default: null },
     requestId: { type: String, default: null },
     event: { type: String, default: DEFAULT_EVENT },
+    // support: operator (admin) id when the request came from a read-only
+    // support session of `actorId` (roadmap 2.3 attribution).
+    impersonatedBy: { type: String, default: null },
     error: {
       code: { type: String, default: null },
       message: { type: String, default: null },
@@ -58,6 +64,7 @@ accessLogSchema.index({ path: 1, occurredAt: -1 });
 accessLogSchema.index({ statusCode: 1, occurredAt: -1 });
 
 accessLogSchema.plugin(paginate);
+accessLogSchema.plugin(appendOnly, { name: 'AccessLog' });
 
 export const AccessLogSchema = accessLogSchema;
 export const AccessLog = mongoose.model(MODEL_NAME, accessLogSchema);

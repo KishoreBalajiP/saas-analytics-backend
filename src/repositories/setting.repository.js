@@ -122,12 +122,13 @@ export const update = (id, patch) => {
  * Idempotent scoped upsert by key (used by the onboarding initialiser).
  * Returns `{ setting, created: boolean }`.
  */
-export const upsertByKey = async ({ key, scope, tenantId = null, type, value, description = '', isSecret = false, isReadonly = false, group = 'general', updatedBy = null }) => {
+export const upsertByKey = async ({ key, scope, tenantId = null, type, value, secret, description = '', isSecret = false, isReadonly = false, group = 'general', updatedBy = null }) => {
   const existing = await findByKey({ key, scope, tenantId });
   if (existing) {
     const patch = {};
     if (type !== undefined) patch.type = type;
     if (value !== undefined) patch.value = value;
+    if (secret !== undefined) patch.secret = secret;
     if (description !== undefined) patch.description = description;
     if (isSecret !== undefined) patch.isSecret = isSecret;
     if (isReadonly !== undefined) patch.isReadonly = isReadonly;
@@ -139,15 +140,66 @@ export const upsertByKey = async ({ key, scope, tenantId = null, type, value, de
   try {
     const setting = await create({
       key, scope, tenantId, type, value, description, isSecret, isReadonly, group, updatedBy,
+      ...(secret !== undefined ? { secret } : {}),
     });
     return { setting, created: true };
   } catch (error) {
     if (error?.code !== 11000) throw error;
     const createdConcurrently = await findByKey({ key, scope, tenantId });
     if (!createdConcurrently) throw error;
-    return upsertByKey({ key, scope, tenantId, type, value, description, isSecret, isReadonly, group, updatedBy });
+    return upsertByKey({ key, scope, tenantId, type, value, secret, description, isSecret, isReadonly, group, updatedBy });
   }
 };
+
+/**
+ * Create a scoped setting row only when none exists (soft-deleted rows
+ * included, because they still hold the unique key). Never overwrites a
+ * stored value. Returns `{ setting, created }`.
+ */
+export const insertIfAbsent = async (data) => {
+  const filter = { key: data.key, scope: data.scope, tenantId: data.tenantId ?? null };
+  const existing = await Setting.findOne(filter).setOptions({ includeDeleted: true }).lean();
+  if (existing) return { setting: existing, created: false };
+  try {
+    return { setting: await create({ ...data, tenantId: data.tenantId ?? null }), created: true };
+  } catch (error) {
+    if (error?.code !== 11000) throw error;
+    const concurrent = await Setting.findOne(filter).setOptions({ includeDeleted: true }).lean();
+    if (!concurrent) throw error;
+    return { setting: concurrent, created: false };
+  }
+};
+
+/**
+ * Versioned write: apply `set` only when the row is still at
+ * `expectedVersion`, and bump `version` by one. Returns the updated lean
+ * doc, or null when the version moved on (or the row is gone).
+ */
+export const updateIfVersion = (id, expectedVersion, set) =>
+  Setting.findOneAndUpdate(
+    // Rows written before versioning may lack the field: treat as 0.
+    { _id: id, version: expectedVersion === 0 ? { $in: [0, null] } : expectedVersion },
+    { $set: set, $inc: { version: 1 } },
+    { new: true, runValidators: true, lean: true },
+  );
+
+/**
+ * Secret rows still holding a plaintext `value` and no encrypted envelope
+ * (written before secrets were encrypted at rest). Includes soft-deleted
+ * rows: they still carry the plaintext.
+ */
+export const findLegacyPlaintextSecrets = () =>
+  Setting.find({ isSecret: true, secret: null, value: { $nin: [null, ''] } })
+    .setOptions({ includeDeleted: true })
+    .lean();
+
+/** Store the encrypted envelope for a secret row and clear its plaintext. */
+export const replaceSecretPlaintext = (id, secret) =>
+  Setting.findOneAndUpdate(
+    { _id: id },
+    { $set: { secret, value: '' } },
+    { new: true, lean: true },
+  ).setOptions({ includeDeleted: true });
 
 /** Soft-delete a setting row. Returns the plain doc or null. */
 export const softDelete = async (id, by) => {
@@ -163,6 +215,10 @@ export default {
   create,
   update,
   upsertByKey,
+  insertIfAbsent,
+  updateIfVersion,
+  findLegacyPlaintextSecrets,
+  replaceSecretPlaintext,
   softDelete,
   coerceValue,
   _meta: { leanReturns: true, tenancy: 'platform+tenant', unique: 'scope+tenantId+key' },

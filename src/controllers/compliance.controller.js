@@ -24,10 +24,31 @@ import ApiResponse from '../utils/ApiResponse.js';
 import ApiError from '../utils/ApiError.js';
 import complianceService from '../services/compliance.service.js';
 import * as storageService from '../services/storage.service.js';
+import userRepository from '../repositories/user.repository.js';
+import { adminScopeOf } from '../middleware/adminScope.middleware.js';
 
 /** Resolve the caller's tenant boundary (null = platform-wide). */
 function boundary(req) {
-  return req.admin?.tenantId ?? null;
+  return adminScopeOf(req);
+}
+
+/**
+ * A tenant-scoped admin may only file for subjects inside its tenant: the
+ * tenant itself, or a user of that tenant (existence is not disclosed).
+ */
+async function assertSubjectInScope(scope, subjectType, subjectId) {
+  if (!scope) return;
+  if (subjectType === 'tenant') {
+    if (String(subjectId) !== scope) throw ApiError.notFound('Subject not found');
+    return;
+  }
+  let user = null;
+  try {
+    user = await userRepository.findById(subjectId);
+  } catch (err) {
+    if (err?.name !== 'CastError') throw err;
+  }
+  if (!user || String(user.tenantId) !== scope) throw ApiError.notFound('Subject not found');
 }
 
 /** Deny tenant-scoped callers access to requests outside their scope. */
@@ -40,13 +61,17 @@ function assertBoundary(row, tenantId) {
 /** POST /compliance/requests - file a request on behalf of a subject. */
 export const createRequest = asyncHandler(async (req, res) => {
   const { subjectId, subjectType = 'user', type, reason, subjectEmail, tenantScope } = req.validated?.body ?? {};
+  // Tenant-scoped admins file inside their tenant only (the route already
+  // refused an explicit out-of-scope `tenantScope`).
+  const scope = boundary(req);
+  await assertSubjectInScope(scope, subjectType, subjectId);
   const result = await complianceService.fileRequest({
     subjectId,
     subjectType,
     type,
     reason,
     subjectEmail,
-    tenantScope,
+    tenantScope: scope ? [scope] : tenantScope,
     requesterId: req.admin?.id ?? req.user?.id ?? null,
     requesterType: req.admin ? 'admin' : 'user',
     by: req.admin?.id ?? null,

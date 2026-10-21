@@ -10,6 +10,14 @@
  * RESPONSIBILITY
  *   - `computeKey(req)` -> deterministic 64-char SHA-256 key for a request.
  *   - `keyFromRaw(raw)` -> build a key from a custom payload.
+ *   - `readIdempotencyHeader(req)` -> the client key (validated), or a
+ *     typed reason why it is unusable.
+ *   - `scopedKey({ scope, method, path, clientKey })` -> the storage key the
+ *     middleware uses: the client key namespaced by actor, tenant, method
+ *     and path, so two actors (or tenants) reusing one client key can never
+ *     read each other's stored response.
+ *   - `fingerprintRequest(req)` -> hash of the request body, used to refuse
+ *     reuse of one key for a different payload.
  *
  * CONTRACT (consumed by `middleware/idempotency.middleware.js` in Sprint 1+)
  *   Clients send `X-Idempotency-Key: <opaque-string>`. The middleware:
@@ -24,8 +32,8 @@
  *   - Never logs the raw header value.
  *
  * HOW TO EXTEND
- *   - Add `tenantId` to the key namespace once `resolveTenant` lands
- *     (Sprint 1) so cross-tenant replays are impossible.
+ *   - The middleware stores outcomes under `scopedKey(...)`; `computeKey`
+ *     is kept for callers that need an unscoped, same-process fingerprint.
  */
 
 import crypto from 'node:crypto';
@@ -67,6 +75,64 @@ export function keyFromRaw(raw) {
     throw new Error('keyFromRaw requires a non-empty string');
   }
   return sha256Hex(`${DEFAULT_NAMESPACE}:raw:${raw}`);
+}
+
+/** Printable ASCII, 1-255 characters (UUIDs, ULIDs, `order:42`, ...). */
+const CLIENT_KEY_RE = /^[\x21-\x7e]{1,255}$/;
+
+/**
+ * Read and validate the client's `X-Idempotency-Key`.
+ *
+ * @param {import('express').Request} req
+ * @returns {{ key: string|null, invalid: boolean }} `invalid` is true when a
+ *   header was sent but is empty, too long or contains non-printable text.
+ */
+export function readIdempotencyHeader(req) {
+  const raw = req?.headers?.['x-idempotency-key'];
+  if (raw === undefined) return { key: null, invalid: false };
+  if (typeof raw !== 'string') return { key: null, invalid: true };
+  const trimmed = raw.trim();
+  if (!CLIENT_KEY_RE.test(trimmed)) return { key: null, invalid: true };
+  return { key: trimmed, invalid: false };
+}
+
+/**
+ * Storage key for one idempotent request, namespaced by who sent it and
+ * where it went.
+ *
+ * @param {Object} params
+ * @param {{ actorType: string, actorId: string, tenantId?: string|null, targetTenantId?: string|null }} params.scope
+ *   `tenantId` is the actor's own tenant (from the token); `targetTenantId`
+ *   the workspace the request names (`X-Tenant-Id`), if any.
+ * @param {string} params.method
+ * @param {string} params.path - request path without the query string.
+ * @param {string} params.clientKey - the validated header value.
+ * @returns {string} 64-character hex digest.
+ */
+export function scopedKey({ scope, method, path, clientKey }) {
+  if (!scope?.actorType || !scope?.actorId) throw new Error('scopedKey requires an actor scope');
+  const parts = [
+    'v2',
+    `${scope.actorType}:${scope.actorId}`,
+    `tenant:${scope.tenantId ?? '-'}`,
+    `target:${scope.targetTenantId ?? '-'}`,
+    String(method ?? '').toUpperCase(),
+    String(path ?? ''),
+    clientKey,
+  ];
+  return sha256Hex(`${DEFAULT_NAMESPACE}:scoped:${parts.map((p) => encodeURIComponent(p)).join('|')}`);
+}
+
+/**
+ * Fingerprint of the request payload (sorted-key JSON of the parsed body).
+ * Multipart bodies are not parsed yet when the middleware runs, so they
+ * fingerprint as empty; the client key alone identifies them.
+ *
+ * @param {import('express').Request} req
+ * @returns {string} 64-character hex digest.
+ */
+export function fingerprintRequest(req) {
+  return sha256Hex(`${DEFAULT_NAMESPACE}:body:${normaliseBody(req?.body)}`);
 }
 
 /* ------------------------------ internals ------------------------------- */
@@ -127,4 +193,4 @@ function sha256Hex(value) {
   return crypto.createHash('sha256').update(value).digest('hex');
 }
 
-export default { computeKey, keyFromRaw };
+export default { computeKey, keyFromRaw, readIdempotencyHeader, scopedKey, fingerprintRequest };

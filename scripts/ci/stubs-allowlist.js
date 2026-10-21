@@ -35,6 +35,5 @@ export default [
   'src/controllers/monitoring.controller.js',
   'src/controllers/permission.controller.js',
   'src/controllers/role.controller.js',
-  'src/controllers/setting.controller.js',
   'src/controllers/support.controller.js',
 ];

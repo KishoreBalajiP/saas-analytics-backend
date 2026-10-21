@@ -19,10 +19,13 @@ export const listSchema = {
   },
 };
 
+/** Roles an approval may invite with (mirrors accessRequest.service). */
+const APPROVABLE_ROLES = ['Viewer', 'Manager'];
+
 export const decisionSchema = {
   body: {
     tenantId: { type: 'objectId', required: true },
-    roleName: { type: 'string', maxLength: 80 },
+    roleName: { type: 'string', oneOf: APPROVABLE_ROLES },
     note: { type: 'string', maxLength: 500 },
   },
   params: { id: 'objectId|required' },

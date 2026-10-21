@@ -1,46 +1,121 @@
 /**
- * /api/v1/feature-flags routes - Dynamic feature flag registry + resolver.
+ * /api/v1/feature-flags routes - feature flag registry + evaluation
+ * (roadmap 2.4 - implemented).
  *
  * WHY IT EXISTS
- *   Decouple deployment from release. Flags have rollout strategies
- *   (all-on, tenant allow-list, percentage, attribute rule). The runtime
- *   `/resolve` endpoint is what the rest of the platform calls.
+ *   Decouple deployment from release. Platform admins roll features out to
+ *   everyone, to an allow-list of tenants, or to a stable percentage of
+ *   tenants; workspaces read the result for themselves.
  *
- *   Backed by `platform/feature-flags/`.
+ * ENDPOINTS
+ *   Tenant users (authenticate -> resolveTenant -> permission):
+ *   - GET    /evaluate              this workspace's flags     feature_flags.view
  *
- * RESPONSIBILITY (planned, NOT implemented)
- *   - GET    /                      - list flags (admin)
- *   - POST   /                      - create
- *   - GET    /:key                  - detail
- *   - PATCH  /:key                  - update rollout
- *   - DELETE /:key                  - delete (refuses if production-bound)
- *   - POST   /resolve               - runtime resolution (Phase 2 SDK)
+ *   Platform admins (adminAuth -> requirePlatformScope -> permission):
+ *   - GET    /                      list                       feature_flags.view
+ *   - POST   /                      create                     feature_flags.create
+ *   - GET    /preview?tenantId=     outcomes for one tenant    feature_flags.view
+ *   - GET    /:key                  detail                     feature_flags.view
+ *   - PATCH  /:key                  update / rollout           feature_flags.update
+ *   - DELETE /:key?version=         delete (non-system flags)  feature_flags.delete
+ *   - GET    /:key/history          versions, newest first     feature_flags.view
+ *   - POST   /:key/rollback         restore { toVersion }      feature_flags.update
  *
- * HOW TO EXTEND
- *   - `/resolve` is the ONLY allowed read surface for running code.
- *   - All writes invalidate `feature-flags:<scope>` cache keys.
+ * RULES
+ *   - Every change is versioned (409 VERSION_CONFLICT on a stale
+ *     `version`), recorded in the history, audited, and invalidates the
+ *     evaluation cache immediately.
+ *   - Flag keys contain a dot, so `/evaluate` and `/preview` can never
+ *     collide with a flag key.
  */
 
 import { Router } from 'express';
-import asyncHandler from '../utils/asyncHandler.js';
+import { adminAuth } from '../middleware/adminAuth.middleware.js';
+import { authenticate } from '../middleware/auth.middleware.js';
+import { resolveTenant } from '../middleware/tenant.middleware.js';
+import { permission } from '../middleware/permission.middleware.js';
+import { requirePlatformScope } from '../middleware/configAccess.middleware.js';
+import { validate } from '../validators/index.js';
+import featureFlagValidator from '../validators/featureFlag.validator.js';
+import featureFlagController from '../controllers/featureFlag.controller.js';
 
 const router = Router();
 
-const notImplemented = (op) =>
-  asyncHandler(async (_req, res) => {
-    res.status(501).json({
-      success: false,
-      statusCode: 501,
-      message: `${op} is not implemented yet (Phase 1.2 architecture placeholder)`,
-      hint: 'See src/modules/platform/feature-flags/README.md',
-    });
-  });
+/* ---------------------------- tenant users ---------------------------- */
 
-router.get('/', notImplemented('GET /feature-flags'));
-router.post('/', notImplemented('POST /feature-flags'));
-router.get('/:key', notImplemented('GET /feature-flags/:key'));
-router.patch('/:key', notImplemented('PATCH /feature-flags/:key'));
-router.delete('/:key', notImplemented('DELETE /feature-flags/:key'));
-router.post('/resolve', notImplemented('POST /feature-flags/resolve'));
+router.get(
+  '/evaluate',
+  authenticate,
+  resolveTenant,
+  permission('feature_flags', 'view'),
+  featureFlagController.evaluateFlags,
+);
+
+/* --------------------------- platform admins -------------------------- */
+
+router.get(
+  '/',
+  adminAuth,
+  requirePlatformScope,
+  permission('feature_flags', 'view'),
+  validate(featureFlagValidator.listSchema),
+  featureFlagController.listFlags,
+);
+router.post(
+  '/',
+  adminAuth,
+  requirePlatformScope,
+  permission('feature_flags', 'create'),
+  validate(featureFlagValidator.createSchema),
+  featureFlagController.createFlag,
+);
+router.get(
+  '/preview',
+  adminAuth,
+  requirePlatformScope,
+  permission('feature_flags', 'view'),
+  validate(featureFlagValidator.previewSchema),
+  featureFlagController.previewFlags,
+);
+router.get(
+  '/:key',
+  adminAuth,
+  requirePlatformScope,
+  permission('feature_flags', 'view'),
+  validate(featureFlagValidator.keyParamSchema),
+  featureFlagController.getFlag,
+);
+router.patch(
+  '/:key',
+  adminAuth,
+  requirePlatformScope,
+  permission('feature_flags', 'update'),
+  validate(featureFlagValidator.updateSchema),
+  featureFlagController.updateFlag,
+);
+router.delete(
+  '/:key',
+  adminAuth,
+  requirePlatformScope,
+  permission('feature_flags', 'delete'),
+  validate(featureFlagValidator.deleteSchema),
+  featureFlagController.deleteFlag,
+);
+router.get(
+  '/:key/history',
+  adminAuth,
+  requirePlatformScope,
+  permission('feature_flags', 'view'),
+  validate(featureFlagValidator.historySchema),
+  featureFlagController.flagHistory,
+);
+router.post(
+  '/:key/rollback',
+  adminAuth,
+  requirePlatformScope,
+  permission('feature_flags', 'update'),
+  validate(featureFlagValidator.rollbackSchema),
+  featureFlagController.rollbackFlag,
+);
 
 export default router;

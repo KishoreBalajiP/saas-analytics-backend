@@ -135,9 +135,10 @@ test('update does not accept a code in the patch (code is immutable)', async () 
   assert.equal(updated.code, 'pro');
 });
 
-test('resolveFallbackPlan returns the starter plan when the catalogue is seeded', async () => {
+test('resolveFallbackPlan returns the free plan when the catalogue is seeded', async () => {
   await planService.ensureDefaults('test');
   const fallback = await planService.resolveFallbackPlan();
-  assert.equal(fallback.code, 'starter');
+  // billing (finding bil.09): never a paid tier.
+  assert.equal(fallback.code, 'free');
   assert.equal(fallback.data.status, 'active');
 });

@@ -184,6 +184,8 @@ export const settingsUpdateSchema = {
 export const changeOwnerSchema = {
   body: {
     userId: 'objectId|required',
+    // members: break-glass reason recorded in the audit trail (roadmap 2.10).
+    reason: { type: 'string', maxLength: 500 },
   },
   params: {
     id: 'objectId|required',

@@ -33,7 +33,10 @@ let baseUrl = '';
  */
 export async function startHttp() {
   if (server) return baseUrl;
-  server = app.listen(0);
+  // Bind to the loopback address explicitly. On macOS a wildcard bind can be
+  // shadowed by another process binding 127.0.0.1 on the same port (for
+  // example a parallel test run), so requests would reach the wrong app.
+  server = app.listen(0, '127.0.0.1');
   await new Promise((resolve, reject) => {
     server.once('listening', resolve);
     server.once('error', reject);
@@ -108,16 +111,27 @@ export async function apiMultipart(path, { method = 'POST', headers = {}, fields
   return { status: res.status, headers: res.headers, json, setCookie };
 }
 
+/** Refresh-cookie names: tenant portal, admin portal. */
+export const REFRESH_COOKIE_NAMES = Object.freeze(['saas_session', 'saas_admin_session']);
+
 /**
- * Extract the auth cookie (`saas_session=...`) from a response, ready to be
- * sent back via `opts.cookies`. Returns `null` when the cookie is absent.
+ * Extract the refresh cookie (`saas_session=...` for the tenant portal,
+ * `saas_admin_session=...` for the admin portal) from a response, ready to
+ * be sent back via `opts.cookies`. Cleared cookies (empty value) are
+ * skipped. Returns `null` when no refresh cookie was set.
  *
  * @param {{ setCookie: string[] }} resp
+ * @param {string} [name] - restrict to one cookie name.
  * @returns {string|null}
  */
-export function refreshCookieFrom(resp) {
-  const line = resp.setCookie.find((c) => c.startsWith('saas_session='));
+export function refreshCookieFrom(resp, name) {
+  const names = name ? [name] : REFRESH_COOKIE_NAMES;
+  const line = resp.setCookie.find((c) => {
+    const pair = c.split(';')[0];
+    const eq = pair.indexOf('=');
+    return eq > 0 && names.includes(pair.slice(0, eq)) && pair.slice(eq + 1).length > 0;
+  });
   return line ? line.split(';')[0] : null;
 }
 
-export default { startHttp, stopHttp, api, apiMultipart, refreshCookieFrom };
+export default { startHttp, stopHttp, api, apiMultipart, refreshCookieFrom, REFRESH_COOKIE_NAMES };

@@ -42,7 +42,17 @@ export async function startMongo() {
   server = await MongoMemoryServer.create();
   uri = server.getUri();
   await mongoose.connect(uri);
+  await buildIndexes();
   return { uri };
+}
+
+/**
+ * Wait until every registered model's declared indexes exist. Mongoose
+ * builds them in the background; tests that rely on unique constraints
+ * (e.g. concurrent registration on one slug) would otherwise race the build.
+ */
+export async function buildIndexes() {
+  await Promise.all(mongoose.modelNames().map((name) => mongoose.model(name).init()));
 }
 
 /**

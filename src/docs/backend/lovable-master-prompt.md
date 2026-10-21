@@ -45,7 +45,7 @@ The backend uses **three distinct authentication modes**. Your axios/fetch clien
 | **Embed token** | **No header** — token in URL path | `GET /embed/:token` |
 
 Refresh flow:
-- On `POST /auth/login`, `/auth/refresh`, `/admin-auth/login`, `/admin-auth/refresh` the backend sets `Set-Cookie: saas_session=<refreshToken>; HttpOnly; Secure; SameSite=Lax`. **Do not read this cookie from JS.**
+- On `POST /auth/login` and `/auth/refresh` the backend sets `Set-Cookie: saas_session=<refreshToken>; Path=/api/v1/auth; HttpOnly; Secure`; on `/admin-auth/login` and `/admin-auth/refresh` it sets `saas_admin_session` with `Path=/api/v1/admin-auth`. The refresh token and session id are never in a response body. **Do not read these cookies from JS.**
 - The browser will automatically send it on `/auth/refresh` and `/auth/logout`.
 - On a 401 response to any authenticated request, call `POST /auth/refresh` once. If it also returns 401, redirect to login.
 

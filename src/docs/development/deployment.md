@@ -52,12 +52,15 @@ is the env. There is no platform-specific logic in source.
 ## Process Lifecycle
 
 1. `server.js` creates the HTTP server and the Socket.IO instance.
-2. `server.listen(port)` binds; the readiness probe (`/health`) is
-   the very first thing that responds.
-3. `connectDatabase()` runs in the background; on failure the
-   server stays in **degraded mode** (health endpoint reports
-   `db: 'disconnected'`).
-4. `initScheduler()` runs when the DB is up.
+2. `server.listen(port)` binds; the liveness probe (`/api/v1/health`)
+   is the very first thing that responds.
+3. `connectDatabase()` runs in the background. If the bounded boot
+   attempts fail, the web process keeps reconnecting with exponential
+   backoff (capped by `MONGODB_RECONNECT_MAX_DELAY_MS`) while
+   `/api/v1/health/ready` answers 503, so the platform routes no
+   traffic to it; it recovers by itself once the database is back. The
+   worker process exits instead and is restarted by the platform.
+4. Queue consumers and the scheduler start only once the DB is up.
 5. SIGINT / SIGTERM triggers graceful shutdown with a 10-second
    hard timeout.
 
@@ -96,7 +99,7 @@ Hard timeout: 10 s (`SHUTDOWN_TIMEOUT_MS`).
 | Do | Why |
 | --- | --- |
 | **Use the same code; differ only by env.** | The platform abstraction is the contract. |
-| **Health-check on `/health`** in the platform config. | Platform-level readiness probes. |
+| **Health-check on `/api/v1/health/ready`** in the platform config (Render "Health Check Path") and in the uptime monitor. | Readiness reflects MongoDB, Redis and the job queue (503 when any is down) and reports `degraded` for storage, SMTP or a stalled scheduler. `/api/v1/health` is liveness only and stays 200 while the process runs. |
 | **Set `SHUTDOWN_TIMEOUT_MS`** below the platform's grace period. | Avoid double-kills. |
 
 ## Common Mistakes
@@ -117,7 +120,7 @@ configuration.
 ## Key Takeaways
 
 - **Same code, different env.**
-- **Readiness probe on `/health`.**
+- **Readiness probe on `/api/v1/health/ready`; liveness on `/api/v1/health`.**
 - **Graceful shutdown with 10 s hard timeout.**
 
 ## Interview Preparation
@@ -130,7 +133,7 @@ configuration.
 
 - **"Deploy?"** — Same code; different env. Render, Railway, ECS
   and local Docker all run `node src/server.js`. Readiness probe
-  on `/health`; graceful shutdown with 10 s hard timeout.
+  on `/api/v1/health/ready`; graceful shutdown with 10 s hard timeout.
 
 ## Related Documents
 

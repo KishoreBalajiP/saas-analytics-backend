@@ -63,9 +63,14 @@ test('admin login issues tokens for valid credentials', async () => {
   assert.equal(login.status, 200);
   assert.equal(login.json.success, true);
   assert.equal(typeof login.json.data.accessToken, 'string');
-  assert.equal(typeof login.json.data.refreshToken, 'string');
+  assert.equal('refreshToken' in login.json.data, false, 'refresh token is cookie-only');
+  assert.equal('sessionId' in login.json.data, false, 'session id is not exposed');
   assert.equal(login.json.data.actor.email, admin.email);
-  assert.ok(login.setCookie.some((c) => c.startsWith('saas_session=')));
+  // The admin portal has its own cookie name and path.
+  const cookie = login.setCookie.find((c) => c.startsWith('saas_admin_session='));
+  assert.ok(cookie, 'sets the admin refresh cookie');
+  assert.match(cookie, /Path=\/api\/v1\/admin-auth(;|$)/);
+  assert.equal(login.setCookie.some((c) => c.startsWith('saas_session=')), false);
 });
 
 test('admin login rejects a wrong password with a generic message', async () => {

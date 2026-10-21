@@ -1,13 +1,18 @@
-# Module — Status
+# Email templates — Status
 
-**Sprint:** 0 (foundation)
-**Status:** 📝 Planned (Phase 2)
-**Implements:** architecture-only contracts
-**Real source files:** none yet
-**Hook points:** shared infrastructure (cache/queue/storage/email + Mongoose plugins) is in place for Sprint 1+
+**Roadmap:** 2.4 (platform configuration surfaces)
+**Status:** Implemented
+**Exit criteria:** covered by `tests/platform-config/*.test.js`
 
-Sprint 0 ships only the shared infrastructure this module will depend on.
-The module itself is still a README + 501 shell.
+## Real source files
+- Routes: `src/routes/email-template.routes.js` (`/api/v1/email-templates`)
+- Controller / validator: `src/controllers/emailTemplate.controller.js`, `src/validators/emailTemplate.validator.js`
+- Service: `src/services/emailTemplate.service.js` (variable contract, safe rendering, preview, history, rollback)
+- Built-ins: `src/templates/emails/index.js`; overrides: `src/models/EmailTemplate.js`
+- Sending: `emailService.sendTemplate({ to, template, variables, locale })` (override, then English override, then built-in)
+- Permissions: `email_templates.view`, `email_templates.update`
 
-The next sprint that touches this module is documented in the parent
-`CHANGELOG.md` and `src/docs/DECISIONS.md`.
+Every change is validated, versioned (optimistic concurrency on `version`,
+409 `VERSION_CONFLICT`), recorded in `ConfigRevision` and audited through
+`auditLog.service` with secrets redacted. Rollback restores the exact state
+of an earlier version and is itself a new version.

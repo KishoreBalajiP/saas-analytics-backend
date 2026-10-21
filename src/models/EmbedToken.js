@@ -64,6 +64,18 @@ const embedTokenSchema = new mongoose.Schema(
     revokedAt: { type: Date, default: null },
     revokedReason: { type: String, default: '', maxlength: EMBED_TOKEN_LIMITS.REVOKE_REASON_MAX },
     revokedBy: { type: String, default: null },
+    // embedding: signed, origin-bound embed sessions and public share links.
+    // `embed` rows back a signed JWT (jti = _id) minted server-side; `share`
+    // rows back a public share link (random secret, hash stored).
+    kind: { type: String, enum: ['embed', 'share'], default: 'embed', index: true },
+    // Origins allowed to host the embed (exact scheme://host[:port]).
+    allowedOrigins: { type: [String], default: [] },
+    // Filter envelope applied server-side on every view; the viewer cannot
+    // override it (AND-ed with viewer filters; its dateRange wins).
+    lockedFilters: { type: mongoose.Schema.Types.Mixed, default: null },
+    // Row-level parameters: { field: scalar } applied as locked eq filters.
+    params: { type: mongoose.Schema.Types.Mixed, default: null },
+    theme: { type: String, enum: ['light', 'dark', 'auto'], default: 'auto' },
     createdBy: { type: String, default: null },
     updatedBy: { type: String, default: null },
   },
@@ -72,6 +84,8 @@ const embedTokenSchema = new mongoose.Schema(
 
 embedTokenSchema.index({ tenantId: 1, dashboardId: 1 });
 embedTokenSchema.index({ tenantId: 1, status: 1 });
+// embedding: preflight looks up origins bound to live tokens.
+embedTokenSchema.index({ allowedOrigins: 1, status: 1 });
 
 embedTokenSchema.plugin(tenantScope);
 embedTokenSchema.plugin(softDelete);

@@ -16,7 +16,8 @@
  *   - POST   /bulk              - bulk-create permissions (idempotent)
  *
  * MIDDLEWARE ORDER
- *   adminAuth -> permission(<module.action>) -> validate -> handler
+ *   adminAuth -> permission(<module.action>) -> adminScope.platform()
+ *   -> validate -> handler (tenant-scoped admins are refused)
  *
  * HOW TO EXTEND
  *   - Keys MUST be `<module_key>.<action>`; enforced by validator + service.
@@ -27,19 +28,20 @@ import { Router } from 'express';
 import { validate } from '../validators/index.js';
 import { adminAuth } from '../middleware/adminAuth.middleware.js';
 import { permission } from '../middleware/permission.middleware.js';
+import { adminScope } from '../middleware/adminScope.middleware.js';
 import permissionValidator from '../validators/permission.validator.js';
 import permissionController from '../controllers/permission.controller.js';
 
 const router = Router();
 
-router.get('/', adminAuth, permission('iam.permissions', 'view'), validate(permissionValidator.listSchema), permissionController.listPermissions);
-router.post('/', adminAuth, permission('iam.permissions', 'create'), validate(permissionValidator.createPermissionSchema), permissionController.createPermission);
-router.delete('/', adminAuth, permission('iam.permissions', 'delete'), validate(permissionValidator.deletePermissionSchema), permissionController.deletePermission);
+router.get('/', adminAuth, permission('iam.permissions', 'view'), adminScope.platform(), validate(permissionValidator.listSchema), permissionController.listPermissions);
+router.post('/', adminAuth, permission('iam.permissions', 'create'), adminScope.platform(), validate(permissionValidator.createPermissionSchema), permissionController.createPermission);
+router.delete('/', adminAuth, permission('iam.permissions', 'delete'), adminScope.platform(), validate(permissionValidator.deletePermissionSchema), permissionController.deletePermission);
 
-router.get('/modules', adminAuth, permission('iam.permissions', 'view'), validate(permissionValidator.listSchema), permissionController.listModules);
-router.post('/modules', adminAuth, permission('iam.permissions', 'create'), validate(permissionValidator.createModuleSchema), permissionController.createModule);
-router.get('/modules/:key/actions', adminAuth, permission('iam.permissions', 'view'), permissionController.getModuleActions);
+router.get('/modules', adminAuth, permission('iam.permissions', 'view'), adminScope.platform(), validate(permissionValidator.listSchema), permissionController.listModules);
+router.post('/modules', adminAuth, permission('iam.permissions', 'create'), adminScope.platform(), validate(permissionValidator.createModuleSchema), permissionController.createModule);
+router.get('/modules/:key/actions', adminAuth, permission('iam.permissions', 'view'), adminScope.platform(), permissionController.getModuleActions);
 
-router.post('/bulk', adminAuth, permission('iam.permissions', 'create'), validate(permissionValidator.bulkCreateSchema), permissionController.bulkCreatePermissions);
+router.post('/bulk', adminAuth, permission('iam.permissions', 'create'), adminScope.platform(), validate(permissionValidator.bulkCreateSchema), permissionController.bulkCreatePermissions);
 
 export default router;

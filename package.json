@@ -9,6 +9,7 @@
   },
   "scripts": {
     "start": "node src/server.js",
+    "start:worker": "node src/worker.js",
     "dev": "nodemon",
     "test": "node scripts/ci/run-tests.js",
     "test:argon2": "node scripts/ci/run-tests.js --kdf argon2",
@@ -18,7 +19,19 @@
     "ci:check-routes": "node scripts/ci/check-routes.js",
     "ci:check-models": "node scripts/ci/check-models.js",
     "ci:check-config": "node scripts/ci/check-config.js",
-    "ci:check-readme-sync": "node scripts/ci/check-readme-sync.js"
+    "ci:check-readme-sync": "node scripts/ci/check-readme-sync.js",
+    "db:indexes": "node scripts/ci/sync-indexes.js",
+    "db:permissions": "node scripts/ci/seed-permissions.js",
+    "db:date-ranges": "node scripts/ci/migrate-date-ranges.js",
+    "db:reconcile-usage": "node scripts/ci/reconcile-usage.js",
+    "db:platform-roles": "node scripts/ci/migrate-platform-roles.js",
+    "db:retention": "node scripts/ci/run-retention.js",
+    "db:encrypt-setting-secrets": "node scripts/ci/encrypt-setting-secrets.js",
+    "db:member-indexes": "node scripts/ci/migrate-member-indexes.js",
+    "ai:eval": "node scripts/ci/ai-eval.js",
+    "insights:eval": "node scripts/ci/insights-eval.js",
+    "db:restore-drill": "node scripts/ci/restore-drill.js",
+    "db:billing-terms": "node scripts/ci/migrate-billing-terms.js"
   },
   "keywords": [
     "saas",
@@ -30,6 +43,7 @@
   ],
   "license": "UNLICENSED",
   "dependencies": {
+    "@anthropic-ai/sdk": "0.131.0",
     "@aws-sdk/client-s3": "^3.1102.0",
     "@aws-sdk/lib-storage": "^3.1102.0",
     "@aws-sdk/s3-request-presigner": "^3.1102.0",

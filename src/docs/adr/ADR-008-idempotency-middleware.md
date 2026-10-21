@@ -33,6 +33,27 @@ is rejected with 503 (configurable to fail-open for reads).
   fingerprint (suitable for same-process retries; not safe across
   tenants).
 
+## Amendment (roadmap 1.12, 2026-10)
+
+The middleware was never mounted until roadmap 1.12. It now runs inside
+`authenticate` / `adminAuth` (`authenticateToken`) for every authenticated
+POST / PUT / PATCH / DELETE that carries `X-Idempotency-Key`, and the
+decision above changes as follows:
+
+- The key comes from the header only (no body-fingerprint fallback) and is
+  scoped by actor type + id, the token's tenant, the targeted `X-Tenant-Id`,
+  method and path (`scopedKey`), so keys never collide across actors or
+  tenants. Public routes (no verified actor) are not covered.
+- Only 2xx string/JSON outcomes up to 64 KiB are stored, encrypted
+  (AES-256-GCM), for `RETENTION_IDEMPOTENCY_DAYS` (default 1 day). Replays
+  carry `X-Idempotent-Replay: true`.
+- The same key with a different body is refused (422
+  `IDEMPOTENCY_KEY_REUSED`); a duplicate in flight on another instance gets
+  409 `IDEMPOTENCY_IN_PROGRESS` (short lock in the shared cache).
+- The authenticated mount fails open (logged) when the cache is down, so a
+  Redis incident cannot block every write; explicit mounts still fail
+  closed by default.
+
 ## Implementation
 
 - `src/middleware/idempotency.middleware.js` — the middleware.

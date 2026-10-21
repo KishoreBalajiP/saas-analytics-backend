@@ -137,7 +137,7 @@ Sprint 1   ✅ ── Authentication for both portals.
                  Real User / Admin / Tenant / Session / LoginAttempt
                  models + repositories. Real auth service (login /
                  refresh / logout / password reset), TOTP MFA for
-                 super_admin, account lockout, refresh-token rotation
+                 admins, account lockout, refresh-token rotation
                  with family revocation. Real authenticate / adminAuth /
                  resolveTenant middleware. Real /auth/* and
                  /admin-auth/* routes. KDF seam (Argon2id / scrypt).
@@ -304,7 +304,7 @@ See [`DECISIONS.md` ADR-007](./DECISIONS.md#adr-007-five-shared-mongoose-plugins
 
 | Middleware | Status | Note |
 | --- | --- | --- |
-| [`idempotency`](../../src/middleware/idempotency.middleware.js) | ✅ Implemented | Cached outcome replay + in-flight coalescing + fail-closed |
+| [`idempotency`](../../src/middleware/idempotency.middleware.js) | ✅ Implemented | Mounted by `authenticate` / `adminAuth` for authenticated mutations with `X-Idempotency-Key`: actor + tenant scoped keys, encrypted outcome replay, in-flight coalescing |
 | [`authenticate`, `optionalAuthenticate`](../../src/middleware/auth.middleware.js) | ✅ Implemented | JWT verify + session liveness check |
 | [`authorize`](../../src/middleware/auth.middleware.js) | ✅ Implemented | Dynamic RBAC; default-deny via `permission` middleware (Sprint 2) |
 | [`adminAuth`, `adminAuthOptional`](../../src/middleware/adminAuth.middleware.js) | ✅ Implemented | JWT verify + MFA-aware admin sessions |
@@ -363,6 +363,13 @@ See [`DECISIONS.md` ADR-007](./DECISIONS.md#adr-007-five-shared-mongoose-plugins
 | Notification model + service | [`Notification`](../../src/models/Notification.js) + [`notification.service.js`](../../src/services/notification.service.js) + [`notification.repository.js`](../../src/repositories/notification.repository.js) — tenant/actor-scoped inbox, unread-count, mark-read, soft-delete, preferences. | [`platform/notifications/STATUS.md`](../../src/modules/platform/notifications/STATUS.md) |
 | Notification routes | [`/notifications/*`](../../src/routes/notification.routes.js) — inbox, unread-count, mark-read (single + all), delete, preferences; `permission('notifications', …)`. | [`notification.routes.js`](../../src/routes/notification.routes.js) |
 | Scheduling | `report.service.runDue` / `alert.service.runDue` + `evaluateDue` enqueue due work; `analytics.worker.js` processes report + alert job types. `tenantInitialization.service.js` seeds `reports.*` / `alerts.*` / `notifications.*` RBAC. | [`tenantInitialization.service.js`](../../src/services/tenantInitialization.service.js) |
+
+### Platform Security Detection (roadmap 2.6)
+
+| Component | Implementation | Docs |
+| --- | --- | --- |
+| Detection rules + engine | `Implemented` — 15 versioned rules ([`services/securityDetection/rules/`](../../src/services/securityDetection/rules/index.js)), per-rule watermarks, dedupe/merge, false-positive suppression, `security-detection` job (lock + JobRun), request signals middleware | [`security-detection.md`](./backend/security-detection.md) |
+| Security alerts | `Implemented` — [`SecurityAlert`](../../src/models/SecurityAlert.js), `/admin/security-alerts` (list, evidence, acknowledge, false positive, resolve, rules) behind `security.alerts.view/update`; high-severity on-call notification via the delivery pipeline | [`security-detection.md`](./backend/security-detection.md) |
 
 ### CI Guardrails
 

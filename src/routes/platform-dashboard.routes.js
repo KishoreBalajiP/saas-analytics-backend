@@ -8,6 +8,7 @@
 import { Router } from 'express';
 import { adminAuth } from '../middleware/adminAuth.middleware.js';
 import { permission } from '../middleware/permission.middleware.js';
+import { adminScope } from '../middleware/adminScope.middleware.js';
 import { validate } from '../validators/index.js';
 import platformDashboardValidator from '../validators/platformDashboard.validator.js';
 import platformDashboardController from '../controllers/platformDashboard.controller.js';
@@ -18,6 +19,8 @@ router.get(
   '/summary',
   adminAuth,
   permission('iam.tenants', 'view'),
+  // Tenant-scoped admins get a summary of their own tenant only.
+  adminScope.filtered(),
   validate(platformDashboardValidator.summarySchema),
   platformDashboardController.getSummary,
 );

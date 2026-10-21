@@ -14,6 +14,7 @@ import dashboardRepository from '../../src/repositories/dashboard.repository.js'
 import widgetRepository from '../../src/repositories/widget.repository.js';
 import { Dashboard } from '../../src/models/Dashboard.js';
 import { Widget } from '../../src/models/Widget.js';
+import { Role } from '../../src/models/Role.js';
 
 useMongo();
 const { ObjectId } = mongoose.Types;
@@ -111,7 +112,8 @@ test('duplicate copies dashboard + widgets as a fresh draft with no shares', asy
     tenantId: TA, dashboardId: String(d._id), actorId: 'u1',
     data: { name: 'Total', type: 'kpi', datasetId: String(connector._id), query: { metrics: [{ alias: 'total', op: 'count', field: 'amount' }] } },
   });
-  await dashboardService.shareDashboard({ tenantId: TA, dashboardId: String(d._id), email: 'viewer@example.com' });
+  const role = await Role.create({ tenantId: TA, name: 'Viewers' });
+  await dashboardService.shareDashboard({ tenantId: TA, dashboardId: String(d._id), principalType: 'role', principalId: String(role._id) });
 
   const copy = await dashboardService.duplicateDashboard({ tenantId: TA, dashboardId: String(d._id), actorId: 'u1' });
   assert.equal(copy.name, 'Revenue (copy)');
@@ -129,7 +131,7 @@ test('delete soft-deletes the dashboard and cascades to its widgets', async () =
   const connector = await createConnector(TA);
   await dashboardService.createWidget({
     tenantId: TA, dashboardId: String(d._id),
-    data: { name: 'Total', type: 'kpi', datasetId: String(connector._id) },
+    data: { name: 'Total', type: 'table', datasetId: String(connector._id) },
   });
 
   await dashboardService.deleteDashboard({ tenantId: TA, dashboardId: String(d._id), actorId: 'u1' });
@@ -144,17 +146,24 @@ test('delete soft-deletes the dashboard and cascades to its widgets', async () =
   assert.ok(rawWidgets.every((w) => w.deletedAt));
 });
 
-test('share grants a revocable email entry and rejects duplicates', async () => {
+test('share grants a revocable role entry and rejects duplicates', async () => {
   const d = await dashboardService.createDashboard({ tenantId: TA, name: 'Revenue' });
   const id = String(d._id);
+  const role = await Role.create({ tenantId: TA, name: 'Viewers' });
+  const other = await Role.create({ tenantId: 'tenant-other', name: 'Theirs' });
 
-  const share = await dashboardService.shareDashboard({ tenantId: TA, dashboardId: id, actorId: 'u1', email: '  Viewer@Example.COM ' });
-  assert.equal(share.email, 'viewer@example.com');
-  assert.equal(share.role, 'viewer');
+  const share = await dashboardService.shareDashboard({ tenantId: TA, dashboardId: id, actorId: 'u1', principalType: 'role', principalId: String(role._id) });
+  assert.equal(share.principalId, String(role._id));
+  assert.equal(share.level, 'view');
   assert.ok(share._id);
 
   await assert.rejects(
-    () => dashboardService.shareDashboard({ tenantId: TA, dashboardId: id, email: 'viewer@example.com' }),
+    () => dashboardService.shareDashboard({ tenantId: TA, dashboardId: id, principalType: 'role', principalId: String(other._id) }),
+    (e) => e.statusCode === 400,
+    'a role of another tenant cannot be a share principal',
+  );
+  await assert.rejects(
+    () => dashboardService.shareDashboard({ tenantId: TA, dashboardId: id, principalType: 'role', principalId: String(role._id) }),
     (e) => e.statusCode === 409,
   );
 

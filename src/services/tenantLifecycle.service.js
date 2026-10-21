@@ -32,6 +32,12 @@ import tenantRepository from '../repositories/tenant.repository.js';
 import sessionRepository from '../repositories/session.repository.js';
 import { invalidateScope } from './rbac.cache.service.js';
 import { emit as auditEmit } from './auditLog.service.js';
+// embedding: embed tokens and share links die with a blocked tenant.
+import { EmbedToken } from '../models/EmbedToken.js';
+// members: a workspace scheduled for deletion is reopened only by cancelling
+// the deletion (roadmap 2.10).
+import tenantDeletionRepository from '../repositories/tenantDeletion.repository.js';
+import { ERROR_CODES } from '../config/constants.js';
 
 const TERMINAL = 'archived';
 
@@ -61,11 +67,26 @@ async function transition({ tenantId, action, allowedFrom, repoFn, reason, by, r
     throw ApiError.conflict(`Cannot ${action.replace('tenant.', '')} a tenant in status "${tenant.status}"`);
   }
 
+  // members: restoring a workspace whose deletion is pending would let the
+  // purge delete a live workspace; cancel the deletion instead.
+  if (action === 'tenant.restore' && (await tenantDeletionRepository.findOpenByTenant(tenantId))) {
+    throw new ApiError(409, 'This workspace is scheduled for deletion; cancel the deletion to reopen it', {
+      code: ERROR_CODES.DELETION_PENDING,
+    });
+  }
+
   const updated = await repoFn(tenantId, { by, reason });
   if (!updated) throw ApiError.notFound('Tenant not found');
 
   if (revokeSessions) {
     await sessionRepository.revokeAllForTenant(tenantId, `${action.replace('tenant.', '')}: ${reason ?? 'no reason'}`);
+  }
+  // embedding: revoke every live embed token / share link of a blocked tenant.
+  if (revokeSessions) {
+    await EmbedToken.updateMany(
+      { tenantId: String(tenantId), status: 'active' },
+      { $set: { status: 'revoked', revokedAt: new Date(), revokedReason: action, revokedBy: 'system' } },
+    );
   }
   await invalidateScope(tenantId);
 

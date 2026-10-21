@@ -33,14 +33,35 @@ export async function getById(catalogue, id) {
   return repository.findById(catalogue, id);
 }
 
-/** Create a catalogue entry. */
-export async function create(catalogue, doc, by) {
-  return repository.create(catalogue, { ...doc, createdBy: by ?? null, updatedBy: by ?? null });
+/** billing: exact lookup by code (never a search pattern). */
+export async function getByCode(catalogue, code, opts = {}) {
+  return repository.findByCode(catalogue, code, opts);
 }
 
-/** Patch a catalogue entry. */
+/** Fields a create may set (the catalogue comes from the path). */
+const CREATE_FIELDS = Object.freeze(['code', 'name', 'locale', 'data', 'isSystem']);
+
+/** Fields an update may change; `isSystem` is fixed at creation. */
+const UPDATE_FIELDS = Object.freeze(['code', 'name', 'locale', 'data']);
+
+function pick(source, fields) {
+  const out = {};
+  for (const field of fields) {
+    if (source?.[field] !== undefined) out[field] = source[field];
+  }
+  return out;
+}
+
+/** Create a catalogue entry from whitelisted fields only. */
+export async function create(catalogue, doc, by) {
+  return repository.create(catalogue, { ...pick(doc, CREATE_FIELDS), createdBy: by ?? null, updatedBy: by ?? null });
+}
+
+/** Patch a catalogue entry (whitelisted fields only; never `isSystem`). */
 export async function update(catalogue, id, patch, by) {
-  return repository.update(catalogue, id, patch, by);
+  const set = pick(patch, UPDATE_FIELDS);
+  if (Object.keys(set).length === 0) throw ApiError.badRequest('Nothing to update');
+  return repository.update(catalogue, id, set, by);
 }
 
 /** Delete a catalogue entry (system-bound items are refused with 409). */
@@ -54,4 +75,4 @@ export async function remove(catalogue, id, by) {
   return { deleted: true };
 }
 
-export default { list, getById, create, update, remove, _meta: { cachedReads: false } };
+export default { list, getById, getByCode, create, update, remove, _meta: { cachedReads: false } };

@@ -16,7 +16,9 @@
  *   - GET    /public/requests/:id   - subject polls status (signed token)
  *
  * MIDDLEWARE ORDER
- *   admin routes: adminAuth -> permission('compliance', <action>) -> validate
+ *   admin routes: adminAuth -> permission('compliance', <action>)
+ *     -> adminScope.filtered() -> validate (tenant-scoped admins only see and
+ *     file requests for their tenant)
  *   public routes: authenticate -> validate
  *
  * HOW TO EXTEND
@@ -32,16 +34,17 @@ import { validate } from '../validators/index.js';
 import { adminAuth } from '../middleware/adminAuth.middleware.js';
 import { authenticate } from '../middleware/auth.middleware.js';
 import { permission } from '../middleware/permission.middleware.js';
+import { adminScope } from '../middleware/adminScope.middleware.js';
 import complianceValidator from '../validators/compliance.validator.js';
 import complianceController from '../controllers/compliance.controller.js';
 
 const router = Router();
 
 // Internal (admin-gated)
-router.post('/requests', adminAuth, permission('compliance', 'create'), validate(complianceValidator.createSchema), complianceController.createRequest);
-router.get('/requests', adminAuth, permission('compliance', 'view'), validate(complianceValidator.listSchema), complianceController.listRequests);
-router.get('/requests/:id', adminAuth, permission('compliance', 'view'), validate(complianceValidator.paramSchema), complianceController.getRequest);
-router.post('/requests/:id/cancel', adminAuth, permission('compliance', 'update'), validate(complianceValidator.cancelSchema), complianceController.cancelRequest);
+router.post('/requests', adminAuth, permission('compliance', 'create'), adminScope.filtered((req) => req.body?.tenantScope ?? null), validate(complianceValidator.createSchema), complianceController.createRequest);
+router.get('/requests', adminAuth, permission('compliance', 'view'), adminScope.filtered(), validate(complianceValidator.listSchema), complianceController.listRequests);
+router.get('/requests/:id', adminAuth, permission('compliance', 'view'), adminScope.filtered(), validate(complianceValidator.paramSchema), complianceController.getRequest);
+router.post('/requests/:id/cancel', adminAuth, permission('compliance', 'update'), adminScope.filtered(), validate(complianceValidator.cancelSchema), complianceController.cancelRequest);
 
 // Public subject-facing (JWT to file, signed token to poll)
 router.post('/public/requests', authenticate, validate(complianceValidator.publicCreateSchema), complianceController.createSubjectRequest);

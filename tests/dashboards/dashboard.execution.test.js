@@ -43,7 +43,8 @@ async function makeKpi(tenantId, dashboard, connector, extraQuery = {}) {
     dashboardId: String(dashboard._id),
     data: {
       name: 'Total',
-      type: 'kpi',
+      // vizbuilder: a KPI cannot be grouped; grouped fixtures are tables.
+      type: extraQuery.groupBy ? 'table' : 'kpi',
       datasetId: String(connector._id),
       query: { metrics: [{ alias: 'total', op: 'count', field: 'amount' }], ...extraQuery },
     },
@@ -98,7 +99,7 @@ test('dashboard-level date range preset is applied to widget queries', async () 
   await dashboardService.updateDashboard({
     tenantId: TA,
     dashboardId: String(dashboard._id),
-    patch: { filters: { dateRange: { preset: 'last_30_days' } } },
+    patch: { filters: { dateRange: { field: 'ingestedAt', preset: 'last_30_days' } } },
   });
 
   // 20 days ago is inside last_30_days; 60 days ago is outside it.
@@ -111,7 +112,8 @@ test('dashboard-level date range preset is applied to widget queries', async () 
   const result = await dashboardService.executeWidget({ tenantId: TA, dashboardId: String(dashboard._id), widgetId: String(widget._id) });
   // 2 seed rows (2 and 3 days ago) + the 20-day-old row. The 60-day-old row
   // must be filtered out; without the preset the count would be 4.
-  assert.equal(result.result.total, 3);
+  // (A KPI aggregates into one row; its `total` metric is the count.)
+  assert.equal(result.result.rows[0].total, 3);
 });
 
 test('execution is isolated per tenant (rows and datasets)', async () => {
@@ -123,7 +125,7 @@ test('execution is isolated per tenant (rows and datasets)', async () => {
 
   const widgetA = await makeKpi(TA, da, ca);
   const resultA = await dashboardService.executeWidget({ tenantId: TA, dashboardId: String(da._id), widgetId: String(widgetA._id) });
-  assert.equal(resultA.result.total, 2, 'tenant B rows never leak into tenant A');
+  assert.equal(resultA.result.rows[0].total, 2, 'tenant B rows never leak into tenant A');
 
   // Tenant A cannot execute a widget whose dataset is owned by tenant B.
   const widgetB = await makeKpi(TB, db, cb);

@@ -1,13 +1,17 @@
-# Module — Status
+# Feature flags — Status
 
-**Sprint:** 0 (foundation)
-**Status:** 📝 Planned (Phase 2)
-**Implements:** architecture-only contracts
-**Real source files:** none yet
-**Hook points:** shared infrastructure (cache/queue/storage/email + Mongoose plugins) is in place for Sprint 1+
+**Roadmap:** 2.4 (platform configuration surfaces)
+**Status:** Implemented
+**Exit criteria:** covered by `tests/platform-config/*.test.js`
 
-Sprint 0 ships only the shared infrastructure this module will depend on.
-The module itself is still a README + 501 shell.
+## Real source files
+- Routes: `src/routes/feature-flag.routes.js` (`/api/v1/feature-flags`, admin CRUD + `GET /evaluate` for workspaces)
+- Controller / validator: `src/controllers/featureFlag.controller.js`, `src/validators/featureFlag.validator.js`
+- Service: `src/services/featureFlag.service.js` (validation, versioned writes, evaluation, `isEnabled(key, { tenantId })`)
+- History: `src/models/ConfigRevision.js` (kind `feature_flag`)
+- Permissions: `feature_flags.view/create/update/delete` (platform); tenant roles hold `feature_flags.view` for evaluation
 
-The next sprint that touches this module is documented in the parent
-`CHANGELOG.md` and `src/docs/DECISIONS.md`.
+Every change is validated, versioned (optimistic concurrency on `version`,
+409 `VERSION_CONFLICT`), recorded in `ConfigRevision` and audited through
+`auditLog.service` with secrets redacted. Rollback restores the exact state
+of an earlier version and is itself a new version.

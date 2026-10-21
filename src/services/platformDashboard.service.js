@@ -7,7 +7,9 @@
  *   AuditLog entries, Monitoring aggregate). No fabricated health.
  *
  * RESPONSIBILITY
- *   - getSummary({ recentLimit }) -> { counts, recentTenants, recentActions }
+ *   - getSummary({ recentLimit, tenantId? }) -> { counts, recentTenants, recentActions }
+ *     (`tenantId` confines everything to one tenant for a tenant-scoped
+ *     admin; platform health is then omitted)
  *   - getRecentTenants({ limit })
  *   - getRecentActions({ limit })
  *
@@ -19,6 +21,7 @@
  *   - Health is delegated to the monitoring service; this module never
  *     inspects env vars or config to "imply" health.
  */
+import mongoose from 'mongoose';
 import tenantRepository from '../repositories/tenant.repository.js';
 import auditLogRepository from '../repositories/auditLog.repository.js';
 import { getAggregateHealth } from './monitoring.service.js';
@@ -37,8 +40,9 @@ function clampLimit(value, fallback = DEFAULT_RECENT_LIMIT) {
  * @param {number} [opts.recentLimit=10]
  * @returns {Promise<{ counts: Object, recentTenants: Object[], recentActions: Object[], health: Object, generatedAt: string }>}
  */
-export const getSummary = async ({ recentLimit = DEFAULT_RECENT_LIMIT } = {}) => {
+export const getSummary = async ({ recentLimit = DEFAULT_RECENT_LIMIT, tenantId = null } = {}) => {
   const limit = clampLimit(recentLimit);
+  if (tenantId) return getScopedSummary({ limit, tenantId: String(tenantId) });
   const [counts, recentTenants, recentActions, health] = await Promise.all([
     getTenantCounts(),
     getRecentTenants({ limit }),
@@ -48,11 +52,28 @@ export const getSummary = async ({ recentLimit = DEFAULT_RECENT_LIMIT } = {}) =>
   return { counts, recentTenants, recentActions, health, generatedAt: new Date().toISOString() };
 };
 
+const STATUSES = ['pending', 'active', 'suspended', 'disabled', 'archived'];
+
+/** Summary confined to one tenant (tenant-scoped admins). */
+async function getScopedSummary({ limit, tenantId }) {
+  const tenant = mongoose.isValidObjectId(tenantId) ? await tenantRepository.findById(tenantId) : null;
+  const counts = { total: tenant ? 1 : 0 };
+  for (const status of STATUSES) counts[status] = tenant?.status === status ? 1 : 0;
+  return {
+    counts,
+    recentTenants: tenant ? [safeTenantProjection(tenant)] : [],
+    recentActions: await getRecentActions({ limit, tenantId }),
+    // Platform health is not tenant data.
+    health: null,
+    scope: { tenantId },
+    generatedAt: new Date().toISOString(),
+  };
+}
+
 async function getTenantCounts() {
-  const statuses = ['pending', 'active', 'suspended', 'disabled', 'archived'];
-  const results = await Promise.all(statuses.map((s) => tenantRepository.countByStatus(s)));
+  const results = await Promise.all(STATUSES.map((s) => tenantRepository.countByStatus(s)));
   const counts = { total: 0 };
-  statuses.forEach((status, idx) => {
+  STATUSES.forEach((status, idx) => {
     counts[status] = results[idx];
     counts.total += results[idx];
   });
@@ -70,8 +91,8 @@ function safeTenantProjection(tenant) {
   return { id: String(_id), name, slug, status, createdAt, updatedAt };
 }
 
-async function getRecentActions({ limit }) {
-  const result = await auditLogRepository.list({ filter: {}, page: 1, limit });
+async function getRecentActions({ limit, tenantId = null }) {
+  const result = await auditLogRepository.list({ filter: tenantId ? { tenantId } : {}, page: 1, limit });
   return (result.docs ?? []).map((entry) => ({
     id: String(entry._id),
     module: entry.module,

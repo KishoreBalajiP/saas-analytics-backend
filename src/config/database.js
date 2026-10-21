@@ -8,9 +8,12 @@
  *
  * RESPONSIBILITY
  *   - Connect to MongoDB with production-tuned Mongoose options.
- *   - Retry a bounded number of times on startup failure, then start the app
- *     in *degraded mode* (the process stays up so health checks / liveness
- *     still work and Mongo auto-reconnect can take over).
+ *   - Retry a bounded number of times on startup failure. The web process
+ *     then keeps reconnecting in the background (`reconnectUntilConnected`,
+ *     exponential backoff) while readiness reports 503: Mongoose only
+ *     auto-reconnects after a SUCCESSFUL initial connection, so without this
+ *     a boot-time outage left the instance degraded forever (findings ops.05,
+ *     ops2.02). The worker process exits instead and is restarted.
  *   - Listen to connection events for observability.
  *   - Expose `disconnectDatabase()` for graceful shutdown.
  *
@@ -27,12 +30,15 @@ import logger from './logger.js';
 let isConnected = false;
 
 const connectionOptions = {
-  autoIndex: !env.app.isProduction, // prod uses explicit migrations, dev builds indexes
+  // Production does not build indexes at boot; run `npm run db:indexes -- --apply`
+  // as a deploy step (scripts/ci/sync-indexes.js). Development builds them.
+  autoIndex: !env.app.isProduction,
   bufferCommands: false, // fail loudly instead of queueing when disconnected
   maxPoolSize: env.database.maxPoolSize,
   minPoolSize: env.database.minPoolSize,
-  serverSelectionTimeoutMS: env.database.serverSelectionTimeoutMS,
-  connectTimeoutMS: env.database.connectTimeoutMS,
+  // env exposes these as ...TimeoutMs; the driver option names end in MS.
+  serverSelectionTimeoutMS: env.database.serverSelectionTimeoutMs,
+  connectTimeoutMS: env.database.connectTimeoutMs,
   heartbeatFrequencyMS: 10000,
   family: 4, // prefer IPv4, avoids localhost/DNS IPv6 stalls on some hosts
 };
@@ -67,14 +73,17 @@ function bindConnectionListeners() {
  * @returns {Promise<boolean>} true when connected, false after exhausting
  *   attempts (the caller decides whether to continue in degraded mode).
  */
-export async function connectDatabase() {
+export async function connectDatabase({ autoIndex } = {}) {
   if (isConnected) return true;
+  // Maintenance scripts pass autoIndex:false so connecting never builds
+  // indexes as a side effect (a dry run must not write).
+  const options = autoIndex === undefined ? connectionOptions : { ...connectionOptions, autoIndex };
 
   bindConnectionListeners();
 
   for (let attempt = 1; attempt <= env.database.connectAttempts; attempt += 1) {
     try {
-      await mongoose.connect(env.database.uri, connectionOptions);
+      await mongoose.connect(env.database.uri, options);
       isConnected = true;
       return true;
     } catch (err) {
@@ -88,8 +97,72 @@ export async function connectDatabase() {
     }
   }
 
-  logger.fatal('MongoDB unavailable after all attempts - continuing in degraded mode');
+  logger.fatal('MongoDB unavailable after all attempts - not ready; reconnecting in the background');
   return false;
+}
+
+/**
+ * Keep trying to connect (observability: findings ops.05 / ops2.02), with
+ * exponential backoff from `initialDelayMs` capped at `maxDelayMs`, until
+ * connected or `signal` aborts. Each failure is logged with the attempt
+ * number. Resolves true once connected, false when aborted.
+ *
+ * @param {Object} [options]
+ * @param {() => Promise<boolean>} [options.connect] - one attempt; true when connected.
+ * @param {number} [options.initialDelayMs]
+ * @param {number} [options.maxDelayMs]
+ * @param {AbortSignal} [options.signal]
+ * @param {(ms: number, signal?: AbortSignal) => Promise<void>} [options.wait]
+ * @returns {Promise<boolean>}
+ */
+export async function reconnectUntilConnected({
+  connect = connectOnce,
+  initialDelayMs = env.database.retryDelayMs,
+  maxDelayMs = env.observability?.dbReconnectMaxDelayMs ?? 30000,
+  signal,
+  wait = abortableSleep,
+} = {}) {
+  let delay = Math.max(1, initialDelayMs);
+  for (let attempt = 1; !signal?.aborted; attempt += 1) {
+    await wait(delay, signal);
+    if (signal?.aborted) break;
+    try {
+      if (await connect()) {
+        logger.info({ attempt }, 'MongoDB connected after background reconnect');
+        return true;
+      }
+    } catch (err) {
+      logger.error({ err: { message: err?.message }, attempt, nextDelayMs: Math.min(delay * 2, maxDelayMs) }, 'MongoDB background reconnect failed');
+    }
+    delay = Math.min(delay * 2, Math.max(1, maxDelayMs));
+  }
+  return false;
+}
+
+/** One connection attempt with the production options (no retry loop). */
+async function connectOnce() {
+  if (isConnected && mongoose.connection.readyState === 1) return true;
+  if (mongoose.connection.readyState === 2) {
+    // A connect is already in flight (driver-level): wait for its outcome.
+    await mongoose.connection.asPromise();
+    return mongoose.connection.readyState === 1;
+  }
+  await mongoose.connect(env.database.uri, connectionOptions);
+  isConnected = true;
+  return true;
+}
+
+function abortableSleep(ms, signal) {
+  return new Promise((resolve) => {
+    if (signal?.aborted) return resolve();
+    const timer = setTimeout(done, ms);
+    function done() {
+      clearTimeout(timer);
+      signal?.removeEventListener?.('abort', done);
+      resolve();
+    }
+    signal?.addEventListener?.('abort', done, { once: true });
+  });
 }
 
 /** Bounded delay for the disconnect step so shutdown can never hang. */

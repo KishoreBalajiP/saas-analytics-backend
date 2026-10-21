@@ -8,9 +8,12 @@
  * RESPONSIBILITY (database access ONLY - no business logic)
  *   - findById, findByEmail, findByEmailForAuth
  *   - update, incrementFailedAttempts, resetFailedAttempts, setLockedUntil,
- *     touchLastLogin
+ *     touchLastLogin, clearExpiredLockout
  *   - create, suspend, restore
  *   - softDelete, list (paginated)
+ *   - mfa-tenant: findMfaState, startMfaEnrollment, enableMfa,
+ *     disableMfa, replaceRecoveryCodes, consumeRecoveryCode,
+ *     markTotpStepUsed, resetMfa, listMfaStatus
  *
  * CODING GUIDELINES
  *   - Reads return PLAIN objects (`.lean()`); services handle data, not
@@ -26,7 +29,9 @@
 import { User } from '../models/User.js';
 
 /** Fields required by the login path. Avoids pulling the full profile. */
-const AUTH_PROJECTION = 'email status tenantId profile.name failedAttempts lockedUntil passwordHash lastLoginAt';
+const AUTH_PROJECTION = 'email status tenantId profile.name failedAttempts lockedUntil passwordHash lastLoginAt'
+  // mfa-tenant: the login path decides on the second factor from these.
+  + ' mfaEnabled mfaEnrollmentRequired';
 
 /** Find a user by id. Returns a lean object or null. */
 export const findById = (id) => User.findById(id).lean();
@@ -53,6 +58,20 @@ export const incrementFailedAttempts = (id) =>
 export const resetFailedAttempts = (id) =>
   User.findByIdAndUpdate(
     id,
+    { $set: { failedAttempts: 0, lockedUntil: null } },
+    { new: true, lean: true },
+  );
+
+/**
+ * Clear a lockout whose window has passed (`lockedUntil <= now`) and reset
+ * the counter, atomically. Only matches while the expired deadline is still
+ * stored, so of several concurrent failures exactly one resets, and a
+ * lockout that is in force (e.g. set moments ago) is never cleared.
+ * Returns the updated user, or null when nothing matched.
+ */
+export const clearExpiredLockout = (id, now = new Date()) =>
+  User.findOneAndUpdate(
+    { _id: id, lockedUntil: { $ne: null, $lte: now } },
     { $set: { failedAttempts: 0, lockedUntil: null } },
     { new: true, lean: true },
   );
@@ -122,6 +141,127 @@ export const list = async ({ tenantId, filter = {}, page = 1, limit = 20 } = {})
   };
 };
 
+/* ------------------------- mfa-tenant: MFA state ------------------------- */
+
+/** Fields an MFA decision needs, including the `select: false` secrets. */
+const MFA_PROJECTION = '+mfaSecret +mfaRecoveryCodes +mfaLastTimeStep '
+  + 'tenantId email status passwordHash failedAttempts mfaEnabled mfaRecoveryCodesGeneratedAt mfaEnrollmentRequired';
+
+/**
+ * MFA state of a user, including the encrypted secret and the recovery-code
+ * digests. When `tenantId` is given the user must belong to it.
+ */
+export const findMfaState = (id, tenantId = null) =>
+  User.findOne({ _id: id, ...(tenantId ? { tenantId } : {}) }).select(MFA_PROJECTION).lean();
+
+/**
+ * Store a pending enrolment secret (MFA stays off). Only while MFA is off,
+ * so a started enrolment can never silently replace an active secret.
+ * Returns the updated user (without the secret) or null.
+ */
+export const startMfaEnrollment = (id, mfaSecret) =>
+  User.findOneAndUpdate(
+    { _id: id, mfaEnabled: { $ne: true } },
+    { $set: { mfaSecret, mfaEnabled: false, mfaRecoveryCodes: [], mfaRecoveryCodesGeneratedAt: null, mfaLastTimeStep: null } },
+    { new: true, runValidators: true, lean: true },
+  );
+
+/**
+ * Turn MFA on with fresh recovery-code digests, but only while the enrolment
+ * it confirms is still pending (MFA off, same stored secret), so two
+ * concurrent confirmations cannot both issue codes. Records the time step of
+ * the confirming code and clears the Owner-reset flag.
+ */
+export const enableMfa = (id, { mfaSecret, recoveryCodeHashes, timeStep = null }) =>
+  User.findOneAndUpdate(
+    { _id: id, mfaEnabled: { $ne: true }, mfaSecret },
+    {
+      $set: {
+        mfaEnabled: true,
+        mfaRecoveryCodes: recoveryCodeHashes,
+        mfaRecoveryCodesGeneratedAt: new Date(),
+        mfaLastTimeStep: timeStep,
+        mfaEnrollmentRequired: false,
+      },
+    },
+    { new: true, runValidators: true, lean: true },
+  );
+
+/** Turn MFA off: wipe the secret, the recovery codes and the replay marker. */
+export const disableMfa = (id) =>
+  User.findOneAndUpdate(
+    { _id: id, mfaEnabled: true },
+    { $set: { mfaSecret: null, mfaEnabled: false, mfaRecoveryCodes: [], mfaRecoveryCodesGeneratedAt: null, mfaLastTimeStep: null } },
+    { new: true, runValidators: true, lean: true },
+  );
+
+/** Replace the recovery-code digests of a user whose MFA is on. */
+export const replaceRecoveryCodes = (id, recoveryCodeHashes) =>
+  User.findOneAndUpdate(
+    { _id: id, mfaEnabled: true },
+    { $set: { mfaRecoveryCodes: recoveryCodeHashes, mfaRecoveryCodesGeneratedAt: new Date() } },
+    { new: true, runValidators: true, lean: true },
+  );
+
+/**
+ * Atomically remove one used recovery-code digest. Matches only while MFA is
+ * on and the digest is still present, so a code works exactly once even
+ * under concurrent requests. Returns true when this call spent it.
+ */
+export const consumeRecoveryCode = async (id, digest) => {
+  const res = await User.updateOne(
+    { _id: id, mfaEnabled: true, mfaRecoveryCodes: digest, deletedAt: null },
+    { $pull: { mfaRecoveryCodes: digest } },
+  );
+  return res.modifiedCount === 1;
+};
+
+/**
+ * Record that a TOTP time step was used, only when it is newer than the last
+ * accepted one (atomic), so the same code cannot be replayed within its
+ * validity window. Returns true when this call recorded it.
+ */
+export const markTotpStepUsed = async (id, timeStep) => {
+  const res = await User.updateOne(
+    {
+      _id: id,
+      mfaEnabled: true,
+      $or: [{ mfaLastTimeStep: null }, { mfaLastTimeStep: { $lt: timeStep } }],
+    },
+    { $set: { mfaLastTimeStep: timeStep } },
+  );
+  return res.modifiedCount === 1;
+};
+
+/**
+ * Owner-assisted reset: wipe the secret and recovery codes and require
+ * enrolment at the next sign-in. Tenant-scoped.
+ */
+export const resetMfa = (id, tenantId, { by } = {}) =>
+  User.findOneAndUpdate(
+    { _id: id, tenantId },
+    {
+      $set: {
+        mfaSecret: null,
+        mfaEnabled: false,
+        mfaRecoveryCodes: [],
+        mfaRecoveryCodesGeneratedAt: null,
+        mfaLastTimeStep: null,
+        mfaEnrollmentRequired: true,
+        ...(by ? { updatedBy: by } : {}),
+      },
+    },
+    { new: true, runValidators: true, lean: true },
+  );
+
+/** MFA status of every member of a tenant (never the secrets). */
+export const listMfaStatus = (tenantId, { limit = 500 } = {}) =>
+  User.find({ tenantId })
+    .select('email status profile.name mfaEnabled mfaEnrollmentRequired mfaRecoveryCodesGeneratedAt lastLoginAt')
+    .sort({ email: 1 })
+    .limit(limit)
+    .lean();
+
 export default {
   findById,
   findByEmail,
@@ -129,6 +269,7 @@ export default {
   update,
   incrementFailedAttempts,
   resetFailedAttempts,
+  clearExpiredLockout,
   setLockedUntil,
   touchLastLogin,
   softDelete,
@@ -138,5 +279,15 @@ export default {
   suspend,
   restore,
   countByTenant,
+  // mfa-tenant
+  findMfaState,
+  startMfaEnrollment,
+  enableMfa,
+  disableMfa,
+  replaceRecoveryCodes,
+  consumeRecoveryCode,
+  markTotpStepUsed,
+  resetMfa,
+  listMfaStatus,
   _meta: { leanReturns: true, tenancy: 'tenant', lockout: 'atomic-persisted' },
 };

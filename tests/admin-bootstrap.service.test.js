@@ -25,7 +25,8 @@ test('bootstrap hashes the password and assigns the platform role', async () => 
   assert.equal(await verify('BootstrapPassword123!', admin.passwordHash), true);
   const grant = await AdminRole.findOne({ adminId: admin._id.toString(), tenantId: null }).lean();
   assert.ok(grant);
-  assert.equal(result.role.name, 'super');
+  // Roadmap 2.1: the bootstrap grants the built-in role for the admin type.
+  assert.equal(result.role.name, 'super_admin');
   assert.ok(await RolePermission.countDocuments({ roleId: grant.roleId }) > 0);
 });
 
@@ -51,6 +52,6 @@ test('bootstrap is idempotent and never overwrites an existing administrator', a
 test('bootstrap validates the documented admin types', async () => {
   await assert.rejects(
     () => adminBootstrapService.bootstrapAdmin({ email: 'x@example.com', password: 'Password123!', adminType: 'super_admin' }),
-    /adminType must be one of super, platform, support/,
+    /adminType must be one of super, platform, support, auditor/,
   );
 });

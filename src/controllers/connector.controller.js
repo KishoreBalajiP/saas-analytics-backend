@@ -17,6 +17,9 @@
  *     global error middleware.
  */
 
+import ApiError from '../utils/ApiError.js';
+// rls: hide restricted datasets from members without a grant.
+import dataAccess from '../services/dataAccess.service.js';
 import asyncHandler from '../utils/asyncHandler.js';
 import ApiResponse from '../utils/ApiResponse.js';
 import { getTenantId } from '../middleware/tenant.middleware.js';
@@ -31,6 +34,7 @@ export const previewFile = asyncHandler(async (req, res) => {
     connectorId: req.params.connectorId,
     buffer: req.file?.buffer,
     filename: req.file?.originalname ?? null,
+    detectedType: req.file?.detectedType,
     limit: Number(req.body?.limit) || 10,
   });
   return ApiResponse.ok(res, result, 'File preview');
@@ -44,6 +48,7 @@ export const syncFile = asyncHandler(async (req, res) => {
     actorId: actorOf(req),
     buffer: req.file?.buffer,
     filename: req.file?.originalname ?? null,
+    detectedType: req.file?.detectedType,
   });
   return ApiResponse.accepted(res, result, 'File sync enqueued');
 });
@@ -58,6 +63,12 @@ export const syncMongoDB = asyncHandler(async (req, res) => {
   return ApiResponse.accepted(res, result, 'MongoDB sync enqueued');
 });
 
+// datasets: GET /api/v1/connectors/:connectorId/schema - typed dataset schema.
+export const getSchema = asyncHandler(async (req, res) => {
+  const schema = await connectorService.getConnectorSchema({ tenantId: getTenantId(req), connectorId: req.params.connectorId });
+  return ApiResponse.ok(res, schema, 'Dataset schema');
+});
+
 /** GET /api/v1/connectors/types - registered connector catalogue. */
 export const listTypes = asyncHandler(async (_req, res) => {
   return ApiResponse.ok(res, connectorService.listConnectorTypes(), 'Connector types');
@@ -68,6 +79,8 @@ export const list = asyncHandler(async (req, res) => {
   const tenantId = getTenantId(req);
   const result = await connectorService.listConnectorRecords({
     tenantId,
+    // rls: restricted datasets without a grant are not listed.
+    excludeIds: await dataAccess.hiddenConnectorIds(tenantId),
     page: Number(req.query.page) || 1,
     limit: Math.min(Number(req.query.limit) || 20, 100),
     type: typeof req.query.type === 'string' ? req.query.type : undefined,
@@ -82,6 +95,10 @@ export const list = asyncHandler(async (req, res) => {
 
 /** GET /api/v1/connectors/:connectorId - detail. */
 export const getById = asyncHandler(async (req, res) => {
+  // rls: a restricted dataset without a grant does not exist for the caller.
+  if ((await dataAccess.hiddenConnectorIds(getTenantId(req))).includes(String(req.params.connectorId))) {
+    throw ApiError.notFound('Connector not found');
+  }
   const connector = await connectorService.getConnectorRecord({
     tenantId: getTenantId(req),
     connectorId: req.params.connectorId,
@@ -149,12 +166,30 @@ export const listRows = asyncHandler(async (req, res) => {
   });
 });
 
+/** GET /api/v1/connectors/:connectorId/sync-runs - sync history (paged). */
+export const listSyncRuns = asyncHandler(async (req, res) => {
+  const result = await connectorService.listSyncRuns({
+    tenantId: getTenantId(req),
+    connectorId: req.params.connectorId,
+    status: typeof req.query.status === 'string' && req.query.status !== '' ? req.query.status : undefined,
+    page: Math.max(1, Math.floor(Number(req.query.page)) || 1),
+    limit: Math.min(Math.max(1, Math.floor(Number(req.query.limit)) || 20), 100),
+  });
+  return ApiResponse.ok(res, result.docs, 'Connector sync runs', {
+    page: result.page,
+    limit: result.limit,
+    total: result.total,
+    pages: result.pages,
+  });
+});
+
 /** POST /api/v1/connectors/:connectorId/preview - CSV header/sample preview. */
 export const previewCsv = asyncHandler(async (req, res) => {
   const result = await connectorService.previewCsvUpload({
     tenantId: getTenantId(req),
     connectorId: req.params.connectorId,
     buffer: req.file?.buffer,
+    detectedType: req.file?.detectedType,
     limit: Number(req.body?.limit) || 10,
   });
   return ApiResponse.ok(res, result, 'CSV preview');
@@ -168,6 +203,7 @@ export const syncCsv = asyncHandler(async (req, res) => {
     actorId: actorOf(req),
     buffer: req.file?.buffer,
     filename: req.file?.originalname ?? null,
+    detectedType: req.file?.detectedType,
   });
   return ApiResponse.accepted(res, result, 'CSV sync enqueued');
 });
@@ -181,6 +217,8 @@ export default {
   remove,
   validate,
   listRows,
+  listSyncRuns,
+  getSchema,
   previewCsv,
   syncCsv,
   previewFile,

@@ -7,6 +7,12 @@
  *   Razorpay Orders/Payments APIs in TEST mode by default; otherwise the
  *   `noop` provider honestly returns 501 for every operation.
  *
+ * BILLING MODEL (roadmap 3.1)
+ *   Prepaid terms: each order buys one monthly or annual term of a plan
+ *   (amount from the plan catalogue / config). Nothing renews or charges
+ *   automatically. A different model (e.g. provider subscriptions) would be
+ *   a new provider shape behind this same adapter.
+ *
  * FLOW (one-time orders - NOT recurring subscriptions)
  *   1. Backend creates a Razorpay Order (server-controlled amount in
  *      minor units) and persists a pending PaymentTransaction.
@@ -14,15 +20,19 @@
  *   3. Backend verifies the checkout signature (HMAC order|payment) and
  *      the payment entity (status/amount/currency/association) BEFORE
  *      touching the subscription.
- *   4. Webhooks (`payment.captured`, `payment.failed`, `refund.*`,
- *      `order.paid`) are signature-verified against the RAW body and
- *      processed idempotently through the same lifecycle service.
+ *   4. Webhooks (`payment.authorized`, `payment.captured`,
+ *      `payment.failed`, `refund.*`, `order.paid`) are signature-verified
+ *      against the RAW body, stored once per `x-razorpay-event-id`, and
+ *      processed from the stored row. Access is granted only after a
+ *      server-side `fetchPayment` confirms the capture (amount, currency,
+ *      order) - `authorized` alone grants nothing.
  *
  * CONTRACT
  *   - `name`: 'noop' | 'razorpay'.
  *   - `isImplemented`: false for noop.
  *   - `createOrder({ amountMinor, currency, receipt, notes })`
- *   - `fetchOrder(orderId)`, `fetchPayment(paymentId)`
+ *   - `fetchOrder(orderId)`, `fetchPayment(paymentId)`,
+ *     `fetchOrderPayments(orderId)` (billing: reconciliation)
  *   - `verifyCheckoutSignature({ orderId, paymentId, signature })`
  *   - `verifyWebhookSignature(rawBody, signature)`
  *   - `cancel()` - one-time orders have nothing to cancel at the
@@ -45,6 +55,8 @@ export const NOT_IMPLEMENTED_MESSAGE =
   'Checkout is not yet available. Contact support to change plans.';
 
 export const WEBHOOK_EVENT_ALLOWLIST = Object.freeze([
+  // billing: recorded (no access) so authorized-then-captured is tracked.
+  'payment.authorized',
   'payment.captured',
   'payment.failed',
   'order.paid',
@@ -124,7 +136,9 @@ export function normalizeWebhookEvent(payload) {
     entityId: entity?.id ?? null,
     orderId: entity?.order_id ?? payload?.payload?.order?.entity?.id ?? null,
     paymentId:
-      entity?.id && event.startsWith('payment.') ? entity.id : (payload?.payload?.payment?.entity?.id ?? null),
+      entity?.id && event.startsWith('payment.')
+        ? entity.id
+        : (payload?.payload?.payment?.entity?.id ?? entity?.payment_id ?? null),
     amount: entity?.amount ?? null,
     currency: entity?.currency ?? null,
     status: entity?.status ?? null,
@@ -232,6 +246,29 @@ function buildRazorpayProvider() {
       }
     },
 
+    // billing: the payments made against one order (reconciliation finds
+    // the captured payment of a paid order whose webhook was lost).
+    async fetchOrderPayments(orderId) {
+      if (!sdk) throw ApiError.notImplemented(NOT_IMPLEMENTED_MESSAGE);
+      if (!orderId) throw ApiError.badRequest('orderId is required');
+      try {
+        const result = await withTimeout(sdk.orders.fetchPayments(orderId), REQUEST_TIMEOUT_MS, 'orders.fetchPayments');
+        const items = Array.isArray(result?.items) ? result.items : [];
+        return items.map((payment) => ({
+          id: payment.id,
+          order_id: payment.order_id ?? null,
+          status: payment.status,
+          amount: payment.amount,
+          currency: payment.currency,
+          captured: payment.captured === true,
+        }));
+      } catch (err) {
+        if (err instanceof ApiError) throw err;
+        logger.warn({ op: 'razorpay.orders.fetchPayments' }, 'Provider order payments fetch failed');
+        throw toProviderError(err);
+      }
+    },
+
     verifyCheckoutSignature({ orderId, paymentId, signature }) {
       return verifyCheckoutSignature({ orderId, paymentId, signature, keySecret });
     },
@@ -277,6 +314,9 @@ const noopProvider = Object.freeze({
     throw ApiError.notImplemented(NOT_IMPLEMENTED_MESSAGE);
   },
   async fetchPayment() {
+    throw ApiError.notImplemented(NOT_IMPLEMENTED_MESSAGE);
+  },
+  async fetchOrderPayments() {
     throw ApiError.notImplemented(NOT_IMPLEMENTED_MESSAGE);
   },
   verifyCheckoutSignature() {

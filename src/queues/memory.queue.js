@@ -50,8 +50,14 @@ export function createInMemoryQueue(options = {}) {
   const listeners = new Map();
   let consumer = null;
   let closed = false;
+  // Set when shutdown starts: no new message is dispatched, in-flight ones
+  // are allowed to finish (see `close({ drainTimeoutMs })`).
+  let draining = false;
   let running = 0;
   let nextId = 1;
+  let completedCount = 0;
+  let failedCount = 0;
+  const idleWaiters = new Set();
   const timers = new Set();
   const immediates = new Set();
 
@@ -73,8 +79,14 @@ export function createInMemoryQueue(options = {}) {
     immediates.add(handle);
   }
 
+  function notifyIdle() {
+    if (running > 0) return;
+    for (const resolve of idleWaiters) resolve();
+    idleWaiters.clear();
+  }
+
   async function drain() {
-    if (consumer === null) return;
+    if (consumer === null || draining) return;
     while (running < opts.concurrency && buffer.length > 0) {
       const now = Date.now();
       // Find the first message that is ready (runAt <= now).
@@ -94,6 +106,7 @@ export function createInMemoryQueue(options = {}) {
       running += 1;
       runMessage(message).finally(() => {
         running -= 1;
+        notifyIdle();
         scheduleDrain();
       });
     }
@@ -102,11 +115,19 @@ export function createInMemoryQueue(options = {}) {
   async function runMessage(message) {
     if (!consumer) return;
     try {
-      const result = await consumer({ id: message.id, name: message.name, data: message.data, attemptsMade: message.attemptsMade });
+      const result = await consumer({
+        id: message.id,
+        name: message.name,
+        data: message.data,
+        attemptsMade: message.attemptsMade,
+        attempts: message.attempts,
+      });
+      completedCount += 1;
       emit('completed', { id: message.id, name: message.name, data: message.data, result });
     } catch (err) {
       const attemptsMade = message.attemptsMade + 1;
-      if (attemptsMade >= message.attempts) {
+      if (attemptsMade >= message.attempts || closed) {
+        failedCount += 1;
         emit('failed', { id: message.id, name: message.name, data: message.data, error: err });
         return;
       }
@@ -123,7 +144,9 @@ export function createInMemoryQueue(options = {}) {
 
   return {
     async enqueue(data, { name = 'job', jobId, attempts = opts.attempts } = {}) {
-      if (closed) throw new Error('Queue is closed');
+      // Refused once shutdown starts: a message accepted now would only be
+      // dropped when the drain ends (the producer gets a typed 503 instead).
+      if (closed || draining) throw new Error('Queue is closed');
       const id = jobId ?? `mem_${nextId++}`;
       buffer.push({
         id,
@@ -138,7 +161,7 @@ export function createInMemoryQueue(options = {}) {
     },
 
     async schedule(data, delayMs, { name = 'job', jobId, attempts = opts.attempts } = {}) {
-      if (closed) throw new Error('Queue is closed');
+      if (closed || draining) throw new Error('Queue is closed');
       const id = jobId ?? `mem_${nextId++}`;
       buffer.push({
         id,
@@ -171,7 +194,51 @@ export function createInMemoryQueue(options = {}) {
       };
     },
 
-    async close() {
+    /**
+     * Counts for monitoring. `waiting` are ready to run, `delayed` wait for
+     * a retry backoff or a schedule, `active` are running now.
+     */
+    stats() {
+      const now = Date.now();
+      const waiting = buffer.filter((m) => m.runAt <= now).length;
+      return {
+        waiting,
+        delayed: buffer.length - waiting,
+        active: running,
+        completed: completedCount,
+        failed: failedCount,
+        consuming: consumer !== null && !draining && !closed,
+      };
+    },
+
+    /**
+     * Stop dispatching, let in-flight messages finish (bounded by
+     * `drainTimeoutMs`), then drop what is left. Messages still buffered are
+     * lost: the in-memory transport is single-process by design; the
+     * stale-job reaper recovers connectors whose sync was dropped.
+     *
+     * @param {Object} [options]
+     * @param {number} [options.drainTimeoutMs=0]
+     * @returns {Promise<{ drained: boolean, dropped: number }>}
+     */
+    async close({ drainTimeoutMs = 0 } = {}) {
+      draining = true;
+      let drained = running === 0;
+      if (!drained && drainTimeoutMs > 0) {
+        drained = await new Promise((resolve) => {
+          const timer = setTimeout(() => {
+            idleWaiters.delete(onIdle);
+            resolve(false);
+          }, drainTimeoutMs);
+          timer.unref?.();
+          const onIdle = () => {
+            clearTimeout(timer);
+            resolve(true);
+          };
+          idleWaiters.add(onIdle);
+        });
+      }
+      const dropped = buffer.length;
       closed = true;
       consumer = null;
       buffer.length = 0;
@@ -180,6 +247,7 @@ export function createInMemoryQueue(options = {}) {
       for (const handle of immediates) clearImmediate(handle);
       timers.clear();
       immediates.clear();
+      return { drained, dropped };
     },
   };
 }

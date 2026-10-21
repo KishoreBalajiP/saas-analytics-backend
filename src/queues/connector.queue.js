@@ -24,14 +24,16 @@
  *   and is wired here to avoid feature code touching the queue internals.
  */
 
+import env from '../config/env.js';
 import { QUEUE_NAMES } from './constants.js';
 import { createQueue } from './index.js';
 
 export const QUEUE_NAME = QUEUE_NAMES.CONNECTOR_SYNC;
+// Sizing comes from CONNECTOR_QUEUE_* (same defaults as before).
 export const DEFAULT_OPTIONS = Object.freeze({
-  concurrency: 5,
-  attempts: 5,
-  backoffMs: 2000,
+  concurrency: env.connectors?.queue?.concurrency ?? 5,
+  attempts: env.connectors?.queue?.attempts ?? 5,
+  backoffMs: env.connectors?.queue?.backoffMs ?? 2000,
 });
 
 let cachedHandle = null;
@@ -54,6 +56,10 @@ export function getQueue() {
 export const connectorQueue = {
   get name() {
     return QUEUE_NAME;
+  },
+  /** Attempts a message gets before it is reported failed. */
+  get maxAttempts() {
+    return DEFAULT_OPTIONS.attempts;
   },
   async enqueue(data, options) {
     return getQueue().enqueue(data, options);

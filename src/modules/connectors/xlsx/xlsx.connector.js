@@ -3,17 +3,20 @@
  *
  * WHY IT EXISTS
  *   Excel files are a common ingestion path alongside CSV. This provider
- *   wraps ExcelJS to stream-parse rows without loading the entire workbook
- *   into memory. Config is plain (non-secret) and encrypted at rest.
+ *   wraps ExcelJS's streaming WorkbookReader (behind the zip-bomb guard in
+ *   `xlsx.zipGuard.js`) so rows are parsed one at a time and the workbook is
+ *   never materialised. Config is plain (non-secret) and encrypted at rest.
  *
  * CONFIG (plain, non-secret):
  *   { hasHeader?: boolean, sheet?: string|number }
  *
  * CODING GUIDELINES
- *   - Stream rows using ExcelJS's row iteration; yield one record at a time.
+ *   - Stream rows with ExcelJS's WorkbookReader; yield one record at a time.
+ *   - Rows per sync are capped (`CONNECTOR_MAX_ROWS_PER_SYNC`): exceeding the
+ *     cap fails the sync with `ROW_LIMIT_EXCEEDED` instead of exhausting memory.
  *   - `connect` / `disconnect` are no-ops; `validate` + `preview` + `ingest`
  *     are the real surface.
- *   - The `sheet` config can be a sheet name (string) or index (number).
+ *   - The `sheet` config can be a sheet name (string) or a zero-based index (number).
  */
 
 import BaseConnector from '../../../connectors/BaseConnector.js';
@@ -40,9 +43,9 @@ export class XlsxConnector extends BaseConnector {
     return previewXlsx(buffer, { ...this.config, limit });
   }
 
-  async *ingest({ buffer } = {}) {
+  async *ingest({ buffer, maxRows } = {}) {
     if (!buffer) throw new Error('XlsxConnector.ingest requires a file buffer');
-    const iterator = createRowIterator(buffer, this.config);
+    const iterator = createRowIterator(buffer, this.config, maxRows ? { maxRows } : {});
     for await (const record of iterator) {
       yield record;
     }

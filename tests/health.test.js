@@ -58,5 +58,27 @@ test('readiness fails safely when the database is unavailable', async (t) => {
 
   assert.equal(res.status, 503);
   assert.equal(body.success, false);
-  assert.equal(body.data, undefined);
+  assert.equal(body.code, 'SERVICE_UNAVAILABLE');
+  // Roadmap 2.8: the 503 names the failing dependencies (component and
+  // status only - no hosts, errors or latencies on this public probe).
+  assert.equal(body.data.status, 'not_ready');
+  assert.equal(body.data.checks.database, 'down');
+  assert.equal(body.data.checks.queue, 'ok');
+  for (const value of Object.values(body.data.checks)) {
+    assert.ok(['ok', 'degraded', 'down', 'disabled', 'unknown'].includes(value), value);
+  }
+  assert.equal(typeof body.requestId, 'string');
+  assert.equal(res.headers.get('cache-control'), 'no-store');
+});
+
+test('liveness stays 200 while readiness is 503 (cheap, dependency-free)', async (t) => {
+  const server = app.listen(0);
+  t.after(() => server.close());
+
+  const { port } = server.address();
+  const live = await fetch(`http://127.0.0.1:${port}/api/v1/health`);
+  const ready = await fetch(`http://127.0.0.1:${port}/api/v1/health/ready`);
+  assert.equal(live.status, 200);
+  assert.equal((await live.json()).data.db, 'disconnected');
+  assert.equal(ready.status, 503);
 });

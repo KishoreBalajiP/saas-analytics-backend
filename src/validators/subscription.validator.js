@@ -95,6 +95,8 @@ export const adminChangePlanSchema = {
   body: {
     planId: { type: 'string', required: true, maxLength: 60 },
     reason: { type: 'string', required: true, minLength: 1, maxLength: 500 },
+    // billing: grant the plan until this date (an admin-granted term).
+    periodEnd: { type: 'date' },
   },
 };
 
@@ -110,6 +112,8 @@ export const adminSetStateSchema = {
     },
     reason: { type: 'string', required: true, minLength: 1, maxLength: 500 },
     graceEndsAt: { type: 'date' },
+    // billing: new term end when (re)activating.
+    periodEnd: { type: 'date' },
   },
 };
 

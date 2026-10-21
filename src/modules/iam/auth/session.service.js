@@ -14,6 +14,8 @@
  *   - rotate({ session, refreshToken, ...meta }) -> create the successor,
  *     then revoke the predecessor (rotation sequencing lives HERE).
  *   - revoke({ sessionId, reason }) / revokeAllForActor({ actorId, reason }).
+ *     Each revocation that ends a live session is recorded as an
+ *     `auth.session.revoked` security event (who, whose, why, how many).
  *
  * SECURITY RULES
  *   - Refresh tokens are opaque 256-bit values (URL-safe base64). They are
@@ -29,6 +31,10 @@
  *   - The session TTL is read from `security.auth.refreshTokenTtl`
  *     (ISO-duration string) and translated to a server-side `expiresAt`
  *     Date here - the repository only persists what it is told.
+ *   - Absolute lifetime: every session records the family's original
+ *     sign-in (`authenticatedAt`). Rotation copies it forward and caps the
+ *     successor's `expiresAt` at `authenticatedAt + sessionAbsoluteTtl`, so
+ *     refreshing can never keep one login alive past that ceiling.
  */
 
 import { createHash, randomBytes } from 'node:crypto';
@@ -38,6 +44,11 @@ import { hash } from '../../../utils/password.js';
 import { parseExpiresIn } from '../../../utils/jwt.js';
 import { withPrefix, PREFIXES } from '../../../utils/id.js';
 import sessionRepository from '../../../repositories/session.repository.js';
+import { securityEvent } from '../../../services/securityEvent.service.js';
+import { getCurrentActor } from '../../../utils/actorContext.js';
+// support: typed refusal when a support session is presented for refresh.
+import ApiError from '../../../utils/ApiError.js';
+import { ERROR_CODES } from '../../../config/constants.js';
 
 const logger = createChildLogger({ module: 'services/session' });
 const AUTH = env.security.auth;
@@ -82,6 +93,54 @@ export function sessionExpiryFromNow() {
   return new Date(Date.now() + parseExpiresIn(AUTH.refreshTokenTtl) * 1000);
 }
 
+/**
+ * The original sign-in time of a session family. Sessions written before
+ * `authenticatedAt` existed fall back to their own issue time.
+ *
+ * @param {Object} session
+ * @returns {Date}
+ */
+export function familyAuthenticatedAt(session) {
+  const raw = session?.authenticatedAt ?? session?.issuedAt ?? session?.createdAt ?? null;
+  const date = raw ? new Date(raw) : new Date();
+  return Number.isNaN(date.getTime()) ? new Date() : date;
+}
+
+/**
+ * The hard deadline of a session family: `authenticatedAt` plus the
+ * configured absolute lifetime (`AUTH_SESSION_ABSOLUTE_TTL`).
+ *
+ * @param {Date|string} authenticatedAt
+ * @returns {Date}
+ */
+export function absoluteExpiryFor(authenticatedAt) {
+  return new Date(new Date(authenticatedAt).getTime() + parseExpiresIn(AUTH.sessionAbsoluteTtl) * 1000);
+}
+
+/**
+ * True when the session family has outlived its absolute lifetime.
+ *
+ * @param {Object} session
+ * @param {number} [now=Date.now()]
+ * @returns {boolean}
+ */
+export function isPastAbsoluteLifetime(session, now = Date.now()) {
+  return absoluteExpiryFor(familyAuthenticatedAt(session)).getTime() <= now;
+}
+
+/**
+ * `expiresAt` for a new session of a family: the sliding refresh TTL,
+ * never later than the family's absolute deadline.
+ *
+ * @param {Date} authenticatedAt
+ * @returns {Date}
+ */
+function cappedExpiry(authenticatedAt) {
+  const sliding = sessionExpiryFromNow().getTime();
+  const absolute = absoluteExpiryFor(authenticatedAt).getTime();
+  return new Date(Math.min(sliding, absolute));
+}
+
 /* ------------------------------ lifecycle ------------------------------- */
 
 /**
@@ -98,6 +157,14 @@ export function sessionExpiryFromNow() {
  * @param {string} [params.userAgent] - login user agent.
  * @param {string} [params.impersonatedBy] - support admin id when this
  *   session is an impersonation (Sprint 8).
+ * @param {Date} [params.authenticatedAt] - original sign-in time of the
+ *   family (defaults to now, i.e. a fresh login).
+ * @param {string} [params.familyId] - family id to join (defaults to the
+ *   new session's own id, i.e. a fresh login).
+ * @param {string|null} [params.restriction] - adminauth: restricted session
+ *   (`mfa_enrollment`), null for a normal one.
+ * @param {Date|null} [params.stepUpAt] - adminauth: last step-up carried
+ *   over by rotation.
  * @returns {Promise<{ session: Object, refreshToken: string }>}
  */
 export async function create({
@@ -109,13 +176,22 @@ export async function create({
   ip = '',
   userAgent = '',
   impersonatedBy = null,
+  authenticatedAt = null,
+  familyId = null,
+  expiresAt = null,
+  restriction = null,
+  stepUpAt = null,
 }) {
   if (!actorId || !actorType || typeof refreshToken !== 'string' || refreshToken.length === 0) {
     throw new Error('session.create requires actorId, actorType and a refresh token');
   }
   const refreshTokenHash = await hashRefreshToken(refreshToken);
+  const sessionId = withPrefix(PREFIXES.SESSION);
+  const signedInAt = authenticatedAt ? new Date(authenticatedAt) : new Date();
   const session = await sessionRepository.create({
-    sessionId: withPrefix(PREFIXES.SESSION),
+    sessionId,
+    familyId: familyId ?? sessionId,
+    authenticatedAt: signedInAt,
     actorId,
     actorType,
     tenantId: tenantId ?? null,
@@ -126,19 +202,30 @@ export async function create({
     userAgent,
     issuedAt: new Date(),
     lastUsedAt: new Date(),
-    expiresAt: sessionExpiryFromNow(),
+    expiresAt: expiresAt
+      ? new Date(Math.min(new Date(expiresAt).getTime(), cappedExpiry(signedInAt).getTime()))
+      : cappedExpiry(signedInAt),
     status: 'active',
     revokedAt: null,
     revokedReason: null,
+    restriction: restriction ?? null,
+    stepUpAt: stepUpAt ?? null,
   });
   logger.debug({ sessionId: session.sessionId, actorType }, 'session created');
   return { session, refreshToken };
 }
 
 /**
- * Rotate a session: persist the successor first, revoke the predecessor
- * second. Used by every refresh exchange - the old token can no longer be
- * used after this returns.
+ * Rotate a session: persist the successor first, then end the predecessor
+ * with an atomic compare-and-set (`active` -> `revoked/rotated`, recording
+ * `replacedBy`). Used by every refresh exchange - the old token can no
+ * longer be used after this returns.
+ *
+ * Two concurrent refreshes presenting the same token (two tabs, a retry)
+ * both read the predecessor as active, but only one can claim it. The
+ * loser discards the successor it created and gets `null`, so a login never
+ * forks into two live sessions; the caller resolves the winner's successor
+ * through `replacedBy`.
  *
  * @param {Object} params
  * @param {Object} params.session - the (active) session being replaced.
@@ -147,19 +234,44 @@ export async function create({
  *   to the predecessor's so rotation keeps the original context.
  * @param {string} [params.ip]
  * @param {string} [params.userAgent]
- * @returns {Promise<{ session: Object, refreshToken: string }>}
+ * @param {string|null} [params.restriction] - adminauth: restriction for
+ *   the successor; omitted keeps the predecessor's.
+ * @returns {Promise<{ session: Object, refreshToken: string }|null>} `null`
+ *   when another request rotated the session first.
  */
-export async function rotate({ session, refreshToken, device, ip, userAgent }) {
+export async function rotate({ session, refreshToken, device, ip, userAgent, restriction }) {
+  // support: a support (impersonation) session is time-boxed and ends with
+  // its token; it is never refreshed into a longer-lived one.
+  if (session?.impersonatedBy) {
+    throw new ApiError(401, 'Support sessions cannot be refreshed', { code: ERROR_CODES.SESSION_EXPIRED });
+  }
   const next = await create({
     actorId: session.actorId,
     actorType: session.actorType,
     tenantId: session.tenantId ?? null,
+    impersonatedBy: session.impersonatedBy ?? null,
+    // The successor stays in the same family and keeps the original sign-in
+    // time, so the absolute lifetime is never extended by rotation.
+    authenticatedAt: familyAuthenticatedAt(session),
+    familyId: session.familyId ?? session.sessionId,
+    // adminauth: a restricted login stays restricted (the caller may
+    // tighten it: `restriction`), and a recent step-up keeps its (short)
+    // window across rotation.
+    restriction: restriction === undefined ? session.restriction ?? null : restriction,
+    stepUpAt: session.stepUpAt ?? null,
     refreshToken,
     device: device ?? session.device,
     ip: ip ?? session.ip,
     userAgent: userAgent ?? session.userAgent,
   });
-  await sessionRepository.revoke(session.sessionId, 'rotated');
+  const claimed = await sessionRepository.markRotated(session.sessionId, next.session.sessionId);
+  if (!claimed) {
+    // Another request ended the predecessor first. Our successor's token is
+    // never handed out; end it so the login does not fork.
+    await sessionRepository.revoke(next.session.sessionId, 'rotation_superseded');
+    logger.debug({ sessionId: session.sessionId }, 'session rotation lost a concurrent race');
+    return null;
+  }
   logger.debug({ sessionId: session.sessionId }, 'session rotated');
   return next;
 }
@@ -175,6 +287,16 @@ export async function rotate({ session, refreshToken, device, ip, userAgent }) {
  */
 export async function revoke({ sessionId, reason = 'logout' }) {
   const updated = await sessionRepository.revoke(sessionId, reason);
+  if (updated) {
+    const owner = { type: updated.actorType === 'admin' ? 'admin' : 'user', id: String(updated.actorId) };
+    await securityEvent('SESSION_REVOKED', {
+      actor: getCurrentActor() ?? owner,
+      tenantId: updated.tenantId ?? null,
+      resource: { type: 'session', id: sessionId },
+      reason,
+      metadata: { reason, scope: 'one', count: 1, subjectType: owner.type, subjectId: owner.id },
+    });
+  }
   return Boolean(updated);
 }
 
@@ -187,8 +309,17 @@ export async function revoke({ sessionId, reason = 'logout' }) {
  * @param {string} [params.reason]
  * @returns {Promise<number>} number of sessions revoked.
  */
-export async function revokeAllForActor({ actorId, reason = 'logout_all' }) {
-  return sessionRepository.revokeAllForActor(actorId, reason);
+export async function revokeAllForActor({ actorId, reason = 'logout_all', tenantId } = {}) {
+  const count = await sessionRepository.revokeAllForActor(actorId, reason);
+  if (count > 0) {
+    await securityEvent('SESSION_REVOKED', {
+      ...(tenantId !== undefined ? { tenantId } : {}),
+      resource: { type: 'actor', id: String(actorId) },
+      reason,
+      metadata: { reason, scope: 'all', count, subjectId: String(actorId) },
+    });
+  }
+  return count;
 }
 
 /**
@@ -225,6 +356,9 @@ export default {
   generateRefreshToken,
   hashRefreshToken,
   sessionExpiryFromNow,
+  familyAuthenticatedAt,
+  absoluteExpiryFor,
+  isPastAbsoluteLifetime,
   create,
   rotate,
   revoke,

@@ -3,8 +3,9 @@
  *
  * WHY IT EXISTS
  *   Proves the operational health surface: auth + RBAC gating, live probes
- *   (system/db/websocket), structured deferred probes (queue/scheduler/
- *   storage/connectors/metrics), and the 5 s cached aggregate.
+ *   (system/db/websocket/redis/storage/smtp/connectors), the metrics
+ *   snapshot and the 5 s cached aggregate (roadmap 2.8 replaced the
+ *   deferred storage/connectors/metrics placeholders with real probes).
  *
  * DESIGN
  *   - Real Express app on an ephemeral port + real in-memory MongoDB.
@@ -55,8 +56,8 @@ async function seedAdminWithPermission({ moduleKey, action }) {
   });
   const role = await roleService.create({ tenantId: null, name: `role_${shortToken(8)}` });
   await ensurePermission(`${moduleKey}.${action}`);
-  await roleService.addPermission({ roleId: role._id, permissionKey: `${moduleKey}.${action}`, by: admin._id });
-  await adminService.assignRole({ adminId: admin._id, roleId: role._id, tenantId: null, by: admin._id });
+  await roleService.addPermission({ roleId: role._id, permissionKey: `${moduleKey}.${action}`, by: null /* fixture seeding */ });
+  await adminService.assignRole({ adminId: admin._id, roleId: role._id, tenantId: null, by: null /* fixture seeding */ });
   const login = await api('/api/v1/admin-auth/login', {
     method: 'POST',
     body: { email: admin.email, password: PASSWORD },
@@ -131,27 +132,48 @@ describe('monitoring surface', () => {
     assert.equal(typeof res.json.data.latencyMs, 'number');
   });
 
-  test('deferred probes return structured deferred results, not 501', async () => {
+  test('storage, redis, smtp and connector probes are live (no deferred placeholders)', async () => {
     const { token } = await seedAdminWithPermission({ moduleKey: 'monitoring', action: 'view' });
-    for (const path of [
-      '/api/v1/monitoring/health/queue',
-      '/api/v1/monitoring/health/scheduler',
-      '/api/v1/monitoring/health/storage',
-      '/api/v1/monitoring/health/connectors',
-    ]) {
-      const res = await api(path, { headers: bearer(token) });
-      assert.equal(res.status, 200, `${path} should be implemented`);
-      assert.equal(res.json.data.status, 'deferred');
-      assert.equal(res.json.data.phase, '3');
-    }
+    // Queue and scheduler probes are live since roadmap 1.4 (see
+    // tests/jobs/job-monitoring.integration.test.js).
+    const storage = await api('/api/v1/monitoring/health/storage', { headers: bearer(token) });
+    assert.equal(storage.status, 200);
+    assert.equal(storage.json.data.status, 'ok');
+    assert.equal(storage.json.data.provider, 'local');
+
+    // The test process runs without REDIS_URL / SMTP: both are `disabled`.
+    const redis = await api('/api/v1/monitoring/health/redis', { headers: bearer(token) });
+    assert.equal(redis.status, 200);
+    assert.equal(redis.json.data.status, 'disabled');
+    const smtp = await api('/api/v1/monitoring/health/smtp', { headers: bearer(token) });
+    assert.equal(smtp.status, 200);
+    assert.equal(smtp.json.data.status, 'disabled');
+
+    const connectors = await api('/api/v1/monitoring/health/connectors', { headers: bearer(token) });
+    assert.equal(connectors.status, 200);
+    assert.equal(connectors.json.data.status, 'ok');
+    assert.equal(connectors.json.data.total, 0);
+    assert.deepEqual(connectors.json.data.byStatus, {});
   });
 
-  test('metrics is a structured deferred payload', async () => {
+  test('new probes are admin-gated like the rest', async () => {
+    for (const path of ['/api/v1/monitoring/health/redis', '/api/v1/monitoring/health/smtp']) {
+      const res = await api(path);
+      assert.equal(res.status, 401, `${path} should require auth`);
+    }
+    const { token } = await seedAdminWithPermission({ moduleKey: 'compliance', action: 'view' });
+    const res = await api('/api/v1/monitoring/health/smtp', { headers: bearer(token) });
+    assert.equal(res.status, 403);
+  });
+
+  test('metrics returns the JSON snapshot of the metrics registry', async () => {
     const { token } = await seedAdminWithPermission({ moduleKey: 'monitoring', action: 'view' });
     const res = await api('/api/v1/monitoring/metrics', { headers: bearer(token) });
     assert.equal(res.status, 200);
-    assert.equal(res.json.data.status, 'deferred');
-    assert.equal(res.json.data.phase, '4');
+    assert.equal(typeof res.json.data.generatedAt, 'string');
+    const names = res.json.data.metrics.map((m) => m.name);
+    assert.ok(names.includes('analivo_http_requests_total'));
+    assert.ok(names.includes('analivo_http_request_duration_seconds'));
   });
 
   test('aggregate fans out over live probes and is cached for 5 s', async () => {
@@ -162,7 +184,13 @@ describe('monitoring surface', () => {
     assert.equal(res1.json.data.system.status, 'ok');
     assert.equal(res1.json.data.db.status, 'ok');
     assert.ok(['ok', 'degraded'].includes(res1.json.data.websocket.status));
-    assert.equal(res1.json.data.queue.status, 'deferred');
+    assert.equal(res1.json.data.queue.status, 'ok');
+    assert.equal(res1.json.data.queue.transport, 'memory');
+    assert.ok(['ok', 'degraded', 'disabled'].includes(res1.json.data.scheduler.status));
+    assert.equal(res1.json.data.redis.status, 'disabled');
+    assert.equal(res1.json.data.storage.status, 'ok');
+    assert.equal(res1.json.data.smtp.status, 'disabled');
+    assert.equal(res1.json.data.connectors.status, 'ok');
     assert.ok(['ok', 'degraded', 'down'].includes(res1.json.data.status));
 
     const res2 = await api('/api/v1/monitoring/health/aggregate', { headers });

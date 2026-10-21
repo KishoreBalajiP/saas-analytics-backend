@@ -19,6 +19,7 @@ import userRepository from '../../src/repositories/user.repository.js';
 import connectorRepository from '../../src/repositories/connector.repository.js';
 import { ConnectorRow } from '../../src/models/ConnectorRow.js';
 import { User } from '../../src/models/User.js';
+import { Role } from '../../src/models/Role.js';
 
 const PASSWORD = 'Password123!';
 
@@ -116,7 +117,7 @@ test('dashboard + widget CRUD, execution and sharing over HTTP', async () => {
     headers: auth,
     body: {
       name: 'Total orders',
-      type: 'kpi',
+      type: 'table', // vizbuilder: grouped query, so not a KPI
       datasetId,
       query: { metrics: [{ alias: 'total', op: 'count', field: 'amount' }], groupBy: [{ field: 'region' }] },
     },
@@ -142,7 +143,7 @@ test('dashboard + widget CRUD, execution and sharing over HTTP', async () => {
   const shared = await api(`/api/v1/dashboards/${dashId}/share`, {
     method: 'POST',
     headers: auth,
-    body: { email: 'viewer@example.com' },
+    body: { principalType: 'role', principalId: String((await Role.findOne({ tenantId: auth['X-Tenant-Id'] }).lean())._id), level: 'view' },
   });
   assert.equal(shared.status, 201);
   const shareId = shared.json.data._id;
@@ -179,7 +180,11 @@ test('run-dashboard executes every widget (partial failures allowed)', async () 
   assert.equal(run.status, 200);
   assert.equal(run.json.data.length, 1);
   assert.equal(run.json.data[0].status, 'ok');
-  assert.equal(run.json.data[0].result.result.total, 2);
+  // Entries carry the engine result directly (frontend contract).
+  // A KPI (metrics, no groupBy) aggregates the dataset into one row.
+  assert.equal(run.json.data[0].result.total, 1);
+  assert.equal(run.json.data[0].result.rows[0].total, 2);
+  assert.equal(run.json.data[0].type, 'kpi');
 });
 
 test('dashboard routes are 401 without a token and 403 without permission', async () => {

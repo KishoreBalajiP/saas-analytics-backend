@@ -88,6 +88,39 @@ export const list = async ({ filter = {}, page = 1, limit = 20 } = {}) => {
   };
 };
 
+/**
+ * Completed exports whose download window has passed and whose artefact is
+ * still stored (cleanup job). Tenants under legal hold are skipped.
+ */
+export const findExpiredArtifacts = ({ now, limit = 500, excludeTenantIds = [] }) =>
+  AuditExport.find({
+    status: 'completed',
+    expiresAt: { $ne: null, $lte: now },
+    ...(excludeTenantIds.length > 0 ? { tenantId: { $nin: excludeTenantIds } } : {}),
+    legalHold: { $ne: true },
+  })
+    .sort({ expiresAt: 1 })
+    .limit(limit)
+    .select({ _id: 1, exportId: 1, tenantId: 1, storageKey: 1, expiresAt: 1 })
+    .lean();
+
+/** Count of `findExpiredArtifacts` matches (dry run). */
+export const countExpiredArtifacts = ({ now, excludeTenantIds = [] }) =>
+  AuditExport.countDocuments({
+    status: 'completed',
+    expiresAt: { $ne: null, $lte: now },
+    ...(excludeTenantIds.length > 0 ? { tenantId: { $nin: excludeTenantIds } } : {}),
+    legalHold: { $ne: true },
+  });
+
+/** The artefact was deleted: keep the row (polls answer 410) without its key. */
+export const markExpired = (exportId, { now }) =>
+  AuditExport.findOneAndUpdate(
+    { exportId, status: 'completed' },
+    { status: 'expired', storageKey: null, purgedAt: now },
+    { new: true },
+  ).lean();
+
 /** Hard-delete export rows (and their metadata) past `before`. */
 export const deleteExpired = async ({ before }) =>
   AuditExport.deleteMany({ expiresAt: { $lt: before } });
@@ -100,6 +133,9 @@ export default {
   markCompleted,
   markFailed,
   list,
+  findExpiredArtifacts,
+  countExpiredArtifacts,
+  markExpired,
   deleteExpired,
-  _meta: { lifecycle: ['queued', 'processing', 'completed', 'failed'] },
+  _meta: { lifecycle: ['queued', 'processing', 'completed', 'failed', 'expired'] },
 };

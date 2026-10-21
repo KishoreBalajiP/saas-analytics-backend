@@ -3,7 +3,8 @@
  *
  * Covers `authenticate` / `optionalAuthenticate` (user audience) and
  * `adminAuth` / `adminAuthOptional` (admin audience). The session liveness
- * lookup is stubbed via `sessionRepository.findById` so no database is
+ * lookup is stubbed via `sessionRepository.findById` and the account/tenant
+ * status check via `actorStatus.assertActorActive`, so no database is
  * needed - token signing/verification uses the real `utils/jwt.js`.
  */
 
@@ -15,6 +16,8 @@ import { sign, JWT_AUDIENCES } from '../../src/utils/jwt.js';
 import { authenticate, optionalAuthenticate } from '../../src/middleware/auth.middleware.js';
 import { adminAuth, adminAuthOptional } from '../../src/middleware/adminAuth.middleware.js';
 import sessionRepository from '../../src/repositories/session.repository.js';
+import actorStatus from '../../src/modules/iam/auth/actorStatus.service.js';
+import ApiError from '../../src/utils/ApiError.js';
 
 const ACTIVE_SESSION = {
   sessionId: 'ses_test',
@@ -52,9 +55,18 @@ async function invoke(middleware, req) {
   return error;
 }
 
-function stubSession(t, session) {
+function stubSession(t, session, { status = async () => ({ tenantId: null }) } = {}) {
   mock.method(sessionRepository, 'findById', async () => session);
+  mock.method(actorStatus, 'assertActorActive', status);
   t.after(() => mock.restoreAll());
+}
+
+function rejectStatus(code, message) {
+  return async () => {
+    const err = ApiError.unauthorized(message);
+    err.code = code;
+    throw err;
+  };
 }
 
 test('authenticate attaches req.user for a valid token + live session', async (t) => {
@@ -135,4 +147,48 @@ test('adminAuthOptional passes through without req.admin when no token', async (
   const error = await invoke(adminAuthOptional, req);
   assert.equal(error, undefined);
   assert.equal(req.admin, undefined);
+});
+
+/* ---------------------- account / tenant status (auth.14) ---------------------- */
+
+test('authenticate rejects a valid token when the account is suspended', async (t) => {
+  stubSession(t, ACTIVE_SESSION, { status: rejectStatus('ACCOUNT_SUSPENDED', 'Account is suspended') });
+  const req = bearer(await mint());
+  const error = await invoke(authenticate, req);
+  assert.equal(error.statusCode, 401);
+  assert.equal(error.code, 'ACCOUNT_SUSPENDED');
+  assert.equal(req.user, undefined);
+});
+
+test('authenticate rejects a valid token when the tenant is not active', async (t) => {
+  stubSession(t, ACTIVE_SESSION, { status: rejectStatus('TENANT_NOT_ACTIVE', 'Tenant is not active') });
+  const error = await invoke(authenticate, bearer(await mint()));
+  assert.equal(error.statusCode, 401);
+  assert.equal(error.code, 'TENANT_NOT_ACTIVE');
+});
+
+test('optionalAuthenticate passes through anonymously for a suspended account', async (t) => {
+  stubSession(t, ACTIVE_SESSION, { status: rejectStatus('ACCOUNT_SUSPENDED', 'Account is suspended') });
+  const req = bearer(await mint());
+  const error = await invoke(optionalAuthenticate, req);
+  assert.equal(error, undefined);
+  assert.equal(req.user, undefined);
+});
+
+test('authenticate rejects a session that belongs to another subject', async (t) => {
+  stubSession(t, { ...ACTIVE_SESSION, actorId: 'usr_someone_else' });
+  const error = await invoke(authenticate, bearer(await mint({ sub: 'usr_test' })));
+  assert.equal(error.statusCode, 401);
+});
+
+test('authenticate rejects a token whose tenant claim differs from the account tenant', async (t) => {
+  stubSession(t, ACTIVE_SESSION, { status: async () => ({ tenantId: 'tenant_real' }) });
+  const token = await sign({
+    payload: { sessionId: 'ses_test', email: 'a@b.com', tenantId: 'tenant_other' },
+    subject: 'usr_test',
+    audience: JWT_AUDIENCES.USER,
+    expiresIn: '15m',
+  });
+  const error = await invoke(authenticate, bearer(token));
+  assert.equal(error.statusCode, 401);
 });

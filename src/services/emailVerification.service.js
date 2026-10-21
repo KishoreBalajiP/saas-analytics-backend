@@ -3,7 +3,11 @@ import env from '../config/env.js';
 import ApiError from '../utils/ApiError.js';
 import { createChildLogger } from '../utils/logger.js';
 import emailService from './email.service.js';
-import cacheService from './cache.service.js';
+import outboxService from './outbox.service.js';
+// adminauth (auth.15): the resend cooldown lives in MongoDB (AuthCooldown),
+// so every instance sees it and a restart does not reset it.
+import authCooldownService from './authCooldown.service.js';
+import { describeDuration } from '../utils/humanDuration.js';
 import emailVerificationTokenRepository from '../repositories/emailVerificationToken.repository.js';
 import userRepository from '../repositories/user.repository.js';
 import tenantRepository from '../repositories/tenant.repository.js';
@@ -27,7 +31,7 @@ function digest(token) {
  *
  * @returns {Promise<{ status: 'sent'|'failed'|'unconfigured', error: string|null, sentAt: Date|null }>}
  */
-async function deliver({ to, name, verificationUrl }) {
+async function deliver({ to, name, verificationUrl, tenantId = null, recordId = null }) {
   if (!emailService.isCapturing() && !emailService.isDeliveryConfigured()) {
     logger.warn(
       { reason: 'mail_unconfigured' },
@@ -36,28 +40,27 @@ async function deliver({ to, name, verificationUrl }) {
     return { status: 'unconfigured', error: 'Mail transport is not configured', sentAt: null };
   }
 
-  const message = {
-    to,
-    subject: 'Verify your Analivo workspace email',
-    text: [
-      `Hi ${name || 'there'},`,
-      '',
-      'Welcome to Analivo. Verify your email address to finish creating your workspace.',
-      '',
-      verificationUrl,
-      '',
-      'This link expires in 15 minutes and can only be used once.',
-    ].join('\n'),
-  };
-
   try {
-    const info = await emailService.send(message);
-    const accepted = info?.accepted ?? [];
-    const rejected = info?.rejected ?? [];
-    if (rejected.length > 0 && accepted.length === 0) {
+    // Recorded in the email outbox and attempted within the request; if this
+    // attempt fails the email job retries it while the link is still valid.
+    const outcome = await outboxService.sendNow({
+      tenantId,
+      to,
+      template: 'auth.email_verification',
+      variables: {
+        name: name || '',
+        verificationUrl,
+        // adminauth: link lifetimes are configurable (24 h default); say it plainly.
+        expiresIn: describeDuration(TTL),
+      },
+      idempotencyKey: recordId ? `email-verification:${String(recordId)}` : undefined,
+    });
+    if (outcome.status === 'sent') return { status: 'sent', error: null, sentAt: new Date() };
+    if (outcome.error?.code === 'RECIPIENT_REJECTED') {
       return { status: 'failed', error: 'Recipient was rejected by the mail server', sentAt: new Date() };
     }
-    return { status: 'sent', error: null, sentAt: new Date() };
+    logger.error({ reason: 'send_failed', outbox: outcome.status }, 'verification email delivery failed');
+    return { status: 'failed', error: outcome.error?.message ?? 'Email delivery failed', sentAt: null };
   } catch (error) {
     logger.error({ reason: 'send_failed' }, 'verification email delivery failed');
     return { status: 'failed', error: error?.message ?? 'Email delivery failed', sentAt: null };
@@ -81,7 +84,7 @@ export async function create({ tenantId, userId, email, name = '' }) {
   });
 
   const verificationUrl = `${env.cors.clientUrl}/register?token=${encodeURIComponent(rawToken)}`;
-  const delivery = await deliver({ to: normalized, name, verificationUrl });
+  const delivery = await deliver({ to: normalized, name, verificationUrl, tenantId, recordId: record._id });
 
   // Persist the outcome, but never let an observability write break signup.
   try {
@@ -122,12 +125,11 @@ export async function resend({ tenantIdentifier, email }) {
   const scope = tenant ? String(tenant._id) : 'unknown';
 
   const cooldownKey = `verification-resend:${scope}:${digest(normalized)}`;
-  if (await cacheService.get(cooldownKey)) {
+  if (!(await authCooldownService.acquire(cooldownKey, RESEND_COOLDOWN_MS))) {
     throw ApiError.tooManyRequests(
       'A verification email was requested recently. Please wait a moment before trying again.',
     );
   }
-  await cacheService.set(cooldownKey, 1, Math.ceil(RESEND_COOLDOWN_MS / 1000));
 
   if (!tenant) return { ok: true };
 

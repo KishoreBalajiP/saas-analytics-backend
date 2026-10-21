@@ -63,7 +63,7 @@
 
 ## 1. Authentication & Sessions
 
-All endpoints mounted under `/auth`. All public credential endpoints are `strictLimiter`-throttled.
+All endpoints mounted under `/auth`. Every public endpoint has its own rate-limit bucket (login per IP + account with a per-IP ceiling, refresh separately and looser, password, verification and registration each separately). A limit answers 429 `RATE_LIMITED` with a `Retry-After` header and `meta.retryAfterSeconds`.
 
 ### `POST /auth/login`
 - **Authentication:** none (public, throttled)
@@ -83,8 +83,7 @@ All endpoints mounted under `/auth`. All public credential endpoints are `strict
   "data": {
     "accessToken": "eyJ...",
     "expiresIn": 900,
-    "refreshToken": "rt_...",
-    "sessionId": "ses_01H...",
+    "sessionExpiresAt": "2026-11-19T10:00:00.000Z",
     "actor": {
       "id": "66a...",
       "email": "user@example.com",
@@ -94,19 +93,19 @@ All endpoints mounted under `/auth`. All public credential endpoints are `strict
   }
 }
 ```
-- **Side effect:** `Set-Cookie: saas_session=<refreshToken>; HttpOnly; Secure; SameSite=<AUTH_COOKIE_SAMESITE>; Max-Age=2592000`
+- **Side effect:** `Set-Cookie: saas_session=<refreshToken>; Path=/api/v1/auth; HttpOnly; Secure; SameSite=<AUTH_COOKIE_SAMESITE>; Max-Age=<seconds until sessionExpiresAt>` (plus `Domain=<AUTH_COOKIE_DOMAIN>` when configured). The refresh token and the session id are never in the body.
 - **Errors:** 401 invalid credentials (generic, code `UNAUTHORIZED`), 403 `EMAIL_NOT_VERIFIED` (unverified owner), 403 `TENANT_NOT_ACTIVE`, 403 `ACCOUNT_SUSPENDED`, 422 validation failed, 429 too many attempts, 423 account locked
 - **Permission:** none (public)
 - **Frontend notes:** store `accessToken` in memory; backend sets refresh as HttpOnly cookie. Use the cookie for `/auth/refresh` automatically. On `403 EMAIL_NOT_VERIFIED`, guide the user to resend verification (see below) rather than treating it as a bad password.
 
 ### `POST /auth/refresh`
-- **Authentication:** refresh token via `Cookie: saas_session=…` OR `body.refreshToken`
-- **Response 200:** identical shape to `/auth/login` (rotates refresh token).
-- **Errors:** 401 invalid/expired refresh (family-revoked if replayed)
+- **Authentication:** the HttpOnly `saas_session` cookie only (a body token is ignored).
+- **Response 200:** identical shape to `/auth/login` (rotates the cookie). A login lives at most `AUTH_SESSION_ABSOLUTE_TTL` (default 30 days) from the original sign-in, however often it is refreshed.
+- **Errors:** 401 `SESSION_COOKIE_MISSING` (no cookie reached the server, e.g. blocked third-party cookies), 401 `SESSION_EXPIRED` (unknown, expired, past the absolute lifetime, or issued by the admin portal), 401 `SESSION_REVOKED` (replay of a rotated token revokes every session of the user; also account or tenant no longer active). Two tabs must never refresh at once: the SPA coordinates refreshes across tabs (Web Locks + BroadcastChannel). Server-side safety net: a token rotated less than `AUTH_REFRESH_REUSE_GRACE_MS` (default 10 s) ago whose direct successor is still live is a lagging duplicate, not a replay; it gets 200 with an access token for the successor and NO `Set-Cookie` (the browser already holds the successor's cookie). Later reuse, or reuse two rotations back, is a replay.
 
 ### `POST /auth/logout`
-- **Authentication:** none required (cookie or body token)
-- **Response 200:** `{ "success": true }`; clears `saas_session` cookie.
+- **Authentication:** the `saas_session` cookie and/or `Authorization: Bearer <accessToken>`; either one is enough. A cookie that was already rotated still ends the live session it was rotated into.
+- **Response 200 `data`:** `{ ok: true, revoked: boolean }` (`revoked` is false when no live session was found); clears the cookie.
 - **Frontend notes:** call on every logout button; discards access token client-side.
 
 ### `GET /auth/me`
@@ -166,19 +165,33 @@ All endpoints mounted under `/admin-auth`. Same shape as tenant auth, except the
 
 ### `POST /admin-auth/login`
 - **Request:** same as `/auth/login` (no `X-Tenant-Id`).
-- **Note:** for `super_admin` admins, the MFA step may be required; the response indicates `mfaRequired: true` with `{ mfaToken }` to retry with `mfaToken`.
+- **Note:** when the admin has MFA on, a missing code answers `401 MFA_REQUIRED` (`mfaRequired: true`); retry with `mfaToken` or `recoveryCode`. See "Admin authentication completeness" below.
 
 ### `POST /admin-auth/refresh` / `POST /admin-auth/logout` / `GET /admin-auth/me`
-- Identical to tenant auth, returns admin profile.
+- Identical to tenant auth, returns admin profile. The admin portal uses its own cookie, `saas_admin_session` (`AUTH_ADMIN_COOKIE_NAME`), scoped to `Path=/api/v1/admin-auth`, so signing in to one portal never replaces the other's session; `/admin-auth/refresh` refuses tenant sessions and vice versa. MFA enrol/verify/disable are rate-limited per admin.
 
 ### `POST /admin-auth/mfa/enroll`
 - **Authentication:** `adminAuth` (Bearer admin token)
-- **Response 200:** `{ secret: "BASE32…", otpauthUrl: "otpauth://totp/…", qrCodeDataUrl: "data:image/png;base64,…" }`
+- **Response 200:** `{ secret: "BASE32…", otpauthUrl: "otpauth://totp/…" }` (no QR image; the client renders the key/URL)
 
 ### `POST /admin-auth/mfa/verify`
 - **Authentication:** `adminAuth`
 - **Request:** `{ "code": "123456" }`
-- **Response 200:** `{ "verified": true }`
+- **Response 200:** `{ "enabled": true, "recoveryCodes": ["XXXX-XXXX-XXXX-XXXX", …], "recoveryCodesRemaining": 10 }`
+
+### Admin authentication completeness (adminauth, roadmap 2.2)
+
+- **MFA policy.** Admins whose type (or platform role name) is listed in `ADMIN_MFA_REQUIRED_TYPES` (default `super,platform`), and any admin whose MFA another super admin reset, must use MFA. Such an admin signing in without MFA gets `200` with `mfaEnrollmentRequired: true`: the session can only call `POST /admin-auth/mfa/enroll`, `POST /admin-auth/mfa/verify`, `GET /admin-auth/me` and `POST /admin-auth/logout`. Every other admin route answers `403 MFA_ENROLLMENT_REQUIRED`. `/admin-auth/refresh` keeps the flag until enrolment completes.
+- **Login second factor.** With MFA on, `POST /admin-auth/login` takes `mfaToken` (6 digits) **or** `recoveryCode` (`XXXX-XXXX-XXXX-XXXX`, case/dashes ignored, single use). Missing both: `401 MFA_REQUIRED`. A successful recovery-code login returns `recoveryCodesRemaining`.
+- **`GET /admin-auth/me`** adds `mfaRequired`, `mfaEnrollmentRequired`, `recoveryCodesRemaining`, `recoveryCodesGeneratedAt` and `stepUpExpiresAt` (never the codes).
+- **`POST /admin-auth/mfa/enroll`** → `{ secret, otpauthUrl }` (returned once, `Cache-Control: no-store`). `409` when MFA is already on.
+- **`POST /admin-auth/mfa/verify`** `{ code }` → `{ enabled: true, recoveryCodes: string[10], recoveryCodesRemaining }`. The codes are shown exactly once; only SHA-256 digests are stored. Lifts an enrolment-only restriction for the whole login.
+- **`POST /admin-auth/mfa/disable`** `{ password, code | recoveryCode }` → `{ enabled: false, enrollmentRequired }`. `400` without a code, `403 STEP_UP_FAILED` for a wrong password/code. When the policy still requires MFA the session becomes enrolment-only.
+- **`POST /admin-auth/step-up`** `{ password, code | recoveryCode }` → `{ stepUpExpiresAt }`. Opens a step-up window (`ADMIN_STEP_UP_TTL_MS`, default 5 min) on **this session only**. Failures: `403 STEP_UP_FAILED` (never 401), counted toward the lockout; reaching it revokes every session of the admin.
+- **Sensitive routes** answer `403 STEP_UP_REQUIRED` without a fresh step-up; the client re-authenticates and retries with a new idempotency key: `POST /admin-auth/mfa/recovery-codes` (→ `{ recoveryCodes, recoveryCodesRemaining, generatedAt }`, old codes void), `POST /admin/admins` with `adminType: "super"`, `PATCH /admin/admins/:id` with `adminType: "super"`, `POST /admin/admins/:id/roles` granting the role named `super`, `POST /admin/admins/:id/mfa/reset`, `POST /admin/admins/:id/password/reset`, `GET /tenants/:id/settings?includeSecrets=true`.
+- **Password recovery.** `POST /admin-auth/password/forgot` `{ email }` (always `{ ok: true }`) emails `<CLIENT_URL>/admin/reset-password?token=…` (lifetime `PASSWORD_RESET_TTL_MS`, default 1 h); the page posts `POST /admin-auth/password/reset` `{ token, newPassword }`.
+- **Invitations.** `POST /admin/admins` `{ email, name?, adminType?, tenantScope? }` (`iam.admins.create`; no password) creates a `pending` admin that cannot sign in and emails `<CLIENT_URL>/admin/accept-invite?token=…` (lifetime `ADMIN_INVITATION_TTL_MS`, default 72 h). Response: the admin plus `invitation` and `delivered`. `GET /admin/admins/invitations?status=` (`iam.admins.view`), `POST /admin/admins/:id/invitation/resend` (`iam.admins.create`; `429` within `ADMIN_INVITATION_RESEND_COOLDOWN_MS`, persisted in MongoDB), `POST /admin/admins/:id/invitation/revoke` (`iam.admins.delete`; removes the pending admin). Public: `POST /admin-auth/invitations/preview` `{ token }` → `{ email, name, adminType, expiresAt, mfaRequired }`; `POST /admin-auth/invitations/accept` `{ token, password, name? }` → login payload + admin refresh cookie (`mfaEnrollmentRequired: true` for privileged roles). Invalid, expired, used or revoked tokens all answer the same `400`.
+- **Admin-assisted resets** (`iam.admins.configure`, active super actor, never oneself, step-up, `{ reason }` required): `POST /admin/admins/:id/mfa/reset` → `{ admin, sessionsRevoked, mfaEnrollmentRequired: true }` (target must enrol at next sign-in); `POST /admin/admins/:id/password/reset` → `{ admin, sessionsRevoked, delivered, resetLinkExpiresAt }` (old password void at once; reset link emailed). `403` for oneself or a non-super actor, `409` for a pending admin.
 
 ---
 
@@ -224,8 +237,8 @@ All endpoints mounted under `/tenants`. All require **admin Bearer token** + `ia
 | GET | `/tenants/:id/members` | `iam.tenants.view` | owner + role assignments |
 | GET | `/tenants/:id/stats` | `iam.tenants.view` | counts (users, sessions, connectors, rows) |
 | GET | `/tenants/:id/billing` | `iam.tenants.view` | plan + usage |
-| GET | `/tenants/:id/settings` | `iam.tenants.view` | `?group=` |
-| PATCH | `/tenants/:id/settings` | `iam.tenants.configure` | upsert |
+| GET | `/tenants/:id/settings` | `iam.tenants.view` | `?group=`; `?includeSecrets=true` also needs `settings.secrets.view` (audited) |
+| PATCH | `/tenants/:id/settings` | `iam.tenants.configure` | upsert; a secret key also needs `settings.secrets.update` (403 `SECRET_PERMISSION_REQUIRED`) |
 | POST | `/tenants/:id/owner` | `iam.tenants.assign` | `{ userId }` |
 
 ### Tenant model fields
@@ -252,16 +265,21 @@ Mounted under `/admin/admins`. Requires **admin Bearer** + `iam.admins.<action>`
 | Method | Path | Permission |
 | --- | --- | --- |
 | GET | `/admin/admins` | `view` |
-| POST | `/admin/admins` | `create` — body `{ email, password, name, adminType, scope }` |
+| POST | `/admin/admins` | `create` — body `{ email, password, name, adminType, tenantScope? }` |
 | GET | `/admin/admins/:id` | `view` |
 | PATCH | `/admin/admins/:id` | `update` |
 | POST | `/admin/admins/:id/suspend` | `suspend` — body `{ reason }` |
 | POST | `/admin/admins/:id/restore` | `restore` |
 | POST | `/admin/admins/:id/roles` | `assign` — body `{ roleId, expiresAt? }` |
-| DELETE | `/admin/admins/:id/roles/:roleId` | `assign` |
+| DELETE | `/admin/admins/:id/roles/:roleId` | `assign` — `?tenantId=` revokes a tenant-scoped grant |
 | GET | `/admin/admins/:id/audit` | `view` |
 
-`adminType`: `super_admin | platform_admin | support_admin | readonly_admin`.
+`adminType`: `super | platform | support | auditor` (the privilege ceiling). Built-in
+platform roles: `super_admin`, `platform_admin`, `support_operator`, `auditor`
+(see `backend/platform-roles.md`). `GET /admin-auth/me` returns `roles`,
+`permissions` (platform grants plus grants for the admin's tenant) and
+`scope: { type: 'platform' | 'tenant', tenantId }`. `PATCH /admin/admins/:id` with
+`{ tenantScope: null }` clears an admin's tenant scope.
 
 ---
 
@@ -306,27 +324,42 @@ Mounted under `/connectors`. All routes require **Bearer + `connectors.<action>`
 | GET | `/connectors` | `connectors.view` — paged (`type, status, search, page, limit`) |
 | POST | `/connectors` | `connectors.create` — `{ type, name, config, fieldMapping? }` |
 | GET | `/connectors/:connectorId` | `connectors.view` |
-| PATCH | `/connectors/:connectorId` | `connectors.update` — `{ name?, status?, config?, fieldMapping? }`; type immutable |
-| DELETE | `/connectors/:connectorId` | `connectors.delete` — soft delete (204) |
+| PATCH | `/connectors/:connectorId` | `connectors.update` — `{ name?, status?, config?, fieldMapping?, webhookSignatureVersion?: 2 }`; type immutable; signature version is a one-way upgrade (400 on downgrade) |
+| DELETE | `/connectors/:connectorId` | `connectors.delete` — soft delete (204): rows deleted, tenant analytics cache cleared, dependent widgets / reports / alerts marked `brokenAt` + `brokenReason: "CONNECTOR_DELETED"` (alerts disabled, report schedules stopped). While broken, `PATCH /alerts/:id { enabled: true }` and `PATCH /reports/:id { schedule: { enabled: true } }` return 409 `DEPENDENCY_BROKEN` unless the same request points them at another dataset or widget |
 | POST | `/connectors/:connectorId/validate` | `connectors.view` — 200 if valid, 422 with `{ valid:false, errors:[…], connector }` |
 | GET | `/connectors/:connectorId/rows` | `connectors.view` — paged ingested rows |
+| GET | `/connectors/:connectorId/sync-runs` | `connectors.view` — paged sync history, newest first (`status?, page, limit ≤ 100`); each run `{ id, connectorId, trigger, jobType, status, attempts, maxAttempts, recoveryAttempt, recoveredFrom, requestedBy, filename, queuedAt, startedAt, finishedAt, durationMs, rows: { received, upserted, matched, skipped, failed }, error: { code, message } \| null, createdAt, updatedAt }` (allow-listed: no worker host, queue job id or lease fields; `error.message` is always a tenant-safe message); 404 for another tenant's connector |
+
+### Sync state (roadmap 1.4)
+- The connector carries `syncStatus` (`idle|queued|running|succeeded|failed`), `syncRequestedAt`, `syncLeaseUntil` and `currentSyncRunId`.
+- Every sync endpoint answers **409 `SYNC_IN_PROGRESS`** while a live sync holds the connector, and **503 `QUEUE_TIMEOUT` / `QUEUE_UNAVAILABLE`** when the job queue does not accept the job (retry later). Accepted syncs return `syncRunId` and `status: 'queued'`.
+- A sync whose worker died is recovered by the stale-job reaper once its lease expires (run status `abandoned`). A webhook delivery whose run was abandoned is replayed under a new `webhook` run if the queue still redelivers it, so the history can show an `abandoned` run followed by a `succeeded` one for the same delivery.
+- A sync that cannot start on its last attempt (the workspace status could not be read) ends `failed` with `error.code` `CONNECTOR_SYNC_FAILED`, and the connector's sync slot is freed.
+- Syncs queued before the workspace was suspended or the connector was paused are cancelled when the worker picks them up (run status `cancelled`, `error.code` `TENANT_NOT_ACTIVE` / `CONNECTOR_PAUSED`). Failures that a retry cannot fix (row / size caps, unreadable file, egress policy, invalid config, plan limit) fail the run once instead of being retried.
+- Stored rows (roadmap 1.3): a queued sync holds no `storedRows` quota; the worker counts only the rows a sync really adds (re-sent `sourceRowId`s refresh in place and add nothing), and a webhook delivery's request-time reservation is drawn on first (a retried delivery draws only what earlier attempts did not store), the unused part given back. A sync request from a workspace already over its stored-rows limit gets 409 `QUOTA_EXCEEDED`; new rows past a hard limit fail the run once with `error.code` `QUOTA_EXCEEDED` (rows that fit stay stored, existing rows in the refused batch are still refreshed). Deleting a connector releases its rows, and report schedules stopped by the delete cascade release their `scheduledReports` slot.
+
+### Upload errors (preview and sync)
+The file type is sniffed from its bytes. Errors are typed:
+- 413 `FILE_TOO_LARGE` — over `CONNECTOR_CSV_MAX_UPLOAD_MB` / `CONNECTOR_XLSX_MAX_UPLOAD_MB` (or an XLSX that inflates past `CONNECTOR_XLSX_MAX_UNCOMPRESSED_MB`); `errors[0].maxBytes` carries the limit
+- 415 `UNSUPPORTED_FILE_TYPE` — not CSV text (UTF-8 or a legacy 8-bit code page) or an OOXML workbook (legacy `.xls` included)
+- 415 `FILE_TYPE_MISMATCH` — extension contradicts the content, or the file type differs from the connector type
+- 422 `FILE_PARSE_FAILED` — unreadable file; 400 `UPLOAD_INVALID` — malformed multipart
+- Sync only: 403 `TENANT_NOT_ACTIVE` (workspace not active), 409 `CONNECTOR_PAUSED`. A suspended workspace's signed-in users are normally refused earlier, at authentication, with 401 `TENANT_NOT_ACTIVE` (every authenticated request re-checks account and workspace status); the 403 is the connector's own request-time check behind it. Treat the code, not the status, as the signal.
 
 ### CSV upload
 - `POST /connectors/:connectorId/preview` (`connectors.preview`, multipart `file` field, .csv/.txt, ≤ 10 MB) → `{ fields: string[], sample: Array, meta: { delimiter, hasHeader } }`
-- `POST /connectors/:connectorId/sync` (`connectors.sync`, multipart `file`) → 202 `{ accepted: true, jobType: 'ingest', filename }` (processed async via connector queue)
+- `POST /connectors/:connectorId/sync` (`connectors.sync`, multipart `file`) → 202 `{ accepted: true, jobType: 'ingest', filename, syncRunId, status: 'queued', alreadyQueued: false }` (processed async via connector queue; at most `CONNECTOR_MAX_ROWS_PER_SYNC` rows)
 
 ### XLSX upload
-- `POST /connectors/:connectorId/preview` (multipart `file`, .xlsx/.xls, ≤ 10 MB) → `{ fields, sample, meta: { sheetName, rowCount, hasHeader } }`
-- `POST /connectors/:connectorId/sync` (multipart `file`) → 202 `{ accepted: true, jobType: 'ingest', filename }`
+- `POST /connectors/:connectorId/preview` (multipart `file`, .xlsx, ≤ 10 MB) → `{ fields, sample: Array<record>, meta: { sheetName, rowCount, hasHeader, truncated } }`
+- `POST /connectors/:connectorId/sync` (multipart `file`) → 202 `{ accepted: true, jobType: 'ingest', filename, syncRunId, status: 'queued' }`
 
 ### MongoDB pull-sync
-- `POST /connectors/:connectorId/sync-mongodb` (no file, JSON body) → 202 `{ accepted: true, jobType: 'ingest' }`
+- `POST /connectors/:connectorId/sync-mongodb` (no file, JSON body) → 202 `{ accepted: true, jobType: 'ingest', syncRunId, status: 'queued' }`; 403 `TENANT_NOT_ACTIVE`, 409 `CONNECTOR_PAUSED`
+- Connection strings accept only allow-listed options (`authSource`, `authMechanism` SCRAM, `replicaSet`, `tls`/`ssl`, `retryWrites`, `retryReads`, `w`, `journal`, `wtimeoutMS`, `readPreference`, `maxStalenessSeconds`, `readConcernLevel`, `appName`, `directConnection`, `srvMaxHosts`, `compressors`); hosts must pass the egress policy. `lastError` is always a generic message.
 
 ### Webhook inbound
-- `POST /webhooks/:webhookToken` — **public, ci:routes-exempt**, HMAC-signed body:
-  - Headers: `X-Saas-Signature: sha256=<hex>`, `X-Saas-Timestamp: <unix-seconds>` (optional if `requireTimestamp: false`)
-  - Body: raw JSON bytes
-  - 202 accepted, 401 bad signature, 422 bad JSON
+- `POST /webhooks/:webhookToken` — **public, ci:routes-exempt** — see section 22.
 
 ### Connector model (redacted for API)
 ```json
@@ -338,6 +371,8 @@ Mounted under `/connectors`. All routes require **Bearer + `connectors.<action>`
   "configSummary": { /* type-dependent, secrets never included */ },
   "fieldMapping": { "...": "..." },
   "webhookToken": "whk_...",   // webhook type only
+  "webhookSignatureVersion": 2, // webhook only: 2 = timestamp-bound, absent/1 = legacy
+  "webhookToleranceSeconds": 300, // webhook only (when set)
   "lastSyncedAt": "...",
   "syncStatus": "idle" | "queued" | "running" | "succeeded" | "failed",
   "syncRequestedAt": "...",
@@ -360,9 +395,9 @@ Mounted under `/connectors`. All routes require **Bearer + `connectors.<action>`
 
 ### Connector config shapes (POST/PATCH `/connectors`)
 - **csv:** `{ delimiter?: string (1 char), hasHeader?: boolean }`
-- **xlsx:** `{ hasHeader?: boolean, sheet?: string|number }`
+- **xlsx:** `{ hasHeader?: boolean, sheet?: string (name) | number (zero-based index) }`
 - **mongodb:** `{ uri: string (mongodb://…), database: string, collection: string, filter?: object }`
-- **webhook:** `{ signingSecret: string (>= 16 chars), toleranceSeconds?: number, requireTimestamp?: boolean }`
+- **webhook:** `{ signingSecret: string (>= 16 chars), toleranceSeconds?: number (1-3600), requireTimestamp?: boolean (legacy v1 only) }`
 
 ### Connector redaction (what `configSummary` returns)
 - **csv:** `{ delimiter, hasHeader }`
@@ -379,15 +414,22 @@ Mounted under `/analytics`. All routes Bearer + `analytics.<action>`.
 ### `GET /analytics`
 - **Auth:** Bearer + `analytics.view`
 - **Query (all optional):**
-  - `connectorIds` — comma-separated ObjectIds or array
+  - `connectorIds` — comma-separated dataset ids in ONE parameter (a repeated parameter is a 400 field error)
   - `filters` — JSON string array `[{ field, op, value }]`
   - `filtersOp` — `'and' | 'or'` (default `'and'`)
-  - `dateRange` — JSON `{ from: ISO, to: ISO }`
+  - `dateRange` — JSON `{ field, preset? , from?, to? }`. `field` (required) is the date column (`ingestedAt` for ingestion time); `preset` ∈ `today, yesterday, last_7_days, last_30_days, this_month, last_month, this_quarter, last_quarter, this_year, last_year, custom` and resolves in the workspace time zone at run time; `custom`/no preset needs `from`/`to` (`YYYY-MM-DD` or ISO date-time)
   - `metrics` — JSON array `[{ field, op, alias }]` where op ∈ `count, sum, avg, min, max`
-  - `groupBy` — JSON array of field names (empty/missing = raw rows)
-  - `orderBy` — JSON `[{ field, dir }]`
+  - `groupBy` — JSON array of field names or `{ field, bucket? }` (bucket ∈ `day, week, month, quarter, year`); metrics without groupBy return one aggregate row; neither = raw rows
+  - `orderBy` — JSON `[{ field, direction }]` (`dir` accepted as an alias)
   - `page`, `limit` (≤ 200, default 50)
-- **Response 200 `data`:** `rows: Array<object>`, `meta` carries `total, page, pages, limit, columns, cached, executedAt, groupMode ('grouped' | 'raw'), queryId, cacheKey`.
+- **Response 200 `data`:** `rows: Array<object>`, `meta` carries `total, page, pages, limit, columns, cached, executedAt, groupMode, timezone, window, queryId, cacheKey`.
+- **Strict contract:** unknown parameters or any invalid part are `400 INVALID_QUERY` with field errors (`errors: [{ field: 'filters[0].op', message }]`), never ignored. `408 QUERY_TIMEOUT` when the query exceeds the time limit; `429 QUERY_CONCURRENCY_LIMIT` when the workspace already has too many queries running. Full rules: `backend/src/services/analytics.engine.js`.
+
+### `GET /workspace/settings` and `PATCH /workspace/settings`
+- **Auth:** Bearer + `settings.view` (GET) / `settings.update` (PATCH)
+- **Request (PATCH):** `{ "timezone": "Asia/Kolkata" }` (IANA name; unknown fields are 400)
+- **Response 200 `data`:** `{ timezone }` (default `UTC`)
+- **Effect:** analytics date presets and bucketing resolve in this zone; report and alert schedules without their own `schedule.timezone` run in it (their next run is re-projected on change).
 
 ### `GET /analytics/queries`
 - **Auth:** Bearer + `analytics.view`
@@ -400,8 +442,20 @@ Mounted under `/analytics`. All routes Bearer + `analytics.<action>`.
 
 ### `POST /analytics/export`
 - **Auth:** Bearer + `analytics.export`
-- **Body:** same params as `GET /analytics` minus pagination, plus `format: 'json'|'csv'|'xlsx'`
-- **Response 202:** `{ accepted: true, exportId, status: 'queued' }` (poll via `GET /audit-logs/export/:exportId` or connector status)
+- **Body:** the `GET /analytics` query as JSON (`connectorIds, filters, filtersOp, dateRange, metrics, groupBy, orderBy`) plus `format: 'json'|'csv'|'xlsx'` (default csv). `pagination` is refused (400 INVALID_QUERY, field `pagination`): an export always holds the WHOLE result. `connectorIds` must be datasets of the workspace (400, field `connectorIds[i]`).
+- **Response 202:** `{ exportId, jobId, accepted: true, queued: true, status: 'pending', format }`. The worker writes the file; poll the status endpoint.
+
+### `GET /analytics/exports/:id`
+- **Auth:** Bearer + `analytics.export`; only the user who requested the export (others, and other workspaces, get 404)
+- **Response:** `{ exportId, status: 'pending'|'running'|'ready'|'failed', format, rowCount, truncated, rowLimit, fileName, size, error, createdAt, startedAt, finishedAt }`. `truncated` is true only when the row safety cap (`ARTIFACT_MAX_ROWS`) was hit.
+
+### `GET /analytics/exports/:id/download`
+- **Auth:** as above. 409 `EXPORT_NOT_READY` until `status === 'ready'` (or when it failed).
+- **Response:** `{ url, expiresAt, exportId, fileName, contentType, format, rowCount, truncated, rowLimit, size }`. `url` is a short-lived signed URL (`ARTIFACT_DOWNLOAD_URL_TTL_SECONDS`, default 300 s): absolute (S3) or relative to the API origin (`/api/v1/files/<token>`, local storage). Open it directly; it needs no bearer token and serves the file as an attachment.
+
+### `GET /files/:token`
+- **Auth:** none (the token is a signed, expiring grant for one stored file; `ci:routes-exempt`)
+- **Response:** the file with `Content-Type`, `Content-Disposition: attachment; filename="..."`, `Cache-Control: private, no-store`. 404 `DOWNLOAD_LINK_INVALID` when the token is malformed, forged or expired.
 
 ---
 
@@ -486,7 +540,9 @@ Mounted under `/reports`. Bearer + `reports.<action>`.
 | PATCH | `/reports/:id` | update |
 | POST | `/reports/:id/run` | export — `{ format?, filters? }` → 202 |
 | DELETE | `/reports/:id` | delete |
-| GET | `/reports/:id/download` | export — `?runId=` → `{ url, expiresAt }` (signed storage URL) |
+| GET | `/reports/:id/download` | export — `?runId=` (default: latest ready run) → `{ url, expiresAt, runId, fileName, contentType, format, rowCount, truncated, rowLimit, size, status, generatedAt }`; `url` is a short-lived signed URL (see `GET /analytics/exports/:id/download`); 404 when the run has no artefact |
+
+Artefacts hold the WHOLE result (streamed, not paged). CSV (UTF-8, RFC 4180, formula-looking text prefixed with `'`), JSON (`{ columns, generatedAt, rows, rowCount, truncated, rowLimit }`) or a real XLSX workbook (`application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`). Raw queries have one column per data key; grouped/KPI queries one per group field and metric alias. `truncated: true` (with `rowLimit`) only when the configurable safety cap `ARTIFACT_MAX_ROWS` (default 1,000,000; XLSX at most 1,048,575) was hit.
 
 ### Report model
 ```json
@@ -501,12 +557,18 @@ Mounted under `/reports`. Bearer + `reports.<action>`.
   "nextRunAt": "...",
   "runs": [
     {
-      "runId": "r_...",
+      "_id": "66a...",
       "triggeredBy": "manual | schedule",
-      "format": "csv",
-      "status": "queued | running | ready | failed",
+      "format": "csv | json | xlsx",
+      "status": "pending | running | ready | failed",
       "rowCount": 142,
-      "resultKey": "exports/...",
+      "truncated": false,
+      "rowLimit": null,
+      "fileName": "weekly-sales-report-2026-10-20-0800.csv",
+      "contentType": "text/csv; charset=utf-8",
+      "size": 5120,
+      "resultKey": "reports/...",
+      "error": null,
       "startedAt": "...",
       "finishedAt": "..."
     }
@@ -528,25 +590,35 @@ Mounted under `/alerts`. Bearer + `alerts.<action>`.
 | GET | `/alerts/:id` | view |
 | PATCH | `/alerts/:id` | update |
 | DELETE | `/alerts/:id` | delete |
-| POST | `/alerts/:id/evaluate` | evaluate — manual; `{ triggered, event?, disabled? }` |
+| POST | `/alerts/:id/evaluate` | evaluate — manual; `{ triggered, suppressed, conditionMet, noData, outcome, value, event, groupsEvaluated?, groupsMatched?, disabled? }` |
 | GET | `/alerts/:id/events` | view — paged |
+
+**Metric contract.** `metric` must name an output column of the alert's query (the widget's query for widget alerts): a metric alias (`<op>_<field>` unless `alias` is set) or `count` when the query has no metrics. Otherwise create/update answer 400 `ALERT_METRIC_INVALID` (field `metric`); when omitted it defaults to the query's first output. `groupEvaluation` (`total` default, `any`, `all`) says how a grouped query is judged: `total` computes the metric once over the whole filtered dataset (groups ignored); `any`/`all` read every group (at most 5,000, else 422 `ALERT_TOO_MANY_GROUPS`) and match when some / every group meets the condition. No rows: `count`/`sum` are 0; `avg`/`min`/`max` (and no groups) are `no_data` and never trigger. `between` needs `thresholdHigh >= threshold`.
+
+**Cooldown.** Within `cooldownMinutes` of the last trigger a met condition is recorded as `suppressed` (event + `lastEvaluation`), sends nothing, and the next evaluation is still scheduled. Concurrent evaluations trigger at most once.
 
 ### AlertRule model
 ```json
 {
   "_id": "66a...",
   "name": "Daily revenue drop",
-  "datasetId": "66a...",
-  "condition": { "field": "revenue", "op": "lt", "value": 1000 },
   "source": "widget | query",
-  "sourceWidgetId": "...",
-  "sourceQuery": { /* safe contract */ },
-  "schedule": { "cron": "0 9 * * *", "timezone": "UTC" },
+  "dashboardId": null,
+  "widgetId": null,
+  "query": { "datasetId": "66a...", "metrics": [{ "op": "sum", "field": "amount", "alias": "revenue" }] },
+  "metric": "revenue",
+  "groupEvaluation": "total | any | all",
+  "condition": "gt | gte | lt | lte | eq | neq | between",
+  "threshold": 1000,
+  "thresholdHigh": null,
+  "schedule": { "cron": "0 9 * * *", "timezone": null },
   "cooldownMinutes": 60,
   "lastTriggeredAt": null,
+  "lastEvaluatedAt": "...",
+  "lastEvaluation": { "at": "...", "outcome": "triggered | suppressed | not_met | no_data | failed", "value": 842.5, "groupsEvaluated": null, "groupsMatched": null, "error": null },
   "nextEvaluationAt": "...",
   "enabled": true,
-  "notification": { "channels": ["email","in_app"], "recipients": ["..."], "template": "..." }
+  "notification": { "channels": ["email","in_app"], "recipients": [{ "type": "user | email", "value": "..." }], "template": null }
 }
 ```
 
@@ -560,7 +632,7 @@ Mounted under `/alerts`. Bearer + `alerts.<action>`.
   "threshold": 1000,
   "message": "...",
   "status": "triggered | suppressed | resolved",
-  "notificationIds": ["..."]
+  "details": { "mode": "any | all", "groupsEvaluated": 3, "groupsMatched": 1, "sample": [{ "group": { "region": "EU" }, "value": 1200 }] }
 }
 ```
 
@@ -626,42 +698,86 @@ Mounted under `/monitoring`. Admin Bearer + `monitoring.view`.
 | GET | `/monitoring/health/system` | process / event loop / uptime |
 | GET | `/monitoring/health/db` | mongo ping + replication lag |
 | GET | `/monitoring/health/websocket` | socket connection counts |
-| GET | `/monitoring/health/queue` | **501 (Phase 3)** |
-| GET | `/monitoring/health/scheduler` | **501 (Phase 3)** |
+| GET | `/monitoring/health/queue` | `{ status, transport: 'bullmq'\|'memory', role, consumersInProcess, queues: [{ name, status, waiting, active, delayed, failed, completed, consuming }] }` |
+| GET | `/monitoring/health/scheduler` | `{ status: 'ok'\|'degraded'\|'disabled', enabled, lastTickAt, process, jobs: [{ name, cronExpression, enabled, intervalMs, overdue, lastRun, lastSuccessAt, lastFailure }] }` |
+| GET | `/monitoring/jobs/runs` | paged scheduled-job runs, newest first (`job?, status?, page, limit ≤ 100`); each `{ id, job, instanceId, trigger, status, startedAt, finishedAt, durationMs, counts, error }` |
 | GET | `/monitoring/health/storage` | **501 (Phase 3)** |
 | GET | `/monitoring/health/connectors` | **501 (Phase 3)** |
-| GET | `/monitoring/health/aggregate` | one-shot summary, 5 s cached |
+| GET | `/monitoring/health/aggregate` | one-shot summary, 5 s cached (includes `mail`) |
+| GET | `/monitoring/health/mail` | `{ status: 'ok'\|'degraded'\|'down'\|'disabled', transport, verify, sends, outbox: { pending, sending, retrying, sent, dead, backlog, oldestDueAt, backlogAgeMs, lastSentAt }, settings }` |
+| GET | `/monitoring/outbox` | paged outbox messages (`status?, tenantId?, page, limit ≤ 100`); each `{ id, tenantId, to (masked), template, status, attempts, maxAttempts, nextAttemptAt, lastAttemptAt, sentAt, deadAt, lastError, transport, createdAt }` |
+| POST | `/monitoring/outbox/:id/requeue` | `monitoring.update`; dead letter → `pending` (409 when not dead) |
+| GET | `/monitoring/retention` | `{ job: { name, enabled, cronExpression, dryRun, batchSize, maxBatchesPerRun }, legalHoldTenantIds, policies: [{ key, collection, envKey, days, enabled, cutoff, field, enforcedBy, description }], lastRun, lastSuccessAt }` |
 | GET | `/monitoring/metrics` | **501 (Phase 4 Prometheus)** |
+
+| GET | `/monitoring/health/redis` | `{ status: 'ok'\|'down'\|'disabled', provider, latencyMs, error? }` |
+| GET | `/monitoring/health/storage` | `{ status: 'ok'\|'degraded'\|'down', provider: 'local'\|'s3', latencyMs, error? }` |
+| GET | `/monitoring/health/smtp` | `{ status: 'ok'\|'down'\|'disabled', latencyMs, error? }` |
+| GET | `/monitoring/health/connectors` | `{ status, total, byStatus, bySyncStatus, failing }` (platform-wide counts) |
+| GET | `/monitoring/health/aggregate` | one-shot summary of every probe above, 5 s cached (`cached: false` when the cache is down) |
+| GET | `/monitoring/metrics` | JSON snapshot `{ generatedAt, metrics: [{ name, type, help, series }] }` |
+
+Public observability endpoints (roadmap 2.8):
+
+| Method | Path | Auth | Description |
+| --- | --- | --- | --- |
+| GET | `/health/ready` | none | 200 `{ status: 'ready'\|'degraded', checks }`; 503 `{ data: { status: 'not_ready', checks } }` |
+| GET | `/status` | none | `{ status: 'operational'\|'degraded'\|'outage', components: { api, background_jobs, file_storage, email_delivery }, updatedAt }` |
+| POST | `/client-errors` | none (rate-limited per IP) | Frontend crash report `{ kind: 'boundary'\|'error'\|'unhandledrejection'\|'manual', message, name?, stack?, url?, route?, component?, requestId?, statusCode?, code?, release?, portal? }` -> 202. Nothing is stored. |
+| GET | `/metrics` | Bearer `METRICS_TOKEN` | Prometheus text (not for the SPA) |
+
+Every error envelope carries `requestId` (same value as the `X-Request-Id`
+header). The SPA sends its own `X-Request-Id` per request (8-128 chars of
+`[A-Za-z0-9._:-]`, otherwise the server generates one).
 
 ---
 
 ## 15. Audit Logs (Admin)
 
 Mounted under `/audit-logs`. Admin Bearer + `audit_logs.<view|export>`.
+An admin whose token carries a tenant scope (support admin) only ever sees
+that tenant's entries; platform admins may filter by any tenant.
 
 | Method | Path | Body / Query | Permission |
 | --- | --- | --- | --- |
-| GET | `/audit-logs` | `actor, module, action, resourceType, resourceId, from, to, tenantId, page, limit` | view |
+| GET | `/audit-logs` | `category (change|security), severity (info|notice|warning|critical), module, action, actorId, actorType, result, resourceType, resourceId, dateFrom, dateTo, search, tenantId, page, limit` | view |
 | GET | `/audit-logs/modules/:module` | `page, limit` | view |
-| GET | `/audit-logs/:id` | — | view |
+| GET | `/audit-logs/:id` | — | view (404 outside a scoped admin's tenant) |
 | POST | `/audit-logs/export` | `{ filters, format: 'json'|'csv' }` → 202 `{ exportId }` | export |
-| GET | `/audit-logs/export/:exportId` | — | view → `{ status, url?, expiresAt? }` |
+| GET | `/audit-logs/export/:exportId` | — | view → `{ exportId, status, format, recordCount, completedAt, expiresAt, downloadUrl?, fileName? }`; **410 `EXPORT_EXPIRED`** once `expiresAt` has passed (request a new export) |
+
+Security event action names (category `security`) are defined in one place:
+backend `src/constants/securityEvents.js` (login success/failure, lockout,
+password reset, MFA, session revocation and refresh-token replay, permission
+and role grants, admin privilege changes, support impersonation, API key and
+embed token lifecycle, denied requests `request.denied`).
 
 ### AuditLog model
 ```json
 {
   "_id": "66a...",
-  "actor": { "type": "user|admin|system", "id": "..." },
+  "category": "change|security",
+  "severity": "info|notice|warning|critical|null",
+  "actorType": "user|admin|service|system",
+  "actorId": "...",
+  "actorDisplay": "ops@example.com",
+  "tenantId": "66a... | null",
   "module": "connectors",
-  "action": "connector.create",
-  "resource": { "type": "connector", "id": "66a..." },
-  "tenantId": "<slug>",
-  "before": { /* sanitized snapshot */ },
-  "after": { /* sanitized snapshot */ },
+  "action": "update",
+  "resourceType": "connector",
+  "resourceId": "66a...",
+  "before": { /* allow-listed fields that changed; dates ISO, ids hex */ },
+  "after": { /* allow-listed fields that changed */ },
+  "metadata": { /* changedFields, bulk filter/counts, security event details */ },
   "reason": "...",
+  "result": "success|failure",
+  "errorCode": "...",
   "ip": "...",
   "userAgent": "...",
-  "createdAt": "..."
+  "requestId": "...",
+  "occurredAt": "2026-10-20T10:00:00.000Z",
+  "seq": 42,
+  "hash": "<64 hex: tamper-evidence chain>"
 }
 ```
 
@@ -673,11 +789,12 @@ Mounted under `/access-logs`. Admin Bearer + `access_logs.<view|export>`.
 
 | Method | Path | Permission |
 | --- | --- | --- |
-| GET | `/access-logs` | view — `actor, method, path, status, tenantId, from, to, page, limit` |
+| GET | `/access-logs` | view — `actorId, actorType, method, path, statusCode, event, tenantId, dateFrom, dateTo, search, page, limit` |
 | GET | `/access-logs/top-paths` | view — aggregated (capped 100) |
 | GET | `/access-logs/top-errors` | view — aggregated |
-| POST | `/access-logs/export` | export |
+| POST | `/access-logs/export` | export — `{ filters, format }`; filters as for the list (method/path/statusCode/event are honoured); rows carry `id` |
 | GET | `/access-logs/export/:exportId` | view (poll status) |
+| GET | `/access-logs/login-attempts` | view — every sign-in attempt (`LoginAttempt`): `email, ip, success (true/false), reason, actorType (user/admin), actorId, tenantId, dateFrom, dateTo, page, limit`; rows `{ _id, actorId, actorType, email, tenantId, ip, userAgent, success, reason, occurredAt }`. Tenant-scoped admins only see their tenant. |
 
 ---
 
@@ -703,16 +820,44 @@ Mounted under `/compliance`.
 
 ## 18. Support (Admin)
 
-Mounted under `/support`. Admin Bearer + `support.configure`.
+Mounted under `/support`. Admin Bearer. Every privileged action needs a `reason` (3..500 chars) and is written to the workspace's audit trail. Tenant-scoped admins only reach their own tenant (403 otherwise).
 
-| Method | Path | Body |
-| --- | --- | --- |
-| POST | `/support/impersonate` | `{ userId, reason }` — returns short-lived user-scoped bearer token; daily budget enforced |
-| POST | `/support/impersonate/stop` | `{ sessionId }` |
-| POST | `/support/account/recover` | `{ email, type: 'reset'|'unlock' }` |
-| POST | `/support/account/revoke-sessions` | `{ userId }` |
-| GET | `/support/tenants/:id/lookups` | — (tenant overview + statistics) |
-| POST | `/support/notifications/broadcast` | `{ title, body, audience: { tenantId?, roles? } }` |
+| Method | Path | Permission | Body / notes |
+| --- | --- | --- | --- |
+| GET | `/support/tenants/:id/diagnostics` | `support.view` | Sanitised diagnostics: tenant status/plan, usage vs limits, user counts, connector states with masked last errors, recent sync runs, 24 h request status counts and top failing paths, broken items, support access state. No customer rows, configs, emails or names. |
+| POST | `/support/impersonate` | `support.configure` | `{ targetUserId, reason, ticket? }` — needs an active workspace consent or the caller's own approved break-glass grant (403 `SUPPORT_CONSENT_REQUIRED`); 409 `TENANT_NOT_ACTIVE`; 403 `SUPPORT_TARGET_PROTECTED` for platform staff; 429 `SUPPORT_IMPERSONATION_CAP_EXCEEDED` (atomic per-admin daily cap). Returns `{ token, expiresAt, expiresIn, sessionId, readOnly: true, breakGlass, grantId, user }`. The token is a READ-ONLY user token: every POST/PUT/PATCH/DELETE answers 403 `IMPERSONATION_READ_ONLY`; it ends with the token (at most 60 min, never past the grant) and never refreshes. |
+| POST | `/support/impersonate/stop` | `support.configure` | `{ sessionId, reason }` (only the operator who started it) |
+| GET | `/support/impersonations` | `support.view` | `?tenantId&status=active|ended&mine=true&page&limit` |
+| GET | `/support/access-grants` | `support.view` | `?tenantId&status=pending|active|denied|revoked&kind=consent|break_glass&page&limit` |
+| POST | `/support/access-grants/break-glass` | `support.configure` | `{ tenantId, reason (>= 10 chars), ticket? }` → pending grant |
+| POST | `/support/access-grants/:id/approve` | `support.approve` | `{ reason }` — an active, unscoped super admin other than the requester (403 `BREAK_GLASS_APPROVAL_DENIED`); 409 `SUPPORT_GRANT_NOT_ACTIVE` when already decided |
+| POST | `/support/access-grants/:id/deny` | `support.approve` | `{ reason }` |
+| POST | `/support/access-grants/:id/revoke` | `support.configure` | `{ reason }` — ends the grant's open support sessions |
+| POST | `/support/account/recover` | `support.configure` | `{ userId, reason }` |
+| POST | `/support/account/revoke-sessions` | `support.configure` | `{ userId, reason }` |
+| GET | `/support/tenants/:id/lookups` | `support.configure` | — (tenant overview + statistics) |
+| POST | `/support/notifications/broadcast` | `support.configure` | `{ tenantId, title, body?, type?, reason }` |
+
+### 18a. Support access (workspace side)
+
+Mounted under `/workspace/support-access`. Tenant Bearer.
+
+| Method | Path | Permission | Body / notes |
+| --- | --- | --- | --- |
+| GET | `/workspace/support-access` | `settings.view` | `{ active, grants[], sessions[], maxHours }` |
+| GET | `/workspace/support-access/activity` | `settings.view` | Paged `support.*` audit rows of the workspace |
+| POST | `/workspace/support-access/grants` | `settings.configure` | `{ durationHours (1..SUPPORT_CONSENT_MAX_HOURS), note? }` → 201; supersedes the active consent |
+| POST | `/workspace/support-access/grants/:id/revoke` | `settings.configure` | `{ reason? }` — consent only; ends its open support sessions |
+| POST | `/workspace/support-access/sessions/:id/end` | `settings.configure` | `{ reason? }` |
+
+### 18b. The support session itself
+
+Mounted under `/support-session`.
+
+| Method | Path | Auth | Notes |
+| --- | --- | --- | --- |
+| GET | `/support-session` | tenant Bearer | `{ active: false }` for a normal session; for a support session `{ active, sessionId, readOnly, breakGlass, operator, user, startedAt, expiresAt, reason, ticket }` |
+| POST | `/support-session/end` | support session only | Ends it (403 `IMPERSONATION_SESSION_REQUIRED` for a normal session). The only mutation a support session can make. |
 
 ---
 
@@ -817,10 +962,117 @@ Mounted under `/external`. Authenticated by `X-Api-Key: <prefix>.<secret>`. Scop
 ## 22. Webhooks (Inbound, — Provider HMAC)
 
 ### `POST /webhooks/:webhookToken`
-- **Authentication:** HMAC-SHA256 signature in `X-Saas-Signature: sha256=<hex>`, timestamp in `X-Saas-Timestamp: <unix-seconds>`
-- **Body:** raw JSON bytes (signature computed over exact bytes)
-- **Response 202:** `{ accepted: true, received: <count> }` — job processed via connector sync queue
-- **Errors:** 401 bad signature, 422 invalid JSON
+- **Headers:** `Content-Type: application/json`, `X-Saas-Timestamp: <unix-seconds>` (required), `X-Saas-Signature: v2=<hex HMAC-SHA256(signingSecret, "<timestamp>.<raw body>")>`
+- **Window:** timestamp within the connector tolerance (default 300 s), at most 60 s ahead. The same signature is accepted once (replays → 409).
+- **Legacy (connectors without `webhookSignatureVersion: 2`):** `X-Saas-Signature: sha256=<hex HMAC of body>` still accepted while `WEBHOOK_LEGACY_SIGNATURES_ENABLED=true`; the response carries `Deprecation: true`.
+- **Body:** raw JSON bytes, ≤ `WEBHOOK_MAX_BODY_KB`, ≤ `WEBHOOK_MAX_RECORDS` records; records count toward the `storedRows` quota.
+- **Response 202:** `{ accepted: true, received: <count>, signatureVersion: 1|2 }` — job processed via connector sync queue
+- **Errors:** 401 `WEBHOOK_SIGNATURE_INVALID | WEBHOOK_SIGNATURE_MISSING | WEBHOOK_SIGNATURE_MALFORMED | WEBHOOK_LEGACY_SIGNATURE_REJECTED | WEBHOOK_TIMESTAMP_MISSING | WEBHOOK_TIMESTAMP_INVALID | WEBHOOK_TIMESTAMP_OUT_OF_WINDOW`; 403 `TENANT_NOT_ACTIVE`; 409 `WEBHOOK_REPLAYED | CONNECTOR_PAUSED | QUOTA_EXCEEDED`; 413 `WEBHOOK_PAYLOAD_TOO_LARGE | WEBHOOK_TOO_MANY_RECORDS`; 415 `WEBHOOK_UNSUPPORTED_MEDIA_TYPE`; 422 invalid JSON; 503 `WEBHOOK_REPLAY_CHECK_UNAVAILABLE`
+
+---
+
+## 23. Platform Configuration (Admin) — roadmap 2.4
+
+All admin routes: Bearer (admin) + the permission below; a tenant-scoped admin gets 403 `ADMIN_SCOPE_DENIED`. Every write takes the `version` the admin read (409 `VERSION_CONFLICT` when stale), is recorded in a history and audited. Secret values are never returned except by the dedicated reveal endpoint.
+
+### Platform settings `/settings`
+| Method | Path | Permission | Notes |
+| --- | --- | --- | --- |
+| GET | `/settings` | `settings.view` | `?group&search`; `data` = settings, `meta.groups` |
+| GET | `/settings/:key` | `settings.view` | secret → `value: null, redacted: true, hasValue` |
+| PUT | `/settings/:key` | `settings.update` (+ `settings.secrets.update` for a secret) | `{ value, version?, reason? }`; 400 field error keyed by the setting key; 403 `SETTING_READ_ONLY` / `SECRET_PERMISSION_REQUIRED` |
+| POST | `/settings/:key/reset` | `settings.update` | back to the built-in default |
+| GET | `/settings/:key/history` | `settings.view` | `[{ version, action, state: { value } , changedBy, reason, rolledBackFrom, createdAt }]` (secret states carry `hasSecretValue` only) |
+| POST | `/settings/:key/rollback` | `settings.update` | `{ toVersion, version? }`; 404 `REVISION_NOT_FOUND` |
+| GET | `/settings/:key/secret` | `settings.secrets.view` | decrypted value, `Cache-Control: no-store`, audited; 400 `SETTING_NOT_SECRET` |
+
+### Feature flags `/feature-flags`
+| Method | Path | Permission | Notes |
+| --- | --- | --- | --- |
+| GET | `/feature-flags/evaluate` | **tenant** Bearer + `feature_flags.view` | `{ flags: { [key]: boolean } }` for the session's workspace; missing key = off |
+| GET | `/feature-flags` | `feature_flags.view` | `?search&enabled&page&limit` |
+| POST | `/feature-flags` | `feature_flags.create` | `{ key, name, description?, enabled?, rollout? }`; new flags default to disabled; 409 `FEATURE_FLAG_EXISTS` |
+| GET | `/feature-flags/preview?tenantId=` | `feature_flags.view` | `[{ key, name, value, reason }]` |
+| GET/PATCH | `/feature-flags/:key` | `feature_flags.view` / `feature_flags.update` | rollout `{ strategy: all|tenantId|percentage, tenantIds, percentage }`; field errors such as `rollout.tenantIds[1]` |
+| DELETE | `/feature-flags/:key?version=` | `feature_flags.delete` | system flags → 409 `FEATURE_FLAG_SYSTEM` |
+| GET | `/feature-flags/:key/history` | `feature_flags.view` | |
+| POST | `/feature-flags/:key/rollback` | `feature_flags.update` | `{ toVersion, version? }` |
+
+Percentage rollouts bucket each tenant by `sha256("<flag key>:<tenant id>") % 100`, so assignments are stable.
+
+### Email templates `/email-templates`
+| Method | Path | Permission | Notes |
+| --- | --- | --- | --- |
+| GET | `/email-templates?locale=` | `email_templates.view` | built-ins with `customized`, `version`, `variables`, `builtIn`, `override`, `effective` |
+| GET | `/email-templates/:key?locale=` | `email_templates.view` | |
+| PUT | `/email-templates/:key` | `email_templates.update` | `{ locale, subject, text, html?, version?, reason? }`; 400 `EMAIL_TEMPLATE_INVALID` with field errors (unknown / missing required variables, unsafe HTML) |
+| POST | `/email-templates/:key/reset` | `email_templates.update` | sends use the built-in again |
+| POST | `/email-templates/:key/preview` | `email_templates.view` | `{ locale, draft?, variables? }` → rendered `{ subject, text, html, source }`; never sends |
+| GET | `/email-templates/:key/history?locale=` | `email_templates.view` | |
+| POST | `/email-templates/:key/rollback` | `email_templates.update` | `{ locale, toVersion, version? }` |
+
+---
+
+## 24. Tenant Data Export (Tenant + Platform) — backups, roadmap 2.9
+
+A portable archive (`.tar.gz`) of everything a workspace owns: one JSON-lines
+file per collection (relaxed MongoDB Extended JSON), one CSV per dataset, a
+`manifest.json` with counts, SHA-256 checksums, explicit exclusions and
+redactions. Secrets are never included. Exports run as a job; poll until
+`status` leaves `queued`/`processing`. Archives expire after
+`TENANT_EXPORT_TTL_HOURS` (72 h); download links live
+`TENANT_EXPORT_DOWNLOAD_URL_TTL_SECONDS` (300 s).
+
+Workspace surface — tenant Bearer, mounted under `/workspace/data-exports`:
+
+| Method | Path | Permission | Notes |
+| --- | --- | --- | --- |
+| GET | `/workspace/data-exports` | `data_exports.view` | `page`, `limit`; array in `data`, pagination in `meta` |
+| POST | `/workspace/data-exports` | `data_exports.export` | no body; 202 with the queued export; 409 `EXPORT_IN_PROGRESS`, 429 `EXPORT_RATE_LIMITED` |
+| GET | `/workspace/data-exports/:exportId` | `data_exports.view` | status |
+| POST | `/workspace/data-exports/:exportId/download-url` | `data_exports.export` | `{ url, expiresAt, fileName, sizeBytes, sha256 }`; 409 `EXPORT_NOT_READY`, 410 `EXPORT_EXPIRED`, 403 `EXPORT_DOWNLOAD_FORBIDDEN` (platform-prepared) |
+| DELETE | `/workspace/data-exports/:exportId` | `data_exports.export` | deletes the archive now (status `expired`); 409 while still running |
+
+Platform surface — admin Bearer, mounted under `/tenants/:id/data-exports`
+(admins with a `tenantScope` reach only that tenant):
+
+| Method | Path | Permission | Notes |
+| --- | --- | --- | --- |
+| GET | `/tenants/:id/data-exports` | `iam.tenants.view` | |
+| POST | `/tenants/:id/data-exports` | `iam.tenants.export` | body `{ reason }` (3-500 chars, required); works for suspended/disabled tenants |
+| GET | `/tenants/:id/data-exports/:exportId` | `iam.tenants.view` | |
+| POST | `/tenants/:id/data-exports/:exportId/download-url` | `iam.tenants.export` | as above |
+| DELETE | `/tenants/:id/data-exports/:exportId` | `iam.tenants.export` | as above |
+
+Public download — `GET /data-exports/download/:token` (`ci:routes-exempt`;
+the HMAC-signed, expiring token minted by `download-url` is the credential).
+Used with local storage; with S3 the `url` is an S3 presigned URL instead.
+Open `url` directly (browser navigation): the response is
+`Content-Disposition: attachment`.
+
+Export object:
+
+```json
+{
+  "exportId": "tex_01j...",
+  "tenantId": "...",
+  "status": "queued | processing | completed | failed | expired",
+  "origin": "tenant | platform",
+  "requestedBy": { "type": "user", "id": "...", "email": "owner@example.com", "display": "owner@example.com" },
+  "reason": null,
+  "createdAt": "...", "startedAt": "...", "completedAt": "...", "expiresAt": "...",
+  "fileName": "analivo-export-acme-20261021-tex_01j....tar.gz",
+  "sizeBytes": 12345, "sha256": "<64 hex>",
+  "summary": { "collections": 24, "records": 1200, "datasets": 3, "datasetRows": 1000 },
+  "collections": [{ "model": "Dashboard", "collection": "dashboards", "count": 4 }],
+  "error": null,
+  "downloadable": true
+}
+```
+
+Workspace members see platform-prepared exports with
+`requestedBy = { type: 'admin', id: null, email: null, display: 'Platform support' }`
+and `reason: null`.
 
 ---
 
@@ -904,12 +1156,6 @@ The following routes return **501** today and should be shown as "Coming soon" i
 
 | Route | Status |
 | --- | --- |
-| `GET/POST/PUT/DELETE /settings/*` | 501 |
-| `GET/POST/PATCH/DELETE /feature-flags/*` | 501 |
-| `POST /feature-flags/resolve` | 501 |
-| `GET/POST/PATCH /email-templates/*` | 501 |
-| `GET /monitoring/health/queue` | 501 |
-| `GET /monitoring/health/scheduler` | 501 |
 | `GET /monitoring/health/storage` | 501 |
 | `GET /monitoring/health/connectors` | 501 |
 | `GET /monitoring/metrics` | 501 (Prometheus, Phase 4) |

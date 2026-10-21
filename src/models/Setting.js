@@ -18,15 +18,16 @@
  * VALUE TYPES
  *   `type` drives write-side coercion and read-side shape guarantees:
  *   string, number, boolean, json, duration (milliseconds, stored as
- *   number). `isSecret` values are redacted for non-privileged readers
- *   by `services/setting.service.js`.
+ *   number). `isSecret` values are encrypted at rest in `secret` (the
+ *   plaintext `value` stays empty) and redacted for readers without the
+ *   `settings.secrets.view` permission by `services/setting.service.js`.
  *
  * PLUGINS
  *   tenantScope (optional), softDelete, paginate, optimisticConcurrency,
  *   audit (module `platform.settings`).
  *
  * INDEXES
- *   - unique({ scope, tenantId, key })
+ *   - unique partial({ scope, tenantId, key }) over live rows (`deletedAt: null`)
  *   - { scope: 1, group: 1 }
  */
 
@@ -49,6 +50,10 @@ const settingSchema = new mongoose.Schema(
     value: { type: mongoose.Schema.Types.Mixed, default: null },
     description: { type: String, default: '' },
     isSecret: { type: Boolean, default: false },
+    // AES-256-GCM envelope (`utils/encryption.js`) of an `isSecret` value;
+    // the plaintext `value` of a secret row stays empty. Named `secret` so
+    // the audit trail's redaction strips it from row-level audit entries.
+    secret: { type: String, default: null },
     isReadonly: { type: Boolean, default: false },
     version: { type: Number, default: 0 },
     updatedBy: { type: String, default: null },
@@ -58,7 +63,12 @@ const settingSchema = new mongoose.Schema(
 
 // A key is unique per scope: platform rows share `tenantId: null`, tenant
 // rows are unique within their tenant.
-settingSchema.index({ scope: 1, tenantId: 1, key: 1 }, { unique: true });
+// members (db.07): unique among live rows only, so a deleted setting does
+// not block writing the same key again.
+settingSchema.index(
+  { scope: 1, tenantId: 1, key: 1 },
+  { unique: true, partialFilterExpression: { deletedAt: null } },
+);
 
 settingSchema.plugin(tenantScope, { optional: true });
 settingSchema.plugin(softDelete);

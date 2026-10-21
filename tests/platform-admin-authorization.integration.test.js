@@ -59,8 +59,8 @@ async function seedAdminWithPermission({ moduleKey, action, adminType = 'platfor
   });
   const role = await roleService.create({ tenantId: null, name: `role_${shortToken(8)}` });
   await ensurePermission(`${moduleKey}.${action}`);
-  await roleService.addPermission({ roleId: role._id, permissionKey: `${moduleKey}.${action}`, by: admin._id });
-  await adminService.assignRole({ adminId: admin._id, roleId: role._id, tenantId: null, by: admin._id });
+  await roleService.addPermission({ roleId: role._id, permissionKey: `${moduleKey}.${action}`, by: null /* fixture seeding */ });
+  await adminService.assignRole({ adminId: admin._id, roleId: role._id, tenantId: null, by: null /* fixture seeding */ });
   const login = await api('/api/v1/admin-auth/login', {
     method: 'POST',
     body: { email: admin.email, password: PASSWORD },
@@ -141,7 +141,8 @@ describe('Platform Admin Authorization Foundation', () => {
     const me = await api('/api/v1/admin-auth/me', { headers: bearer(token) });
     assert.equal(me.status, 200);
     assert.equal(me.json.data.type, 'super');
-    assert.ok(me.json.data.roles.includes('super'));
+    // Roadmap 2.1: the bootstrap grants the built-in super_admin role.
+    assert.ok(me.json.data.roles.includes('super_admin'));
     assert.ok(me.json.data.permissions.includes('iam.tenants.view'));
 
     const dashboard = await api('/api/v1/admin/dashboard/summary', { headers: bearer(token) });
@@ -176,7 +177,7 @@ describe('Platform Admin Authorization Foundation', () => {
     });
     const role = await roleService.create({ tenantId: null, name: `priv_${shortToken(8)}` });
     await ensurePermission('iam.admins.assign');
-    await roleService.addPermission({ roleId: role._id, permissionKey: 'iam.admins.assign', by: admin._id });
+    await roleService.addPermission({ roleId: role._id, permissionKey: 'iam.admins.assign', by: null /* fixture seeding */ });
     const res = await api(`/api/v1/admin/admins/${target._id}/roles`, {
       method: 'POST',
       headers: bearer(token),
@@ -203,7 +204,7 @@ describe('Platform Admin Authorization Foundation', () => {
       body: { reason: 'last super test' },
     });
     assert.equal(res.status, 409);
-    assert.equal(res.json?.code, 'CONFLICT');
+    assert.equal(res.json?.code, 'LAST_SUPER_ADMIN');
   });
 
   test('last active super admin cannot be demoted', async () => {

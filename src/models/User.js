@@ -11,6 +11,11 @@
  *   - `failedAttempts` + `lockedUntil` persist the account-lockout state
  *     so lockouts survive instance restarts (Sprint 1 risk 5).
  *   - `passwordHash` is `null` for SSO-only users.
+ *   - mfa-tenant: `mfaSecret` is the TOTP secret ENCRYPTED with
+ *     `utils/encryption.js` (per-user context); `mfaRecoveryCodes` holds
+ *     SHA-256 digests of the unused recovery codes; `mfaLastTimeStep` is the
+ *     last accepted TOTP time step (a code is accepted once). All three are
+ *     `select: false`, so no list or profile read ever carries them.
  *
  * MULTI-TENANCY
  *   - `tenantScope` plugin enforces `tenantId` on reads/writes.
@@ -21,9 +26,10 @@
  *   (module `iam.users`).
  *
  * INDEXES
- *   - unique(tenantId, email)
+ *   - unique partial (tenantId, email) over live rows (`deletedAt: null`), so
+ *     a removed member's email can be invited again (roadmap 2.10, db.07)
  *   - { status: 1, lastLoginAt: -1 }
- *   - unique partial { ssoProvider: 1, ssoSubject: 1 } (SSO rows only)
+ *   - unique partial { ssoProvider: 1, ssoSubject: 1 } (live SSO rows only)
  */
 
 import mongoose from 'mongoose';
@@ -53,22 +59,45 @@ const userSchema = new mongoose.Schema(
     lockedUntil: { type: Date, default: null },
     invitedBy: { type: String, default: null },
     acceptedAt: { type: Date, default: null },
+    // onboarding: legal consent recorded at self-service registration.
+    consent: {
+      termsVersion: { type: String, default: null },
+      acceptedAt: { type: Date, default: null },
+      ip: { type: String, default: null },
+    },
+    // rls: tenant-defined user attributes used by row-level security rules
+    // (`{ region: 'EU', teams: ['a', 'b'] }`). Values are strings or string
+    // arrays; set only through `PUT /data-access/users/:userId/attributes`.
+    attributes: { type: mongoose.Schema.Types.Mixed, default: () => ({}) },
+    // mfa-tenant: tenant-user TOTP MFA (mirrors the admin design).
+    mfaSecret: { type: String, default: null, select: false },
+    mfaEnabled: { type: Boolean, default: false },
+    mfaRecoveryCodes: { type: [String], default: [], select: false },
+    mfaRecoveryCodesGeneratedAt: { type: Date, default: null },
+    mfaLastTimeStep: { type: Number, default: null, select: false },
+    // Set by an Owner-assisted reset: enrolment is required at the next
+    // sign-in even when the workspace policy does not require MFA.
+    mfaEnrollmentRequired: { type: Boolean, default: false },
   },
   { timestamps: true },
 );
 
-// Email is unique within a tenant, not globally.
-userSchema.index({ tenantId: 1, email: 1 }, { unique: true });
+// Email is unique within a tenant, not globally, and only among live rows:
+// a soft-deleted (removed) member must not block re-inviting the address.
+userSchema.index(
+  { tenantId: 1, email: 1 },
+  { unique: true, partialFilterExpression: { deletedAt: null } },
+);
 // Common list/filter path.
 userSchema.index({ status: 1, lastLoginAt: -1 });
 // Lookup of SSO-linked users. A PARTIAL index, not a plain sparse index:
 // Mongoose writes `default: null` for password-only users, and sparse
 // indexes only skip documents where the field is *missing* - a `null`
 // value is still indexed, so two password users would collide on the
-// unique key. The partial filter restricts the index to SSO rows only.
+// unique key. The partial filter restricts the index to live SSO rows only.
 userSchema.index(
   { ssoProvider: 1, ssoSubject: 1 },
-  { unique: true, partialFilterExpression: { ssoSubject: { $type: 'string' } } },
+  { unique: true, partialFilterExpression: { ssoSubject: { $type: 'string' }, deletedAt: null } },
 );
 
 userSchema.plugin(tenantScope);

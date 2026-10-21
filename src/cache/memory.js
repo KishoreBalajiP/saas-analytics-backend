@@ -18,6 +18,8 @@
  *   - increment(key, by)         -> Promise<number>
  *   - flushAll()                 -> Promise<void>
  *   - getOrSet(key, fn, ttlSec)  -> Promise<any>   (memoize helper)
+ *   - setIfAbsent(key, value, ttlSec) -> Promise<boolean> (atomic claim; true = stored)
+ *   - delByPrefix(prefix)        -> Promise<number> (keys removed)
  *   - close()                    -> Promise<void>  (release resources)
  *
  * CONFIG:
@@ -138,6 +140,33 @@ export function createMemoryCache(config = {}) {
 
     async flushAll() {
       store.clear();
+    },
+
+    async setIfAbsent(key, value, ttlSec) {
+      if (typeof key !== 'string' || key.length === 0) {
+        throw new Error('cache.setIfAbsent requires a non-empty key');
+      }
+      const fullKey = applyPrefix(key);
+      purgeIfExpired(fullKey);
+      if (store.has(fullKey)) return false;
+      const expiresAt = Number.isInteger(ttlSec) && ttlSec > 0 ? Date.now() + ttlSec * 1000 : null;
+      store.set(fullKey, { value, expiresAt });
+      return true;
+    },
+
+    async delByPrefix(prefix) {
+      if (typeof prefix !== 'string' || prefix.length === 0) {
+        throw new Error('cache.delByPrefix requires a non-empty prefix');
+      }
+      const fullPrefix = applyPrefix(prefix);
+      let removed = 0;
+      for (const fullKey of [...store.keys()]) {
+        if (fullKey.startsWith(fullPrefix)) {
+          store.delete(fullKey);
+          removed += 1;
+        }
+      }
+      return removed;
     },
 
     async getOrSet(key, fn, ttlSec) {

@@ -29,7 +29,7 @@ async function seed(tenantId = TA) {
 
 const widgetData = (connector, extra = {}) => ({
   name: 'Total',
-  type: 'kpi',
+  type: 'table', // vizbuilder: a KPI needs an aggregate metric
   datasetId: String(connector._id),
   ...extra,
 });
@@ -39,7 +39,7 @@ test('create + get + update + remove a widget round-trips', async () => {
   const created = await dashboardService.createWidget({
     tenantId: TA, dashboardId: String(dashboard._id), actorId: 'u1', data: widgetData(connector),
   });
-  assert.equal(created.type, 'kpi');
+  assert.equal(created.type, 'table');
   assert.equal(created.tenantId, TA);
 
   const got = await dashboardService.getWidget({ tenantId: TA, dashboardId: String(dashboard._id), widgetId: String(created._id) });
@@ -96,13 +96,31 @@ test('rejects unknown widget types and missing names', async () => {
     (e) => e.statusCode === 400,
   );
   await assert.rejects(
-    () => dashboardService.createWidget({ tenantId: TA, dashboardId: String(dashboard._id), data: { type: 'kpi', datasetId: String(connector._id) } }),
+    () => dashboardService.createWidget({ tenantId: TA, dashboardId: String(dashboard._id), data: { type: 'table', datasetId: String(connector._id) } }),
     (e) => e.statusCode === 400,
   );
 });
 
-test('query is whitelisted to the safe contract fields', async () => {
+test('query keeps only contract fields and rejects unknown ones instead of dropping them', async () => {
+  // Roadmap 1.1 (strict contract): unknown query keys used to be silently
+  // dropped; they are now a 400 with one field error per key.
   const { dashboard, connector } = await seed();
+  await assert.rejects(
+    () => dashboardService.createWidget({
+      tenantId: TA, dashboardId: String(dashboard._id),
+      data: widgetData(connector, {
+        query: {
+          metrics: [{ alias: 'total', op: 'count', field: 'amount' }],
+          inject: { $where: 'danger' },
+          dangerously: true,
+        },
+      }),
+    }),
+    (e) => e.statusCode === 400
+      && e.code === 'INVALID_QUERY'
+      && e.errors.some((x) => x.field === 'query.inject')
+      && e.errors.some((x) => x.field === 'query.dangerously'),
+  );
   const created = await dashboardService.createWidget({
     tenantId: TA, dashboardId: String(dashboard._id),
     data: widgetData(connector, {
@@ -110,8 +128,6 @@ test('query is whitelisted to the safe contract fields', async () => {
         metrics: [{ alias: 'total', op: 'count', field: 'amount' }],
         filters: [{ field: 'region', op: 'eq', value: 'EU' }],
         filtersOp: 'and',
-        inject: { $where: 'danger' },
-        dangerously: true,
       },
     }),
   });
@@ -128,47 +144,9 @@ test('position is clamped into the supported grid bounds', async () => {
 });
 
 test('per-dashboard widget limit is enforced', async () => {
-  // Ensure the plan catalogue is seeded so planService.getByCode() can resolve `pro`.
+  // Runs on the default plan: adding widgets consumes no `dashboards` quota,
+  // only the per-dashboard widget cap applies (roadmap 1.3, finding tst.02).
   await planService.ensureDefaults();
-
-  // Ensure tenant `tenant-a` uses the `pro` plan (dashboards: max 50 soft)
-  // so that the widget limit test works correctly with the enforced limit.
-  // The starter plan has dashboards: { max: 25, hard: true } and hardcoded
-  // MAX_WIDGETS_PER_DASHBOARD is 30, so we create 30 widgets and expect
-  // the 31st to be rejected by the per-dashboard count guard.
-  const { model } = mongoose;
-  const tenantRepo = model('Tenant');
-  let tenant = await tenantRepo.findOne({ slug: 'test-tenants' });
-  if (!tenant) {
-    tenant = new tenantRepo({
-      name: 'Test Tenant',
-      slug: 'test-tenants',
-      planId: 'pro',
-      status: 'active',
-    });
-    await tenant.save();
-  } else {
-    tenant.planId = 'pro';
-    await tenant.save();
-  }
-
-  // Also ensure the subscription has planId `pro` so the entitlement service
-  // resolves the correct plan limits instead of falling back to `starter`.
-  const Subscription = mongoose.model('Subscription');
-  let sub = await Subscription.findOne({ tenantId: TA });
-  if (!sub) {
-    sub = new Subscription({
-      tenantId: TA,
-      planId: 'pro',
-      state: 'active',
-      currentPeriodStart: new Date(),
-      currentPeriodEnd: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
-    });
-    await sub.save();
-  } else {
-    sub.planId = 'pro';
-    await sub.save();
-  }
 
   const { dashboard, connector } = await seed();
   // MAX_WIDGETS_PER_DASHBOARD is 30 (hardcoded) — create exactly the
@@ -176,11 +154,11 @@ test('per-dashboard widget limit is enforced', async () => {
   for (let i = 0; i < 30; i += 1) {
     await dashboardService.createWidget({
       tenantId: TA, dashboardId: String(dashboard._id),
-      data: { name: `w${i}`, type: 'kpi', datasetId: String(connector._id) },
+      data: { name: `w${i}`, type: 'table', datasetId: String(connector._id) },
     });
   }
   await assert.rejects(
-    () => dashboardService.createWidget({ tenantId: TA, dashboardId: String(dashboard._id), data: { name: 'one-too-many', type: 'kpi', datasetId: String(connector._id) } }),
+    () => dashboardService.createWidget({ tenantId: TA, dashboardId: String(dashboard._id), data: { name: 'one-too-many', type: 'table', datasetId: String(connector._id) } }),
     (e) => e.statusCode === 409,
   );
 });
@@ -188,7 +166,7 @@ test('per-dashboard widget limit is enforced', async () => {
 test('list widgets paginates for a dashboard', async () => {
   const { dashboard, connector } = await seed();
   for (let i = 0; i < 3; i += 1) {
-    await dashboardService.createWidget({ tenantId: TA, dashboardId: String(dashboard._id), data: { name: `w${i}`, type: 'kpi', datasetId: String(connector._id) } });
+    await dashboardService.createWidget({ tenantId: TA, dashboardId: String(dashboard._id), data: { name: `w${i}`, type: 'table', datasetId: String(connector._id) } });
   }
   const result = await widgetRepository.list({ tenantId: TA, dashboardId: String(dashboard._id), page: 1, limit: 2 });
   assert.equal(result.total, 3);

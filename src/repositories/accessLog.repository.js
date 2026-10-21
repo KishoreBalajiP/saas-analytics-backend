@@ -119,7 +119,7 @@ export const countByActorWithin = async ({ actorId, event, from, to } = {}) => {
  * that removes rows; must never be exposed to requests.
  */
 export const retentionPurge = async ({ before }) =>
-  AccessLog.deleteMany({ occurredAt: { $lt: before } });
+  AccessLog.deleteMany({ occurredAt: { $lt: before } }).setOptions({ bypassAppendOnly: true });
 
 /* ------------------------------ internals ------------------------------- */
 

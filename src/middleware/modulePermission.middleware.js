@@ -24,6 +24,7 @@
 import ApiError from '../utils/ApiError.js';
 import { getActor } from './actor.js';
 import permissionService from '../services/permission.service.js';
+import { auditDenied } from './audit.middleware.js';
 
 /**
  * Require the actor to hold at least one permission on `moduleKey`.
@@ -34,10 +35,10 @@ import permissionService from '../services/permission.service.js';
 export function modulePermission(moduleKey) {
   return async (req, _res, next) => {
     const key = String(moduleKey ?? '').trim().toLowerCase();
-    if (!key) return next(ApiError.forbidden('Route did not declare a module key'));
+    if (!key) return next(auditDenied(req, ApiError.forbidden('Route did not declare a module key'), 'no_permission_key'));
 
     const actor = getActor(req);
-    if (!actor) return next(ApiError.forbidden('Authenticated identity is required'));
+    if (!actor) return next(auditDenied(req, ApiError.forbidden('Authenticated identity is required'), 'no_identity'));
 
     let keys;
     try {
@@ -52,7 +53,7 @@ export function modulePermission(moduleKey) {
 
     const prefix = `${key}.`;
     if (!keys.some((k) => k.startsWith(prefix))) {
-      return next(ApiError.forbidden(`You do not have access to the "${key}" module`));
+      return next(auditDenied(req, ApiError.forbidden(`You do not have access to the "${key}" module`), 'module_missing', { module: key }));
     }
     return next();
   };

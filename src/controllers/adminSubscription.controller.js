@@ -22,6 +22,7 @@ import paymentTransactionRepository from '../repositories/paymentTransaction.rep
 import billingReconcileService from '../services/billingReconcile.service.js';
 import WebhookEvent from '../models/WebhookEvent.js';
 import { emit as auditEmit } from '../services/auditLog.service.js';
+import { adminScopeOf } from '../middleware/adminScope.middleware.js';
 
 function actorOf(req) {
   return req.admin?.id ? { type: 'admin', id: req.admin.id } : { type: 'system', id: 'system' };
@@ -37,6 +38,9 @@ export const listSubscriptions = asyncHandler(async (req, res) => {
   const filter = {};
   if (state) filter.state = state;
   if (planId) filter.planId = planId;
+  // A tenant-scoped admin only lists its own tenant's subscription.
+  const scope = adminScopeOf(req);
+  if (scope) filter.tenantId = scope;
   const result = await subscriptionService.list({ page, limit, filter });
   return ApiResponse.ok(res, result.docs, 'Subscriptions fetched', {
     page: result.page,
@@ -64,38 +68,38 @@ export const getSubscriptionForTenant = asyncHandler(async (req, res) => {
 
 export const adminChangePlan = asyncHandler(async (req, res) => {
   const tenantId = ensureTenant(req.params.tenantId);
-  const { planId, reason } = req.validated?.body ?? {};
+  const { planId, reason, periodEnd } = req.validated?.body ?? {};
   const plan = await planService.getActiveByCode(planId);
   if (!plan) throw ApiError.badRequest(`Plan "${planId}" is not available`);
-  let sub = await subscriptionService.getForTenant(tenantId);
-  if (!sub) {
-    sub = await subscriptionService.createForTenant({
-      tenantId,
-      planId: plan.code,
-      state: 'active',
-      actor: actorOf(req),
-      by: req.admin?.id ?? null,
-      reason: reason ?? 'Admin provisioning',
-    });
-  } else {
-    sub = await subscriptionService.changePlan({
-      tenantId,
-      planId: plan.code,
-      actor: actorOf(req),
-      by: req.admin?.id ?? null,
-      reason: reason ?? 'Admin change',
-    });
-  }
+  // billing: the audited admin override. Provision the default first, then
+  // change the plan (optionally granting a term until `periodEnd`); the
+  // change is written to the subscription history and the audit trail.
+  await subscriptionService.ensureForTenant({
+    tenantId,
+    actor: actorOf(req),
+    by: req.admin?.id ?? null,
+    reason: 'Admin provisioning',
+  });
+  const sub = await subscriptionService.changePlan({
+    tenantId,
+    planId: plan.code,
+    actor: actorOf(req),
+    by: req.admin?.id ?? null,
+    reason: reason ?? 'Admin change',
+    termEnd: periodEnd ?? null,
+    historyType: 'subscription.override_applied',
+  });
   return ApiResponse.ok(res, sub, 'Plan changed');
 });
 
 export const adminSetState = asyncHandler(async (req, res) => {
   const tenantId = ensureTenant(req.params.tenantId);
-  const { state, reason, graceEndsAt } = req.validated?.body ?? {};
+  const { state, reason, graceEndsAt, periodEnd } = req.validated?.body ?? {};
   const sub = await subscriptionService.setState({
     tenantId,
     state,
     graceEndsAt: graceEndsAt ?? null,
+    periodEnd: periodEnd ?? null,
     actor: actorOf(req),
     by: req.admin?.id ?? null,
     reason,

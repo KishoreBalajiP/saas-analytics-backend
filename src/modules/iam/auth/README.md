@@ -34,8 +34,11 @@ All of the above are implemented: the services in `auth.service.js`,
 `session.service.js`, `mfa.service.js` and `password.service.js`, the
 validators in `src/validators/auth.validator.js` / `admin.validator.js`, the
 thin controllers in this module, and the real route handlers wired in
-`src/routes/auth.routes.js` / `admin-auth.routes.js` behind `strictLimiter` +
-`validateRequest` + (`authenticate` / `adminAuth` / `resolveTenant`).
+`src/routes/auth.routes.js` / `admin-auth.routes.js` behind per-route rate
+limiters (`userAuthLimiters` / `adminAuthLimiters`) + `validateRequest` +
+(`authenticate` / `adminAuth` / `resolveTenant`). See STATUS.md for the
+1.9 hardening (cookie-only refresh, per-portal cookies, absolute lifetime,
+status re-check, idempotency, socket auth).
 Integration-tested against `mongodb-memory-server`
 (`tests/*.integration.test.js`). Remaining Sprint 1 work: RBAC roles for
 `authorize(...)`.

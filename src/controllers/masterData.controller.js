@@ -26,13 +26,14 @@ const actorOf = (req) => req.user?.id ?? req.admin?.id ?? null;
 /** GET /api/v1/master-data/:catalogue - list a catalogue. */
 export const listCatalogue = asyncHandler(async (req, res) => {
   const { catalogue } = req.params;
-  const page = Math.max(1, Number(req.query.page) || 1);
-  const limit = Math.min(Math.max(1, Number(req.query.limit) || 20), 100);
+  const query = req.validated?.query ?? {};
+  const page = Math.max(1, Number(query.page) || 1);
+  const limit = Math.min(Math.max(1, Number(query.limit) || 20), 100);
   const result = await masterDataService.list(catalogue, {
     page,
     limit,
-    locale: req.query.locale ? String(req.query.locale) : undefined,
-    search: req.query.search ? String(req.query.search) : undefined,
+    locale: query.locale ? String(query.locale) : undefined,
+    search: query.search ? String(query.search) : undefined,
   });
   return ApiResponse.ok(res, result.docs, 'Master data', {
     total: result.total,
@@ -52,14 +53,15 @@ export const getItem = asyncHandler(async (req, res) => {
 /** POST /api/v1/master-data/:catalogue - create an item. */
 export const createItem = asyncHandler(async (req, res) => {
   const { catalogue } = req.params;
-  const item = await masterDataService.create(catalogue, req.body, actorOf(req));
+  // Only validated, whitelisted fields reach the service (mass assignment).
+  const item = await masterDataService.create(catalogue, req.validated?.body ?? {}, actorOf(req));
   return ApiResponse.created(res, item, 'Master data item created');
 });
 
 /** PATCH /api/v1/master-data/:catalogue/:id - update an item. */
 export const updateItem = asyncHandler(async (req, res) => {
   const { catalogue, id } = req.params;
-  const item = await masterDataService.update(catalogue, id, req.body, actorOf(req));
+  const item = await masterDataService.update(catalogue, id, req.validated?.body ?? {}, actorOf(req));
   return ApiResponse.ok(res, item, 'Master data item updated');
 });
 

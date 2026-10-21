@@ -19,4 +19,7 @@ import env from './env.js';
 export default {
   enabled: env.scheduler.enabled,
   timezone: env.scheduler.timezone,
+  // Distributed lock lease per job run and lease on a claimed report/alert.
+  lockLeaseMs: env.scheduler.lockLeaseMs,
+  claimLeaseMs: env.scheduler.claimLeaseMs,
 };

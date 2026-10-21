@@ -48,6 +48,11 @@ import billingPricing, {
 import billingLifecycle from '../src/services/billingLifecycle.service.js';
 import subscriptionService from '../src/services/subscription.service.js';
 import paymentTransactionRepository from '../src/repositories/paymentTransaction.repository.js';
+// billing (roadmap 3.1): webhooks are processed from the stored event, off
+// the request path; tests wait for that processing before asserting.
+import billingWebhookService from '../src/services/billingWebhook.service.js';
+import WebhookEvent from '../src/models/WebhookEvent.js';
+import clock from '../src/utils/clock.js';
 
 const PASSWORD = 'Password123!';
 const PREFIX = '/api/v1';
@@ -92,6 +97,9 @@ function makeMockProvider({ keySecret = TEST_KEY_SECRET, webhookSecret = TEST_WE
       const p = state.payments.get(paymentId);
       if (!p) throw ApiError.notFound('payment not found');
       return { ...p };
+    },
+    async fetchOrderPayments(orderId) {
+      return [...state.payments.values()].filter((p) => p.order_id === orderId).map((p) => ({ ...p }));
     },
     verifyCheckoutSignature({ orderId, paymentId, signature }) {
       return verifyCheckoutSignature({ orderId, paymentId, signature, keySecret });
@@ -152,22 +160,24 @@ test('webhook signature: exact raw bytes verify, tampered body does not', () => 
 test('pricing resolver: valid, unmapped, malformed, free', () => {
   __setTestMapping({ ...TEST_MAPPING });
   try {
+    // billing: the legacy flat one-time entry is read as a monthly term.
     assert.deepEqual(billingPricing.resolvePrice('pro'), {
       planCode: 'pro',
       amountMinor: 99900,
       currency: 'INR',
-      interval: 'one-time',
+      interval: 'month',
+      termMonths: 1,
     });
     assert.equal(billingPricing.isPurchasable('pro'), true);
     assert.equal(billingPricing.isPurchasable('free'), false);
     assert.equal(billingPricing.isPurchasable('enterprise'), false);
-    assert.throws(() => billingPricing.resolvePrice('enterprise'), /no configured pricing/);
+    assert.throws(() => billingPricing.resolvePrice('enterprise'), /no configured/);
     __setTestMapping({ bad: { amountMinor: 99.5, currency: 'INR', interval: 'one-time' } });
     assert.throws(() => billingPricing.resolvePrice('bad'), /amountMinor/);
     __setTestMapping({ bad2: { amountMinor: 100, currency: 'USD', interval: 'one-time' } });
     assert.throws(() => billingPricing.resolvePrice('bad2'), /currency/);
-    __setTestMapping({ bad3: { amountMinor: 100, currency: 'INR', interval: 'monthly' } });
-    assert.throws(() => billingPricing.resolvePrice('bad3'), /one-time/);
+    __setTestMapping({ bad3: { amountMinor: 100, currency: 'INR', interval: 'weekly' } });
+    assert.throws(() => billingPricing.resolvePrice('bad3'), /interval/);
     const listed = billingPricing.listPricedPlans();
     assert.deepEqual(Object.keys(listed), []);
   } finally {
@@ -183,7 +193,9 @@ test('webhook normalization: allowlist + entity extraction', () => {
   assert.equal(captured.supported, true);
   assert.equal(captured.orderId, 'order_1');
   assert.equal(captured.paymentId, 'pay_1');
-  const unknown = normalizeWebhookEvent({ event: 'payment.authorized', payload: {} });
+  // billing: payment.authorized is recorded (it grants nothing).
+  assert.equal(normalizeWebhookEvent({ event: 'payment.authorized', payload: {} }).supported, true);
+  const unknown = normalizeWebhookEvent({ event: 'payment.dispute.created', payload: {} });
   assert.equal(unknown.supported, false);
   const refund = normalizeWebhookEvent({
     event: 'refund.processed',
@@ -201,6 +213,8 @@ before(async () => {
 });
 
 beforeEach(async () => {
+  await billingWebhookService.waitForIdle();
+  clock.reset();
   await resetMongo();
   await rbacCache.clearAll();
   await planService.ensureDefaults('test');
@@ -307,11 +321,25 @@ function signWebhookBytes(raw) {
 async function postWebhook(payload, { signature = null, autoSign = false } = {}) {
   const raw = Buffer.from(JSON.stringify(payload), 'utf8');
   const sig = autoSign ? signWebhookBytes(raw) : signature;
-  return api(`${PREFIX}/billing/webhook`, {
+  const res = await api(`${PREFIX}/billing/webhook`, {
     method: 'POST',
     headers: sig ? { 'x-razorpay-signature': sig } : {},
     body: payload,
   });
+  await billingWebhookService.waitForIdle();
+  return res;
+}
+
+/** billing: the provider records a captured payment for an order. */
+function providerCaptures(orderId, paymentId, amount = 99900) {
+  mock.state.payments.set(paymentId, {
+    id: paymentId, order_id: orderId, status: 'captured', amount, currency: 'INR', captured: true,
+  });
+}
+
+async function storedOutcome(orderId) {
+  const row = await WebhookEvent.findOne({ 'raw.orderId': orderId }).sort({ createdAt: -1 }).lean();
+  return row?.outcome ?? null;
 }
 
 function capturedPayload(orderId, paymentId, amount = 99900) {
@@ -376,8 +404,9 @@ test('checkout rejects invalid, free, unmapped and same plans', async () => {
   assert.equal(free.status, 400);
   const unmapped = await api(url, { method: 'POST', headers: auth, body: { planId: 'enterprise' } });
   assert.equal(unmapped.status, 422);
+  // billing: buying the current plan again is a renewal (prepaid terms).
   const same = await api(url, { method: 'POST', headers: auth, body: { planId: 'starter' } });
-  assert.equal(same.status, 409);
+  assert.equal(same.status, 200);
 });
 
 test('checkout: manager without update permission is forbidden; cross-tenant is forbidden', async () => {
@@ -437,17 +466,10 @@ async function checkoutAsOwner(planId = 'pro') {
   return { tenant, ownerUser, token, session: res.json.data };
 }
 
-test('verify success activates the plan and captures exactly once (idempotent)', async () => {
+test('verify checks the signature but never grants; the verified webhook does (idempotent)', async () => {
   const { tenant, token, session } = await checkoutAsOwner('pro');
   const paymentId = 'pay_verify_ok_1';
-  mock.state.payments.set(paymentId, {
-    id: paymentId,
-    order_id: session.orderId,
-    status: 'captured',
-    amount: 99900,
-    currency: 'INR',
-    captured: true,
-  });
+  providerCaptures(session.orderId, paymentId);
   const url = `${PREFIX}/tenants/${tenant._id}/subscription/verify`;
   const auth = { authorization: `Bearer ${token}` };
   const body = {
@@ -458,20 +480,24 @@ test('verify success activates the plan and captures exactly once (idempotent)',
   const first = await api(url, { method: 'POST', headers: auth, body });
   assert.equal(first.status, 200, JSON.stringify(first.json));
   assert.equal(first.json.data.verified, true);
+  assert.equal(first.json.data.phase, 'pending_confirmation');
+  assert.notEqual((await subscriptionService.getForTenant(tenant._id.toString())).planId, 'pro');
+
+  await postWebhook(capturedPayload(session.orderId, paymentId), { autoSign: true });
   const sub = await subscriptionService.getForTenant(tenant._id.toString());
   assert.equal(sub.planId, 'pro');
   assert.equal(sub.state, 'active');
   assert.equal(sub.paymentReference, session.orderId);
   const second = await api(url, { method: 'POST', headers: auth, body });
   assert.equal(second.status, 200);
-  assert.equal(second.json.data.idempotent, true);
+  assert.equal(second.json.data.phase, 'confirmed');
   // Entitlements follow the canonical subscription.
   const ent = await api(`${PREFIX}/tenants/${tenant._id}/entitlements`, { headers: auth });
   assert.equal(ent.status, 200);
   assert.equal(ent.json.data.plan.code, 'pro');
 });
 
-test('verify rejects forged signatures and marks the attempt failed', async () => {
+test('verify rejects forged signatures and leaves the checkout open', async () => {
   const { tenant, token, session } = await checkoutAsOwner('pro');
   const res = await api(`${PREFIX}/tenants/${tenant._id}/subscription/verify`, {
     method: 'POST',
@@ -484,13 +510,13 @@ test('verify rejects forged signatures and marks the attempt failed', async () =
   });
   assert.equal(res.status, 400);
   const txn = await paymentTransactionRepository.findByOrderId(session.orderId);
-  assert.equal(txn.status, 'failed');
+  assert.equal(txn.status, 'pending');
   const sub = await subscriptionService.getForTenant(tenant._id.toString());
-  assert.equal(sub.planId, 'starter');
+  assert.notEqual(sub.planId, 'pro');
 });
 
-test('verify rejects amount/currency mismatches from the provider', async () => {
-  const { tenant, token, session } = await checkoutAsOwner('pro');
+test('a captured payment whose amount does not match the order is rejected', async () => {
+  const { tenant, session } = await checkoutAsOwner('pro');
   const paymentId = 'pay_verify_mismatch';
   mock.state.payments.set(paymentId, {
     id: paymentId,
@@ -500,18 +526,10 @@ test('verify rejects amount/currency mismatches from the provider', async () => 
     currency: 'INR',
     captured: true,
   });
-  const res = await api(`${PREFIX}/tenants/${tenant._id}/subscription/verify`, {
-    method: 'POST',
-    headers: { authorization: `Bearer ${token}` },
-    body: {
-      razorpay_order_id: session.orderId,
-      razorpay_payment_id: paymentId,
-      razorpay_signature: signCheckout(session.orderId, paymentId),
-    },
-  });
-  assert.equal(res.status, 400);
+  await postWebhook(capturedPayload(session.orderId, paymentId, 100), { autoSign: true });
   const txn = await paymentTransactionRepository.findByOrderId(session.orderId);
   assert.equal(txn.status, 'failed');
+  assert.notEqual((await subscriptionService.getForTenant(tenant._id.toString())).planId, 'pro');
 });
 
 test('verify rejects cross-tenant order association', async () => {
@@ -544,9 +562,10 @@ test('verify rejects cross-tenant order association', async () => {
 test('webhook payment.captured activates a pending checkout (verified signature)', async () => {
   const { tenant, session } = await checkoutAsOwner('pro');
   const paymentId = 'pay_wh_ok_1';
+  providerCaptures(session.orderId, paymentId);
   const res = await postWebhook(capturedPayload(session.orderId, paymentId), { autoSign: true });
   assert.equal(res.status, 200, JSON.stringify(res.json));
-  assert.equal(res.json.processed, true);
+  assert.equal(await storedOutcome(session.orderId), 'captured');
   const sub = await subscriptionService.getForTenant(tenant._id.toString());
   assert.equal(sub.planId, 'pro');
   assert.equal(sub.state, 'active');
@@ -557,6 +576,7 @@ test('webhook payment.captured activates a pending checkout (verified signature)
 test('webhook rejects missing and invalid signatures without mutation', async () => {
   const { tenant, session } = await checkoutAsOwner('pro');
   const payload = capturedPayload(session.orderId, 'pay_wh_bad');
+  providerCaptures(session.orderId, 'pay_wh_bad');
   const missing = await postWebhook(payload, {});
   assert.equal(missing.status, 401);
   const invalid = await postWebhook(payload, { signature: 'invalid' });
@@ -565,11 +585,13 @@ test('webhook rejects missing and invalid signatures without mutation', async ()
   assert.equal(txn.status, 'pending');
   const sub = await subscriptionService.getForTenant(tenant._id.toString());
   assert.equal(sub.planId, 'starter');
+  assert.equal(await WebhookEvent.countDocuments({}), 0);
 });
 
 test('webhook duplicate delivery is idempotent', async () => {
   const { session } = await checkoutAsOwner('pro');
   const payload = capturedPayload(session.orderId, 'pay_wh_dup');
+  providerCaptures(session.orderId, 'pay_wh_dup');
   const first = await postWebhook(payload, { autoSign: true });
   const second = await postWebhook(payload, { autoSign: true });
   assert.equal(first.status, 200);
@@ -581,6 +603,7 @@ test('webhook duplicate delivery is idempotent', async () => {
 
 test('webhook out-of-order failure after capture does not regress', async () => {
   const { tenant, session } = await checkoutAsOwner('pro');
+  providerCaptures(session.orderId, 'pay_wh_ooo');
   await postWebhook(capturedPayload(session.orderId, 'pay_wh_ooo'), { autoSign: true });
   const failed = await postWebhook(
     {
@@ -601,20 +624,22 @@ test('webhook out-of-order failure after capture does not regress', async () => 
 test('webhook unsupported events and unknown orders are acknowledged without mutation', async () => {
   const { tenant, session } = await checkoutAsOwner('pro');
   const unsupported = await postWebhook(
-    { event: 'payment.authorized', payload: { payment: { entity: { id: 'pay_x', order_id: session.orderId } } } },
+    { event: 'payment.dispute.created', payload: { payment: { entity: { id: 'pay_x', order_id: session.orderId } } } },
     { autoSign: true },
   );
   assert.equal(unsupported.status, 200);
   assert.equal(unsupported.json.reason, 'unsupported_event');
+  assert.equal(await storedOutcome(session.orderId), 'unsupported_event');
   const unknown = await postWebhook(capturedPayload('order_unknown_xyz', 'pay_unknown'), { autoSign: true });
   assert.equal(unknown.status, 200);
-  assert.equal(unknown.json.reason, 'unknown_order');
+  assert.equal(await storedOutcome('order_unknown_xyz'), 'unknown_order');
   const sub = await subscriptionService.getForTenant(tenant._id.toString());
   assert.equal(sub.planId, 'starter');
 });
 
 test('webhook refund marks refunded but retains access (documented policy)', async () => {
   const { tenant, session } = await checkoutAsOwner('pro');
+  providerCaptures(session.orderId, 'pay_wh_ref');
   await postWebhook(capturedPayload(session.orderId, 'pay_wh_ref'), { autoSign: true });
   const refunded = await postWebhook(
     {
@@ -624,8 +649,9 @@ test('webhook refund marks refunded but retains access (documented policy)', asy
     },
     { autoSign: true },
   );
-  // The refund entity carries no order_id; correlate via payment lookup below.
+  // billing: a refund entity without order_id is correlated by payment id.
   assert.equal(refunded.status, 200);
+  assert.equal((await paymentTransactionRepository.findByOrderId(session.orderId)).status, 'refunded');
   // Refund path is exercised directly for order correlation:
   const direct = await postWebhook(
     {
@@ -638,7 +664,7 @@ test('webhook refund marks refunded but retains access (documented policy)', asy
     { autoSign: true },
   );
   assert.equal(direct.status, 200);
-  assert.equal(direct.json.outcome, 'refunded');
+  assert.equal(await storedOutcome(session.orderId), 'already_refunded');
   const txn = await paymentTransactionRepository.findByOrderId(session.orderId);
   assert.equal(txn.status, 'refunded');
   const sub = await subscriptionService.getForTenant(tenant._id.toString());
@@ -652,14 +678,15 @@ test('verified capture refuses to activate a suspended tenant', async () => {
   const { tenant, token, session } = await checkoutAsOwner('pro');
   await Tenant.updateOne({ _id: tenant._id }, { $set: { status: 'suspended' } });
   const paymentId = 'pay_wh_susp';
+  providerCaptures(session.orderId, paymentId);
   const res = await postWebhook(capturedPayload(session.orderId, paymentId), { autoSign: true });
   assert.equal(res.status, 200);
-  assert.equal(res.json.reason, 'refused');
+  assert.equal(await storedOutcome(session.orderId), 'refused');
   const sub = await subscriptionService.getForTenant(tenant._id.toString());
   assert.notEqual(sub.planId, 'pro');
 });
 
-test('payment failure moves a matching active subscription to past_due (grace from plan)', async () => {
+test('a failed payment never changes a running prepaid term (history only)', async () => {
   const { tenant } = await seedTenantWithOwner('starter');
   const tenantId = tenant._id.toString();
   await subscriptionService.createForTenant({
@@ -679,36 +706,13 @@ test('payment failure moves a matching active subscription to past_due (grace fr
     actor: { type: 'system', id: 'test' },
   });
   assert.equal(result.applied, true);
-  const sub = await subscriptionService.getForTenant(tenantId);
-  assert.equal(sub.state, 'past_due');
-  assert.ok(sub.graceEndsAt);
-});
-
-test('payment failure for an unrelated attempt leaves live access untouched', async () => {
-  const { tenant } = await seedTenantWithOwner('starter');
-  const tenantId = tenant._id.toString();
-  await subscriptionService.createForTenant({
-    tenantId,
-    planId: 'pro',
-    state: 'active',
-    actor: { type: 'system', id: 'test' },
-    by: 'test',
-    reason: 'test setup',
-    paymentProvider: 'razorpay',
-    paymentReference: 'order_live_1',
-  });
-  const result = await billingLifecycle.applyFailure({
-    tenantId,
-    providerRef: 'order_stale_attempt',
-    actor: { type: 'system', id: 'test' },
-  });
-  assert.equal(result.note, 'unrelated_attempt');
+  assert.equal(result.note, 'recorded');
   const sub = await subscriptionService.getForTenant(tenantId);
   assert.equal(sub.state, 'active');
   assert.equal(sub.planId, 'pro');
 });
 
-test('restricted subscriptions are never activated by money events', async () => {
+test('subscriptions under an administrative hold are never activated by money events', async () => {
   const { tenant } = await seedTenantWithOwner('starter');
   const tenantId = tenant._id.toString();
   await subscriptionService.createForTenant({
@@ -719,16 +723,17 @@ test('restricted subscriptions are never activated by money events', async () =>
     by: 'test',
     reason: 'test setup',
   });
-  await subscriptionService.setState({
+  const held = await subscriptionService.setState({
     tenantId,
     state: 'restricted',
     actor: { type: 'admin', id: 'test' },
     by: 'test',
     reason: 'compliance hold',
   });
+  assert.equal(held.adminHold, true);
   await assert.rejects(
-    billingLifecycle.applyCapture({ tenantId, planId: 'pro', providerRef: 'order_x', actor: { type: 'system', id: 'test' } }),
-    /restricted/,
+    subscriptionService.applyPaidTerm({ tenantId, planId: 'pro', transactionId: 'txn_x', providerRef: 'order_x', actor: { type: 'system', id: 'test' } }),
+    /administrative hold/,
   );
 });
 
@@ -740,6 +745,10 @@ test('reconcile captures paid-but-unwebhooked orders; skips unpaid; 501 when dis
   stored.status = 'paid';
   stored.amount_paid = 99900;
   stored.amount_due = 0;
+  providerCaptures(session.orderId, 'pay_recon_1');
+  // billing: a new checkout is first checked a few minutes after creation.
+  const startedAt = Date.now();
+  clock.set(new Date(startedAt + 10 * 60 * 1000));
   await makeAdmin('recon@example.com', 'platform', ['billing.subscriptions.override']);
   const adminToken = await loginAdmin('recon@example.com');
   const res = await api(`${PREFIX}/admin/subscriptions/reconcile?limit=10`, {
@@ -759,6 +768,7 @@ test('reconcile captures paid-but-unwebhooked orders; skips unpaid; 501 when dis
 
   // Unpaid order is skipped, left pending.
   const unpaid = await checkoutAsOwner('pro');
+  clock.set(new Date(startedAt + 30 * 60 * 1000));
   const skipped = await api(`${PREFIX}/admin/subscriptions/reconcile?limit=10`, {
     method: 'POST',
     headers: { authorization: `Bearer ${adminToken}` },
@@ -790,6 +800,7 @@ test('reconcile requires override permission', async () => {
 
 test('admin can inspect transactions and webhooks (redacted, permission-gated)', async () => {
   const { tenant, session } = await checkoutAsOwner('pro');
+  providerCaptures(session.orderId, 'pay_wh_admin');
   await postWebhook(capturedPayload(session.orderId, 'pay_wh_admin'), { autoSign: true });
   await makeAdmin('billview@example.com', 'platform', ['billing.subscriptions.view']);
   const token = await loginAdmin('billview@example.com');

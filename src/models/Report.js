@@ -15,7 +15,9 @@
  *
  * RUN STATE
  *   Every run appends a `runs` sub-document and mirrors the latest into
- *   `lastRun`. Artefacts are addressed by `runs.$.resultKey` in storage.
+ *   `lastRun`. Artefacts are addressed by `runs.$.resultKey` in storage and
+ *   hold the whole result (CSV, JSON or a real XLSX workbook); `truncated`
+ *   is true only when the row safety cap (ARTIFACT_MAX_ROWS) was hit.
  *
  * PLUGINS
  *   tenantScope, softDelete, paginate, optimisticConcurrency, audit
@@ -24,6 +26,7 @@
 
 import mongoose from 'mongoose';
 import { tenantScope, softDelete, paginate, optimisticConcurrency, audit } from './plugins/index.js';
+import { dependencyHealth } from './plugins/dependencyHealth.js';
 
 export const MODEL_NAME = 'Report';
 export const REPORT_STATUSES = Object.freeze(['draft', 'active', 'paused', 'archived']);
@@ -40,7 +43,17 @@ const runSchema = new mongoose.Schema(
     durationMs: { type: Number, default: null },
     format: { type: String, enum: [...REPORT_FORMATS], default: 'csv' },
     resultKey: { type: String, default: null },
+    // retention: set when the cleanup job deleted this run's artefact
+    // (RETENTION_REPORT_ARTIFACT_DAYS); downloads then answer 410.
+    expiredAt: { type: Date, default: null },
     rowCount: { type: Number, default: null },
+    // True only when the artefact hit the row safety cap (ARTIFACT_MAX_ROWS);
+    // `rowLimit` is that cap. Otherwise the artefact holds the whole result.
+    truncated: { type: Boolean, default: false },
+    rowLimit: { type: Number, default: null },
+    fileName: { type: String, default: null },
+    contentType: { type: String, default: null },
+    size: { type: Number, default: null },
     error: { type: String, default: null },
     filters: { type: mongoose.Schema.Types.Mixed, default: null },
     runBy: { type: String, default: null },
@@ -53,7 +66,8 @@ const scheduleSchema = new mongoose.Schema(
   {
     enabled: { type: Boolean, default: false },
     cron: { type: String, default: '0 0 * * *' },
-    timezone: { type: String, default: 'UTC' },
+    // IANA override; null = run in the workspace time zone (localization.timezone).
+    timezone: { type: String, default: null },
     recipients: [
       {
         type: { type: String, enum: ['user', 'external'], default: 'user' },
@@ -61,6 +75,8 @@ const scheduleSchema = new mongoose.Schema(
       },
     ],
     format: { type: String, enum: [...REPORT_FORMATS], default: 'csv' },
+    // delivery: webhook / Slack / Teams destinations (DeliveryDestination ids).
+    destinationIds: [{ type: String }],
   },
   { _id: false },
 );
@@ -86,13 +102,25 @@ const reportSchema = new mongoose.Schema(
       finishedAt: { type: Date, default: null },
       durationMs: { type: Number, default: null },
       resultKey: { type: String, default: null },
+      // retention: artefact deleted by the cleanup job.
+      expiredAt: { type: Date, default: null },
       rowCount: { type: Number, default: null },
+      truncated: { type: Boolean, default: false },
+      rowLimit: { type: Number, default: null },
+      fileName: { type: String, default: null },
+      contentType: { type: String, default: null },
+      size: { type: Number, default: null },
       error: { type: String, default: null },
       format: { type: String, default: null },
       runBy: { type: String, default: null },
       triggeredBy: { type: String, default: null },
     },
     nextRunAt: { type: Date, default: null },
+    // Scheduler claim (roadmap 1.4): the instance acting on the due schedule
+    // and until when. `nextRunAt` is advanced in the same atomic update.
+    lockedBy: { type: String, default: null },
+    lockedUntil: { type: Date, default: null },
+    lastScheduledAt: { type: Date, default: null },
     createdBy: { type: String, default: null },
     updatedBy: { type: String, default: null },
   },
@@ -101,12 +129,24 @@ const reportSchema = new mongoose.Schema(
 
 reportSchema.index({ tenantId: 1, status: 1 });
 reportSchema.index({ tenantId: 1, 'schedule.enabled': 1, nextRunAt: 1 });
+// Platform-wide due scan used by the scheduler.
+reportSchema.index({ 'schedule.enabled': 1, nextRunAt: 1 });
 
 reportSchema.plugin(tenantScope);
 reportSchema.plugin(softDelete);
 reportSchema.plugin(paginate);
 reportSchema.plugin(optimisticConcurrency);
 reportSchema.plugin(audit, { module: 'reports' });
+// Broken marker set when the dataset (or the widget's dataset) is deleted;
+// cleared when the source is pointed elsewhere.
+reportSchema.plugin(dependencyHealth, {
+  reference: (doc) => (doc.source === 'widget'
+    ? (doc.widgetId ? `widget:${doc.widgetId}` : null)
+    : (doc.query?.datasetId ? `connector:${doc.query.datasetId}` : null)),
+  referenceFields: ['source', 'widgetId', 'query'],
+  enableFields: ['schedule.enabled'],
+  label: 'report schedule',
+});
 
 export const ReportSchema = reportSchema;
 export const Report = mongoose.model(MODEL_NAME, reportSchema);

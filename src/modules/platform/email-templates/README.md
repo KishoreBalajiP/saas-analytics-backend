@@ -1,5 +1,9 @@
 # Platform / email-templates
 
+> **Implemented (roadmap 2.4).** See `STATUS.md` for the real source files.
+> Sections below marked "architecture only" describe the original design.
+
+
 Transactional email templates live here. Templates are **data** (subject,
 sender, locale-tagged body in MJML or HTML), not code. The worker resolves
 variables server-side and routes through `config/mail.js`.

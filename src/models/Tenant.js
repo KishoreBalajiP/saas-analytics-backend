@@ -66,6 +66,11 @@ const tenantSchema = new mongoose.Schema(
     disabledReason: { type: String, default: null },
     archivedAt: { type: Date, default: null },
     archivedReason: { type: String, default: null },
+    // retention: when the cleanup job purged an archived tenant's data
+    // (RETENTION_ARCHIVED_TENANT_DAYS after archive). The row stays as a
+    // tombstone. `legalHold` blocks every retention purge for the tenant.
+    dataPurgedAt: { type: Date, default: null },
+    legalHold: { type: Boolean, default: false },
     createdBy: { type: String, default: null },
     updatedBy: { type: String, default: null },
   },

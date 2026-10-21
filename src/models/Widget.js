@@ -30,6 +30,7 @@
 
 import mongoose from 'mongoose';
 import { tenantScope, softDelete, paginate, optimisticConcurrency, audit } from './plugins/index.js';
+import { dependencyHealth } from './plugins/dependencyHealth.js';
 
 export const MODEL_NAME = 'Widget';
 export const WIDGET_TYPES = Object.freeze(['kpi', 'table', 'bar', 'line', 'area', 'pie']);
@@ -91,6 +92,21 @@ widgetSchema.plugin(softDelete);
 widgetSchema.plugin(paginate);
 widgetSchema.plugin(optimisticConcurrency);
 widgetSchema.plugin(audit, { module: 'dashboards' });
+// Broken marker set when the dataset (connector) is deleted; cleared when the
+// widget is pointed at another dataset, which also repairs the reports and
+// alerts that were broken through this widget.
+widgetSchema.plugin(dependencyHealth, {
+  reference: (doc) => (doc.datasetId ? `connector:${doc.datasetId}` : null),
+  referenceFields: ['datasetId'],
+  onRepaired: async (doc, model) => {
+    const ref = `widget:${doc._id}`;
+    const clear = { $set: { brokenAt: null, brokenReason: null, brokenRef: null } };
+    for (const name of ['Report', 'AlertRule']) {
+      const other = model.db.models[name];
+      if (other) await other.updateMany({ tenantId: doc.tenantId, brokenRef: ref }, clear);
+    }
+  },
+});
 
 export const WidgetSchema = widgetSchema;
 export const Widget = mongoose.model(MODEL_NAME, widgetSchema);

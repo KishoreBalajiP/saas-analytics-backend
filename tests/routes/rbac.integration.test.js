@@ -93,19 +93,19 @@ async function ensurePermission(key) {
  * Create a platform admin and grant it `keys` through a dedicated platform
  * role (services layer, like a bootstrapped super-admin).
  */
-async function seedAdmin(keys, { email = `root-${shortToken(8)}@example.com` } = {}) {
+async function seedAdmin(keys, { email = `root-${shortToken(8)}@example.com`, adminType = 'platform' } = {}) {
   const admin = await adminService.create({
     email,
     password: PASSWORD,
-    adminType: 'platform',
+    adminType,
     name: 'Root',
   });
   const role = await roleService.create({ tenantId: null, name: `root_${shortToken(8)}` });
   for (const key of keys) {
     await ensurePermission(key);
-    await roleService.addPermission({ roleId: role._id, permissionKey: key, by: admin._id });
+    await roleService.addPermission({ roleId: role._id, permissionKey: key, by: null /* fixture seeding */ });
   }
-  await adminService.assignRole({ adminId: admin._id, roleId: role._id, by: admin._id });
+  await adminService.assignRole({ adminId: admin._id, roleId: role._id, by: null /* fixture seeding */ });
   return admin;
 }
 
@@ -121,7 +121,9 @@ async function adminAuth(admin) {
 
 /** Seed a fully-granted admin + token in one step. */
 async function root() {
-  const admin = await seedAdmin(FULL_KEYS);
+  // Privilege changes (role grants, platform role permissions) require an
+  // active super administrator.
+  const admin = await seedAdmin(FULL_KEYS, { adminType: 'super' });
   return { admin, auth: await adminAuth(admin) };
 }
 
@@ -431,7 +433,12 @@ test('PATCH /users/me updates own profile fields', async () => {
 });
 
 test('GET /users lists + detail is tenant-scoped', async () => {
-  const { tenantId, auth } = await userAuth();
+  const { tenantId, user, auth } = await userAuth();
+  // The member directory requires users.view (every default tenant role has it).
+  await ensurePermission('users.view');
+  const viewerRole = await roleService.create({ tenantId, name: `viewer_${shortToken(8)}` });
+  await roleService.addPermission({ roleId: viewerRole._id, permissionKey: 'users.view' });
+  await new UserRole({ tenantId, userId: String(user._id), roleId: String(viewerRole._id), grantedAt: new Date() }).save();
   await factories.user.create({ tenantId });
   await factories.user.create({ tenantId });
 

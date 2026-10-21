@@ -34,7 +34,9 @@ export const getEntitlements = asyncHandler(async (req, res) => {
 export const getUsage = asyncHandler(async (req, res) => {
   const tenantId = resolveTenantId(req);
   if (!tenantId) throw ApiError.badRequest('tenantId is required');
-  const usage = await entitlementService.getUsage(tenantId);
+  // `?period=YYYY-MM-DD` reads metered metrics (API calls) for that UTC day.
+  const at = entitlementService.parseUsagePeriod(req.query?.period);
+  const usage = await entitlementService.getUsage(tenantId, at ? { now: at } : {});
   return ApiResponse.ok(res, usage, 'Usage fetched');
 });
 

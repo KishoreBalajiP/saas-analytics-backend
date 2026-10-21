@@ -4,7 +4,7 @@ import service from '../services/accessRequest.service.js';
 
 export const submit = asyncHandler(async (req, res) => ApiResponse.accepted(res, await service.submit(req.validated.body), 'Request received'));
 export const list = asyncHandler(async (req, res) => {
-  await service.assertPlatformAdmin?.(req.admin);
+  // Route-gated: adminAuth + permission('iam.access_requests', 'view').
   const result = await service.list(req.validated.query);
   return ApiResponse.ok(res, result.docs, 'Access requests fetched', { page: result.page, limit: result.limit, total: result.total, pages: result.pages });
 });

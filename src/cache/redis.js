@@ -39,6 +39,31 @@ const DEFAULT_TTL_SEC = 300;
 const DEFAULT_KEY_PREFIX = 'saas:';
 
 /**
+ * SCAN pattern + key mapping for a prefix delete.
+ *
+ * ioredis applies its `keyPrefix` option to every command that takes KEYS
+ * (GET, SET, DEL...), but NOT to SCAN's MATCH pattern, and SCAN returns
+ * the full stored keys (prefix included). So the pattern must carry the
+ * client prefix, and the keys SCAN returns must have it stripped before they
+ * are passed to DEL, or ioredis would delete `<prefix><prefix>key` (nothing).
+ *
+ * @param {string} keyPrefix - the client's ioredis `keyPrefix`.
+ * @param {string} prefix - logical key prefix to delete.
+ * @returns {{ pattern: string, toCommandKey: (storedKey: string) => string|null }}
+ */
+export function prefixScan(keyPrefix, prefix) {
+  // Escape glob metacharacters so a prefix can never widen the match.
+  const escape = (s) => s.replace(/[*?[\]\\]/g, '\\$&');
+  const full = `${keyPrefix}${prefix}`;
+  return {
+    pattern: `${escape(full)}*`,
+    toCommandKey: (storedKey) => (typeof storedKey === 'string' && storedKey.startsWith(full)
+      ? storedKey.slice(keyPrefix.length)
+      : null),
+  };
+}
+
+/**
  * Create the Redis cache driver.
  *
  * @param {Object} [config] - { url, keyPrefix, ttlDefault }.
@@ -182,6 +207,43 @@ export function createRedisCache(config = {}) {
         stream.on('error', reject);
       });
       await pipeline.exec();
+    },
+
+    async setIfAbsent(key, value, ttlSec) {
+      if (typeof key !== 'string' || key.length === 0) {
+        throw new Error('cache.setIfAbsent requires a non-empty key');
+      }
+      const payload = JSON.stringify(value);
+      const client = await getClient();
+      const result = Number.isInteger(ttlSec) && ttlSec > 0
+        ? await client.set(key, payload, 'EX', ttlSec, 'NX')
+        : await client.set(key, payload, 'NX');
+      return result === 'OK';
+    },
+
+    async delByPrefix(prefix) {
+      if (typeof prefix !== 'string' || prefix.length === 0) {
+        throw new Error('cache.delByPrefix requires a non-empty prefix');
+      }
+      const client = await getClient();
+      const { pattern, toCommandKey } = prefixScan(keyPrefix, prefix);
+      const stream = client.scanStream({ match: pattern, count: 200 });
+      const pipeline = client.pipeline();
+      let removed = 0;
+      await new Promise((resolve, reject) => {
+        stream.on('data', (keys) => {
+          for (const stored of keys) {
+            const key = toCommandKey(stored);
+            if (key === null) continue;
+            pipeline.del(key);
+            removed += 1;
+          }
+        });
+        stream.on('end', resolve);
+        stream.on('error', reject);
+      });
+      if (removed > 0) await pipeline.exec();
+      return removed;
     },
 
     async getOrSet(key, fn, ttlSec = ttlDefault) {

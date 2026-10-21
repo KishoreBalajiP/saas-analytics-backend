@@ -12,7 +12,8 @@
  *   other provider. Built on `@aws-sdk/client-s3`.
  *
  * DRIVER SURFACE (identical to localStorage.js - see its JSDoc):
- *   put, get, delete, exists, list, createWriteStream, presignedUrl, close
+ *   put, get, delete, exists, list, createWriteStream, createReadStream,
+ *   presignedUrl, close, putFile
  *
  * CONFIG:
  *   { provider: 's3', bucket, region, endpoint, accessKeyId, secretAccessKey,
@@ -34,7 +35,9 @@ import {
 } from '@aws-sdk/client-s3';
 import { Upload } from '@aws-sdk/lib-storage';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
-import { Writable } from 'node:stream';
+import { Transform } from 'node:stream';
+import { createReadStream as createFileReadStream } from 'node:fs';
+import { stat as statFile } from 'node:fs/promises';
 
 const DEFAULT_REGION = 'us-east-1';
 
@@ -138,34 +141,75 @@ export function createS3Storage(config = {}) {
       return out;
     },
 
-    async createWriteStream(key) {
+    /**
+     * Writable stream for a key, uploaded with a managed (multipart when
+     * large) upload. `stream.completed` resolves with `{ key, size }` once
+     * the object is stored (after `end()`), and rejects when the upload
+     * fails; destroying the stream aborts the upload.
+     */
+    async createWriteStream(key, options = {}) {
       if (typeof key !== 'string' || key.length === 0) {
         throw new Error('storage.createWriteStream requires a non-empty key');
       }
-      const pass = new Writable({
-        write(chunk, _enc, callback) {
-          this._chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-          callback();
+      let size = 0;
+      // Counts bytes on their way to the upload (a 'data' listener would
+      // switch the body into flowing mode under the uploader).
+      const body = new Transform({
+        transform(chunk, _enc, callback) {
+          size += chunk.length;
+          callback(null, chunk);
         },
       });
-      pass._chunks = [];
       const upload = new Upload({
         client,
-        params: { Bucket: config.bucket, Key: key, Body: pass },
+        params: {
+          Bucket: config.bucket,
+          Key: key,
+          Body: body,
+          ContentType: options.contentType,
+          Metadata: options.metadata,
+        },
       });
-      // Kick off the upload asynchronously; errors are surfaced via the
-      // `upload.done()` promise which the caller can await if they wish.
-      pass._uploadPromise = upload.done().catch((err) => {
-        pass.emit('error', err);
-      });
-      return pass;
+      body.completed = upload.done().then(() => ({ key, size }));
+      body.once('error', () => { upload.abort().catch(() => {}); });
+      // A failed upload is reported through `completed`; never unhandled.
+      body.completed.catch(() => {});
+      return body;
     },
+
+    /** Readable stream of a stored object. */
+    async createReadStream(key) {
+      const response = await client.send(new GetObjectCommand({ Bucket: config.bucket, Key: key }));
+      return response.Body;
+    },
+
+    // backups: streamed upload of a local file (multipart for large files).
+    async putFile(key, filePath, options = {}) {
+      if (typeof key !== 'string' || key.length === 0) {
+        throw new Error('storage.putFile requires a non-empty key');
+      }
+      const upload = new Upload({
+        client,
+        params: {
+          Bucket: config.bucket,
+          Key: key,
+          Body: createFileReadStream(filePath),
+          ContentType: options.contentType,
+          Metadata: options.metadata,
+        },
+      });
+      await upload.done();
+      const { size } = await statFile(filePath);
+      return { key, size };
+    },
+
 
     async presignedUrl(key, options = {}) {
       const command = new GetObjectCommand({
         Bucket: config.bucket,
         Key: key,
         ResponseContentType: options.contentType,
+        ResponseContentDisposition: options.contentDisposition,
       });
       const ttlSec = Number.isInteger(options.ttlSec) ? options.ttlSec : 300;
       return getSignedUrl(client, command, { expiresIn: ttlSec });

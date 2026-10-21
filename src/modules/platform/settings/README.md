@@ -1,5 +1,9 @@
 # Platform / settings
 
+> **Implemented (roadmap 2.4).** See `STATUS.md` for the real source files.
+> Sections below marked "architecture only" describe the original design.
+
+
 Settings: typed, scoped, hot-reloadable configuration values. Two scopes:
 
 - **Platform** - applies to the whole SaaS (one source of truth, broadcast).

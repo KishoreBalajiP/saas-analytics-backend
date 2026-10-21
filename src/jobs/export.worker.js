@@ -10,6 +10,8 @@
  *     - `access-log`  -> `accessLog.service#processExport` (HTTP access trace)
  *     - `compliance`  -> `compliance.service#COMPLIANCE_PROCESSORS[type]`
  *                        (data-subject request fulfillment)
+ *     - `tenant-data` -> `tenantExport.service#processExport` (whole-tenant
+ *                        data export archive, roadmap 2.9)
  *
  *   Errors are logged and swallowed per-job (the service marks the row
  *   `failed` where applicable), so one bad export never kills the consumer.
@@ -24,6 +26,8 @@ import { QUEUE_NAMES } from '../queues/constants.js';
 import * as auditExportService from '../services/auditExport.service.js';
 import * as accessLogService from '../services/accessLog.service.js';
 import * as complianceService from '../services/compliance.service.js';
+// backups: tenant data export (roadmap 2.9).
+import tenantExportService, { TENANT_EXPORT_JOB_KIND } from '../services/tenantExport.service.js';
 
 let registered = false;
 
@@ -41,6 +45,9 @@ export function registerExportWorker() {
         const processor = complianceService.COMPLIANCE_PROCESSORS[type];
         if (!processor) throw new Error(`Unknown compliance job type "${type}"`);
         summary = await processor({ requestId });
+      } else if (kind === TENANT_EXPORT_JOB_KIND) {
+        // backups: tenant data export (roadmap 2.9).
+        summary = await tenantExportService.processExport({ exportId });
       } else {
         summary = kind === 'access-log'
           ? await accessLogService.processExport({ exportId })

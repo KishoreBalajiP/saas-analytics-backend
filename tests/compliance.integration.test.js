@@ -88,13 +88,13 @@ async function seedAdmin(keys, overrides = {}) {
   const role = await roleService.create({ tenantId: null, name: `root_${shortToken(8)}` });
   for (const key of keys) {
     await ensurePermission(key);
-    await roleService.addPermission({ roleId: role._id, permissionKey: key, by: admin._id });
+    await roleService.addPermission({ roleId: role._id, permissionKey: key, by: null /* fixture seeding */ });
   }
   await adminService.assignRole({
     adminId: admin._id,
     roleId: role._id,
     tenantId: admin.tenantScope ?? null,
-    by: admin._id,
+    by: null /* fixture seeding */,
   });
   return admin;
 }
@@ -304,11 +304,30 @@ test('tenant-scoped support admin only sees requests inside their tenant scope',
   assert.equal(req.status, 202);
   await waitForRequest(req.json.data.requestId, platform.auth);
 
-  const support = await seedAdmin(COMPLIANCE_KEYS, { adminType: 'support', tenantScope: 't1' });
+  // Roadmap 2.1: the support admin is scoped to the subject's own tenant
+  // (a scoped admin can no longer file for a user of another tenant).
+  const tenantId = String(user.tenantId);
+  const support = await seedAdmin(COMPLIANCE_KEYS, { adminType: 'support', tenantScope: tenantId });
   const supportAuth = await adminAuth(support);
 
   const hidden = await api(`/api/v1/compliance/requests/${req.json.data.requestId}`, { headers: supportAuth });
   assert.equal(hidden.status, 404, 'tenant-scoped admin must not see a platform-wide request');
+
+  // Filing for another tenant, or for a user outside the scope, is refused.
+  const otherTenant = await api('/api/v1/compliance/requests', {
+    method: 'POST',
+    headers: supportAuth,
+    body: { subjectId: user._id.toString(), type: 'export', reason: 'Wrong tenant', tenantScope: ['t-other'] },
+  });
+  assert.equal(otherTenant.status, 403);
+  assert.equal(otherTenant.json.code, 'ADMIN_SCOPE_DENIED');
+  const outsider = await seedSubject();
+  const outsiderSar = await api('/api/v1/compliance/requests', {
+    method: 'POST',
+    headers: supportAuth,
+    body: { subjectId: outsider.user._id.toString(), type: 'export', reason: 'Outside scope' },
+  });
+  assert.equal(outsiderSar.status, 404);
 
   // A request scoped to the support admin's tenant IS visible.
   const scoped = await api('/api/v1/compliance/requests', {
@@ -318,7 +337,7 @@ test('tenant-scoped support admin only sees requests inside their tenant scope',
       subjectId: user._id.toString(),
       type: 'export',
       reason: 'Tenant SAR',
-      tenantScope: ['t1'],
+      tenantScope: [tenantId],
     },
   });
   assert.equal(scoped.status, 202);

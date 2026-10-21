@@ -1,34 +1,40 @@
 /**
- * Billing orchestration service (Phase 6.1 - Razorpay one-time order flow).
+ * Billing orchestration service (Phase 6.1; billing roadmap 3.1 prepaid terms).
  *
  * PURPOSE
- *   Coordinates checkout creation and checkout verification between the
- *   pricing authority, the provider adapter, the pending-transaction
- *   store and the lifecycle service. The controller stays thin; this
- *   service owns the cross-cutting rules.
+ *   Coordinates checkout creation, the browser's checkout callback, the
+ *   safe capture of provider-confirmed payments and the workspace billing
+ *   history between the pricing authority, the provider adapter, the
+ *   transaction store and the lifecycle service. Controllers stay thin.
  *
  * RULES
- *   - Plan identity/amount/currency come from `billingPricing` (server
- *     config). Client-supplied prices are never read.
- *   - A repeat checkout for the same tenant+plan+price while one is
- *     pending returns the existing pending order (no duplicate provider
- *     orders, safe under double-click).
- *   - Verification is authoritative: HMAC signature + live payment fetch
- *     (status/amount/currency/order association) before any lifecycle
- *     call. Browser callbacks alone never activate anything.
- *   - Every transition is idempotent (transaction conditional-update +
- *     lifecycle guards), so verify/webhook/reconcile can all run.
+ *   - Plan identity, term and amount come from the plan catalogue /
+ *     server configuration (`billingPricing`). Client-supplied prices are
+ *     never read.
+ *   - A repeat checkout for the same tenant + plan + term + price while one
+ *     is open returns the existing order (no duplicate provider orders).
+ *   - Paid access is granted ONLY after the provider confirmed the capture:
+ *     a verified webhook (or the reconcile sweep, for lost webhooks) plus a
+ *     server-side payment fetch through the adapter that agrees on order,
+ *     status `captured`, amount and currency (`confirmAndApplyCapture`).
+ *     The browser callback (`verifyCheckout`) checks the signature and
+ *     reports status; it never grants anything by itself.
+ *   - `authorized` payments grant nothing (finding bil.12).
+ *   - Transaction states only move forward; a verified capture may still
+ *     override `failed` / `expired` on the same order (Razorpay Checkout
+ *     retries payments on one order, finding bil.05).
  */
 
 import crypto from 'node:crypto';
 import ApiError from '../utils/ApiError.js';
+import clock from '../utils/clock.js';
 import planService from './plan.service.js';
-import tenantRepository from '../repositories/tenant.repository.js';
 import subscriptionService from './subscription.service.js';
 import billingPricing from './billingPricing.service.js';
 import billingLifecycle from './billingLifecycle.service.js';
 import { getProvider } from './paymentProvider.adapter.js';
 import paymentTransactionRepository from '../repositories/paymentTransaction.repository.js';
+import { CAPTURABLE_STATUSES, OPEN_STATUSES } from '../models/PaymentTransaction.js';
 import { emit as auditEmit } from './auditLog.service.js';
 import logger from '../utils/logger.js';
 
@@ -47,59 +53,91 @@ function newReceipt(tenantId) {
   return `rzp_${String(tenantId).slice(-8)}_${Date.now().toString(36)}_${rand}`;
 }
 
+function publicCheckout(txn, provider, reused) {
+  return {
+    transactionId: String(txn._id),
+    orderId: txn.providerOrderId,
+    keyId: provider.keyId,
+    amountMinor: txn.amountMinor,
+    currency: txn.currency,
+    planId: txn.planId,
+    interval: txn.interval ?? 'month',
+    termMonths: txn.termMonths ?? 1,
+    environment: provider.environment ?? null,
+    reused,
+  };
+}
+
+/** Public, secret-free view of a transaction for the workspace. */
+export function shapeTransaction(txn) {
+  if (!txn) return null;
+  return {
+    id: String(txn._id),
+    planId: txn.planId,
+    interval: txn.interval ?? 'month',
+    termMonths: txn.termMonths ?? 1,
+    amountMinor: txn.amountMinor,
+    currency: txn.currency,
+    provider: txn.provider,
+    orderId: txn.providerOrderId,
+    paymentId: txn.providerPaymentId ?? null,
+    status: txn.status,
+    applied: Boolean(txn.appliedAt),
+    failureReason: txn.failureReason ?? null,
+    createdAt: txn.createdAt ?? null,
+    authorizedAt: txn.authorizedAt ?? null,
+    capturedAt: txn.capturedAt ?? null,
+    appliedAt: txn.appliedAt ?? null,
+    failedAt: txn.failedAt ?? null,
+    refundedAt: txn.refundedAt ?? null,
+    expiredAt: txn.expiredAt ?? null,
+  };
+}
+
 /**
- * Create (or reuse) a pending checkout for `tenantId` -> `planCode`.
+ * Create (or reuse) an open checkout for one prepaid term of `planCode`.
  * Returns ONLY public checkout fields for the frontend.
+ *
+ * @param {Object} params
+ * @param {string} params.tenantId
+ * @param {string} params.planCode
+ * @param {'month'|'year'} [params.interval='month']
  */
-export async function createCheckout({ tenantId, planCode, actor = null, by = null } = {}) {
+export async function createCheckout({ tenantId, planCode, interval = 'month', actor = null, by = null } = {}) {
   if (!tenantId) throw ApiError.badRequest('tenantId is required');
   if (!planCode) throw ApiError.badRequest('planId is required');
 
   const plan = await planService.getActiveByCode(planCode);
   if (!plan) throw ApiError.badRequest(`Plan "${planCode}" is not available`);
-  if (plan.code === 'free') throw ApiError.badRequest('Free plan does not require checkout');
+  if (planService.isFreePlan(plan)) throw ApiError.badRequest('Free plan does not require checkout');
 
-  const price = billingPricing.resolvePrice(plan.code);
+  const price = billingPricing.resolvePlanPrice(plan, interval);
   const provider = requireProvider();
 
-  // Ensure a subscription row exists (lazy provisioning on the tenant's
-  // CURRENT plan - never on the checkout target, or every checkout for a
-  // different plan would look like a no-op same-plan request).
-  let sub = await subscriptionService.getForTenant(tenantId);
-  if (!sub) {
-    const tenant = await tenantRepository.findById(tenantId);
-    const current = tenant?.planId ? await planService.getActiveByCode(tenant.planId) : null;
-    const seedPlan = current ?? (await planService.resolveFallbackPlan());
-    sub = await subscriptionService.createForTenant({
-      tenantId,
-      planId: seedPlan.code,
-      state: 'active',
-      actor: actor ?? { type: 'system', id: 'system' },
-      by,
-      reason: 'Lazy provisioning before checkout',
-    });
+  // Provision the default subscription (free, or the tenant's trial) so the
+  // term is applied against a known state. Never on the checkout target.
+  const sub = await subscriptionService.ensureForTenant({
+    tenantId,
+    actor: actor ?? { type: 'system', id: 'system' },
+    by,
+    reason: 'Provisioning before checkout',
+  });
+  if (sub.adminHold === true && sub.state === 'restricted') {
+    throw ApiError.conflict('This workspace is on an administrative hold; contact support to change plans');
   }
-  if (sub.planId === plan.code && sub.state === 'active') {
-    throw ApiError.conflict(`Tenant is already on plan "${plan.code}"`);
+  if (sub.scheduledChange?.source === 'payment' && sub.scheduledChange.planId !== plan.code) {
+    throw ApiError.conflict('A prepaid term for another plan is already queued; contact support to change it');
   }
 
-  // Idempotent reuse: an equivalent pending attempt wins over a new order.
+  // Idempotent reuse: an equivalent open attempt wins over a new order.
   const existing = await paymentTransactionRepository.findPendingForTenantPlan({
     tenantId,
     planId: plan.code,
     amountMinor: price.amountMinor,
     currency: price.currency,
   });
-  if (existing) {
-    return {
-      transactionId: String(existing._id),
-      orderId: existing.providerOrderId,
-      keyId: provider.keyId,
-      amountMinor: existing.amountMinor,
-      currency: existing.currency,
-      planId: existing.planId,
-      reused: true,
-    };
+  if (existing && (existing.interval ?? 'month') === price.interval) {
+    return publicCheckout(existing, provider, true);
   }
 
   const receipt = newReceipt(tenantId);
@@ -133,23 +171,16 @@ export async function createCheckout({ tenantId, planCode, actor = null, by = nu
         providerOrderId: order.id,
         receipt,
         status: 'pending',
+        interval: price.interval,
+        termMonths: price.termMonths,
+        nextReconcileAt: new Date(clock.now().getTime() + 5 * 60 * 1000),
       },
       { by },
     );
   } catch (err) {
     // Duplicate order id (provider retried / race): reuse the stored row.
     const dup = await paymentTransactionRepository.findByOrderId(order.id);
-    if (dup) {
-      return {
-        transactionId: String(dup._id),
-        orderId: dup.providerOrderId,
-        keyId: provider.keyId,
-        amountMinor: dup.amountMinor,
-        currency: dup.currency,
-        planId: dup.planId,
-        reused: true,
-      };
-    }
+    if (dup) return publicCheckout(dup, provider, true);
     throw err;
   }
 
@@ -159,24 +190,105 @@ export async function createCheckout({ tenantId, planCode, actor = null, by = nu
     module: 'billing.payments',
     resource: { type: 'payment_transaction', id: String(txn._id) },
     tenantId: String(tenantId),
-    after: { planId: plan.code, amountMinor: price.amountMinor, currency: price.currency, orderId: order.id },
+    after: {
+      planId: plan.code,
+      interval: price.interval,
+      amountMinor: price.amountMinor,
+      currency: price.currency,
+      orderId: order.id,
+    },
   });
 
+  return publicCheckout(txn, provider, false);
+}
+
+/**
+ * Safe capture (findings bil.05 / bil.12): confirm with the provider that
+ * `paymentId` is CAPTURED for this transaction's order with the stored
+ * amount and currency, move the row to `captured` (forward-only, may
+ * override failed/expired), then apply its term through the lifecycle
+ * service. Idempotent; a row already captured is only (re-)applied.
+ *
+ * @returns {Promise<{ outcome: string, transaction: object|null }>}
+ *   outcome: captured | already_captured | authorized | not_captured |
+ *            order_mismatch | amount_mismatch | transaction_refunded
+ */
+export async function confirmAndApplyCapture({ transaction, paymentId, provider = null, actor = null, now = clock.now() } = {}) {
+  const txn = transaction;
+  if (!txn) return { outcome: 'unknown_order', transaction: null };
+  const who = actor ?? { type: 'system', id: 'billing' };
+
+  if (txn.status === 'refunded') return { outcome: 'transaction_refunded', transaction: txn };
+  if (txn.status === 'captured') {
+    await billingLifecycle.applyCapture({ transaction: txn, actor: who, now });
+    return { outcome: 'already_captured', transaction: await paymentTransactionRepository.findById(txn._id) };
+  }
+  if (!paymentId) return { outcome: 'not_captured', transaction: txn };
+
+  const live = provider ?? requireProvider();
+  const payment = await live.fetchPayment(paymentId);
+  if (payment?.order_id !== txn.providerOrderId) {
+    await auditEmit({
+      actor: who,
+      action: 'billing.capture_rejected',
+      module: 'billing.payments',
+      resource: { type: 'payment_transaction', id: String(txn._id) },
+      tenantId: String(txn.tenantId),
+      after: { reason: 'payment_order_mismatch', orderId: txn.providerOrderId },
+    }).catch(() => {});
+    return { outcome: 'order_mismatch', transaction: txn };
+  }
+  const amountOk = Number(payment.amount) === Number(txn.amountMinor);
+  const currencyOk = String(payment.currency ?? '').toUpperCase() === String(txn.currency).toUpperCase();
+  if (!amountOk || !currencyOk) {
+    // Never grant a term for a payment that does not match the order.
+    const moved = await paymentTransactionRepository.transitionStatus(txn._id, {
+      to: 'failed',
+      fromStatuses: [...OPEN_STATUSES],
+      patch: { failureReason: 'payment_amount_mismatch', failedAt: now },
+    });
+    await auditEmit({
+      actor: who,
+      action: 'billing.capture_rejected',
+      module: 'billing.payments',
+      resource: { type: 'payment_transaction', id: String(txn._id) },
+      tenantId: String(txn.tenantId),
+      after: { reason: 'payment_amount_mismatch', orderId: txn.providerOrderId },
+    }).catch(() => {});
+    logger.warn({ orderId: txn.providerOrderId, op: 'billing.capture' }, 'Payment amount/currency mismatch; capture rejected');
+    return { outcome: 'amount_mismatch', transaction: moved ?? txn };
+  }
+  if (payment.status === 'authorized' && payment.captured !== true) {
+    // Authorized only: no access until the provider reports the capture.
+    const moved = await paymentTransactionRepository.transitionStatus(txn._id, {
+      to: 'authorized',
+      fromStatuses: ['pending'],
+      patch: { providerPaymentId: paymentId, authorizedAt: now },
+    });
+    return { outcome: 'authorized', transaction: moved ?? txn };
+  }
+  if (payment.status !== 'captured') return { outcome: 'not_captured', transaction: txn };
+
+  const moved = await paymentTransactionRepository.transitionStatus(txn._id, {
+    to: 'captured',
+    fromStatuses: [...CAPTURABLE_STATUSES],
+    patch: { providerPaymentId: paymentId, capturedAt: now, failureReason: null },
+  });
+  const row = moved ?? (await paymentTransactionRepository.findById(txn._id));
+  if (!row || row.status !== 'captured') return { outcome: `transaction_${row?.status ?? 'moved'}`, transaction: row };
+  await billingLifecycle.applyCapture({ transaction: row, actor: who, now });
   return {
-    transactionId: String(txn._id),
-    orderId: order.id,
-    keyId: provider.keyId,
-    amountMinor: price.amountMinor,
-    currency: price.currency,
-    planId: plan.code,
-    reused: false,
+    outcome: moved ? 'captured' : 'already_captured',
+    transaction: await paymentTransactionRepository.findById(txn._id),
   };
 }
 
 /**
- * Verify a completed Razorpay Checkout. Authoritative: signature +
- * live payment entity must agree with the stored transaction before the
- * lifecycle service runs. Idempotent.
+ * The browser's checkout callback. Verifies the checkout signature and
+ * that the order belongs to this workspace, then reports the status the
+ * server holds. It NEVER grants access: the term is applied only after the
+ * verified webhook (or reconciliation) confirms the capture with the
+ * provider. The UI polls `getCheckoutStatus` until then.
  */
 export async function verifyCheckout({ tenantId, orderId, paymentId, signature, actor = null, by = null } = {}) {
   if (!tenantId) throw ApiError.badRequest('tenantId is required');
@@ -188,90 +300,66 @@ export async function verifyCheckout({ tenantId, orderId, paymentId, signature, 
 
   const txn = await paymentTransactionRepository.findByOrderId(orderId);
   if (!txn || String(txn.tenantId) !== String(tenantId)) {
-    throw ApiError.notFound('No matching pending checkout for this workspace');
+    throw ApiError.notFound('No matching checkout for this workspace');
   }
-  if (txn.status === 'captured') {
-    const sub = await subscriptionService.getForTenant(tenantId);
-    return { verified: true, idempotent: true, subscription: sub, transactionId: String(txn._id) };
-  }
-  if (txn.status !== 'pending') {
-    throw ApiError.conflict(`Checkout is already ${txn.status}; contact support`);
-  }
-
   if (!provider.verifyCheckoutSignature({ orderId, paymentId, signature })) {
-    await paymentTransactionRepository.transitionStatus(txn._id, {
-      to: 'failed',
-      fromStatuses: ['pending'],
-      patch: { failureReason: 'signature_mismatch', failedAt: new Date() },
-      by,
-    });
+    await auditEmit({
+      actor: who,
+      action: 'billing.checkout_signature_rejected',
+      module: 'billing.payments',
+      resource: { type: 'payment_transaction', id: String(txn._id) },
+      tenantId: String(tenantId),
+      after: { orderId },
+    }).catch(() => {});
     throw ApiError.badRequest('Payment signature verification failed');
   }
-
-  let payment;
-  try {
-    payment = await provider.fetchPayment(paymentId);
-  } catch (err) {
-    if (err instanceof ApiError) throw err;
-    throw ApiError.serviceUnavailable('Payment provider is temporarily unavailable');
-  }
-
-  const associated = payment.order_id === orderId;
-  const amountOk = payment.amount === txn.amountMinor;
-  const currencyOk = String(payment.currency).toUpperCase() === String(txn.currency).toUpperCase();
-  const paidOk = payment.status === 'captured' || (payment.status === 'authorized' && payment.captured === true);
-  if (!associated || !amountOk || !currencyOk || !paidOk) {
-    await paymentTransactionRepository.transitionStatus(txn._id, {
-      to: 'failed',
-      fromStatuses: ['pending'],
-      patch: {
-        failureReason: !associated
-          ? 'payment_order_mismatch'
-          : !amountOk || !currencyOk
-            ? 'payment_amount_mismatch'
-            : `payment_status_${payment.status}`,
-        failedAt: new Date(),
-      },
-      by,
-    });
-    throw ApiError.badRequest('Payment could not be verified with the provider');
-  }
-
-  const done = await paymentTransactionRepository.transitionStatus(txn._id, {
-    to: 'captured',
-    fromStatuses: ['pending'],
-    patch: { providerPaymentId: paymentId, capturedAt: new Date() },
+  const stamped = await paymentTransactionRepository.transitionStatus(txn._id, {
+    to: txn.status,
+    fromStatuses: [txn.status],
+    patch: {
+      clientVerifiedAt: clock.now(),
+      // Pull the next provider check forward: the webhook may be late.
+      ...(OPEN_STATUSES.includes(txn.status) ? { nextReconcileAt: clock.now() } : {}),
+    },
     by,
   });
-  if (!done) {
-    // Lost a race with a webhook/reconcile that already captured it.
-    const sub = await subscriptionService.getForTenant(tenantId);
-    return { verified: true, idempotent: true, subscription: sub, transactionId: String(txn._id) };
+  const status = await getCheckoutStatus({ tenantId, orderId, transaction: stamped ?? txn });
+  return { verified: true, ...status };
+}
+
+/**
+ * Workspace view of one checkout: `pending_confirmation` until the
+ * provider-confirmed capture is applied, then `confirmed`.
+ */
+export async function getCheckoutStatus({ tenantId, orderId, transaction = null } = {}) {
+  if (!tenantId) throw ApiError.badRequest('tenantId is required');
+  const txn = transaction ?? (await paymentTransactionRepository.findByOrderId(orderId));
+  if (!txn || String(txn.tenantId) !== String(tenantId)) {
+    throw ApiError.notFound('No matching checkout for this workspace');
   }
+  let phase = 'pending_confirmation';
+  if (txn.status === 'captured' && txn.appliedAt) phase = 'confirmed';
+  else if (txn.status === 'captured') phase = 'applying';
+  else if (txn.status === 'failed') phase = 'failed';
+  else if (txn.status === 'expired') phase = 'expired';
+  else if (txn.status === 'refunded') phase = 'refunded';
+  const subscription = await subscriptionService.getForTenant(tenantId);
+  return { phase, transaction: shapeTransaction(txn), subscription };
+}
 
-  const result = await billingLifecycle.applyCapture({
-    tenantId: String(tenantId),
-    planId: txn.planId,
-    providerRef: orderId,
-    paymentId,
-    actor: who,
-  });
-
-  await auditEmit({
-    actor: who,
-    action: 'billing.payment_verified',
-    module: 'billing.payments',
-    resource: { type: 'payment_transaction', id: String(txn._id) },
-    tenantId: String(tenantId),
-    after: { planId: txn.planId, orderId, paymentId },
-  });
-
-  const sub = await subscriptionService.getForTenant(tenantId);
-  return { verified: true, idempotent: result.idempotent === true, subscription: sub, transactionId: String(txn._id) };
+/** Workspace billing history (payment transactions, newest first). */
+export async function listTransactionsForTenant(tenantId, { page = 1, limit = 20 } = {}) {
+  if (!tenantId) throw ApiError.badRequest('tenantId is required');
+  const result = await paymentTransactionRepository.listForTenant(tenantId, { page, limit });
+  return { ...result, docs: result.docs.map(shapeTransaction) };
 }
 
 export default {
   createCheckout,
   verifyCheckout,
+  getCheckoutStatus,
+  confirmAndApplyCapture,
+  listTransactionsForTenant,
+  shapeTransaction,
   _meta: { module: 'billing.checkout' },
 };

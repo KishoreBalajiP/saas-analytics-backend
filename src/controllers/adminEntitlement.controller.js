@@ -18,6 +18,7 @@ import ApiResponse from '../utils/ApiResponse.js';
 import ApiError from '../utils/ApiError.js';
 import entitlementOverrideService from '../services/entitlementOverride.service.js';
 import entitlementService from '../services/entitlement.service.js';
+import { adminScopeOf } from '../middleware/adminScope.middleware.js';
 
 function ensureTenant(tenantId) {
   if (!tenantId) throw ApiError.badRequest('tenantId is required');
@@ -26,11 +27,15 @@ function ensureTenant(tenantId) {
 
 export const listAllOverrides = asyncHandler(async (req, res) => {
   const { page, limit, includeRevoked } = req.validated?.query ?? {};
-  const result = await entitlementOverrideService.listAll({
-    page,
-    limit,
-    includeRevoked: includeRevoked !== false,
-  });
+  // A tenant-scoped admin only lists its own tenant's overrides.
+  const scope = adminScopeOf(req);
+  const result = scope
+    ? await entitlementOverrideService.list({ tenantId: scope, page, limit, includeRevoked: includeRevoked !== false })
+    : await entitlementOverrideService.listAll({
+      page,
+      limit,
+      includeRevoked: includeRevoked !== false,
+    });
   return ApiResponse.ok(res, result.docs, 'Overrides fetched', {
     page: result.page,
     limit: result.limit,
@@ -90,7 +95,8 @@ export const getTenantEntitlements = asyncHandler(async (req, res) => {
 
 export const getTenantUsage = asyncHandler(async (req, res) => {
   const tenantId = ensureTenant(req.params.tenantId);
-  const usage = await entitlementService.getUsage(tenantId);
+  const at = entitlementService.parseUsagePeriod(req.query?.period);
+  const usage = await entitlementService.getUsage(tenantId, at ? { now: at } : {});
   return ApiResponse.ok(res, usage, 'Usage fetched');
 });
 

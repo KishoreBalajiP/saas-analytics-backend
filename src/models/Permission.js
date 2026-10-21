@@ -23,8 +23,8 @@
  *   softDelete, paginate, optimisticConcurrency, audit (module `iam.permissions`).
  *
  * INDEXES
- *   - unique(key)
- *   - unique({ module: 1, action: 1 })
+ *   - unique partial(key) over live rows (`deletedAt: null`)
+ *   - unique partial({ module: 1, action: 1 }) over live rows
  *   - { moduleId: 1 }
  *   - { isSystem: 1 }
  */
@@ -38,6 +38,8 @@ export const MODEL_NAME = 'Permission';
 export const CANONICAL_ACTIONS = Object.freeze([
   'view', 'create', 'update', 'delete', 'export',
   'approve', 'suspend', 'restore', 'assign', 'configure', 'evaluate',
+  // Billing administration (admin plan/subscription/entitlement routes).
+  'override', 'archive',
 ]);
 
 const permissionSchema = new mongoose.Schema(
@@ -45,10 +47,10 @@ const permissionSchema = new mongoose.Schema(
     moduleId: { type: String, required: true, index: true },
     module: { type: String, required: true, trim: true, lowercase: true },
     action: { type: String, required: true, trim: true, lowercase: true },
+    // members (db.07): unique among live rows, see the partial indexes below.
     key: {
       type: String,
       required: true,
-      unique: true,
       trim: true,
       lowercase: true,
     },
@@ -60,7 +62,10 @@ const permissionSchema = new mongoose.Schema(
   { timestamps: true },
 );
 
-permissionSchema.index({ module: 1, action: 1 }, { unique: true });
+// members (db.07): unique among live permissions only, so a deleted
+// permission does not block re-registering the same key.
+permissionSchema.index({ key: 1 }, { unique: true, partialFilterExpression: { deletedAt: null } });
+permissionSchema.index({ module: 1, action: 1 }, { unique: true, partialFilterExpression: { deletedAt: null } });
 
 permissionSchema.plugin(softDelete);
 permissionSchema.plugin(paginate);

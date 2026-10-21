@@ -25,6 +25,21 @@
  *   both drivers) instead of enumerating keys; stale entries simply expire
  *   on their 60s TTL and are never read again.
  *
+ *   A tenant-scoped admin's effective set is its platform grants plus its
+ *   grants for that tenant, so its entry embeds BOTH the tenant scope
+ *   version and the platform scope version: a change to either (e.g. a
+ *   platform role's permissions) invalidates it.
+ *
+ * EXPIRY BOUND
+ *   Role grants can be temporary (`expiresAt`). A cached set must never
+ *   outlive the earliest live grant it was built from, so on every miss the
+ *   earliest expiry is read FIRST (any grant the resolver then sees was live
+ *   at that moment, so its own expiry is no earlier), and the entry is
+ *   stored as `{ v, exp }` with a TTL of at most the time left until `exp`.
+ *   Reads also re-check `exp`, because cache TTLs have one-second
+ *   granularity. An expired grant therefore stops working at its deadline
+ *   even while the actor's set is cached.
+ *
  * FAILURE MODEL
  *   The cache is an accelerator, never an authorisation oracle. If a cache
  *   op throws (`CacheError`), callers must fall back to the live DB
@@ -32,6 +47,7 @@
  */
 
 import cache from './cache.service.js';
+import roleGrantRepository from '../repositories/roleGrant.repository.js';
 
 /** How long a resolved permission set is trusted (seconds). */
 export const RBAC_CACHE_TTL_SEC = 60;
@@ -77,8 +93,14 @@ async function currentVersions(scope) {
   }
 }
 
+/** A cached entry is `{ v: value, exp: epochMs|null }`. */
+function isEnvelope(entry) {
+  return Boolean(entry) && typeof entry === 'object' && !Array.isArray(entry) && 'v' in entry;
+}
+
 /**
- * Resolve `fn` and cache the result for 60s under the versioned actor key.
+ * Resolve `fn` and cache the result under the versioned actor key for at
+ * most 60s, and never past the earliest expiry of the actor's live grants.
  * Cache failures degrade to a live resolution (fail-open accelerator).
  *
  * @param {Object} opts
@@ -92,12 +114,49 @@ async function currentVersions(scope) {
 export async function resolve({ tenantId, actorType, actorId, fn, kind = 'perms' }) {
   const scope = scopeLabel(tenantId);
   const { globalVersion, scopeVersion } = await currentVersions(scope);
-  const key = actorKey({ scope, scopeVersion, globalVersion, kind, actorType, actorId });
+  // Scoped admins also depend on their platform grants (see WHY VERSIONED).
+  const dependsOnPlatform = actorType === 'admin' && scope !== PLATFORM_SCOPE;
+  const platformVersion = dependsOnPlatform
+    ? (await currentVersions(PLATFORM_SCOPE)).scopeVersion
+    : null;
+  const key = actorKey({
+    scope,
+    scopeVersion: dependsOnPlatform ? `${scopeVersion}.${platformVersion}` : scopeVersion,
+    globalVersion,
+    kind,
+    actorType,
+    actorId,
+  });
+
+  let hit = null;
   try {
-    return await cache.getOrSet(key, fn, RBAC_CACHE_TTL_SEC);
+    hit = await cache.get(key);
   } catch {
     return fn();
   }
+  if (isEnvelope(hit) && (hit.exp === null || hit.exp === undefined || hit.exp > Date.now())) {
+    return hit.v;
+  }
+
+  // Earliest live grant expiry FIRST, then the resolution (see EXPIRY BOUND).
+  const expiry = await roleGrantRepository.findEarliestGrantExpiry({
+    actorType,
+    actorId,
+    tenantId: tenantId ?? null,
+  });
+  const value = await fn();
+  const exp = expiry ? expiry.getTime() : null;
+  const ttlSec = exp === null
+    ? RBAC_CACHE_TTL_SEC
+    : Math.min(RBAC_CACHE_TTL_SEC, Math.floor((exp - Date.now()) / 1000));
+  if (ttlSec >= 1 && value !== null && value !== undefined) {
+    try {
+      await cache.set(key, { v: value, exp }, ttlSec);
+    } catch {
+      /* accelerator only */
+    }
+  }
+  return value;
 }
 
 /**

@@ -18,6 +18,8 @@ import * as alertService from '../../src/services/alert.service.js';
 import alertRepository from '../../src/repositories/alert.repository.js';
 import * as reportService from '../../src/services/report.service.js';
 import reportRepository from '../../src/repositories/report.repository.js';
+// billing: tenants exercising paid features need a plan that includes them.
+import { entitleTenant } from '../helpers/billing.js';
 
 const PASSWORD = 'Password123!';
 
@@ -29,6 +31,7 @@ async function onboard() {
   const ownerEmail = `owner-${shortToken(10).toLowerCase()}@example.com`;
   const owner = { email: ownerEmail, name: 'Owner', password: PASSWORD };
   const { tenant } = await tenantService.create({ tenant: { name: `Sched ${shortToken(10)}` }, owner, initialize: true, by: 'root' });
+  await entitleTenant(tenant._id);
   return { tenantId: tenant._id.toString(), ownerId: tenant.ownerUserId?.toString?.() || null };
 }
 

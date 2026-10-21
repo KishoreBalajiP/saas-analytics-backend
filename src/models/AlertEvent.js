@@ -31,6 +31,8 @@ const eventSchema = new mongoose.Schema(
     message: { type: String, default: '' },
     notificationStatus: { type: mongoose.Schema.Types.Mixed, default: null },
     runBy: { type: String, default: null },
+    // Per-group evaluation (`any` / `all`): { mode, groupsEvaluated, groupsMatched, sample }.
+    details: { type: mongoose.Schema.Types.Mixed, default: null },
   },
   { timestamps: true },
 );

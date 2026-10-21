@@ -35,14 +35,18 @@ operation twice. Message shapes are documented in each queue module.
 | `email.queue.js`     | `email.delivery`     | transactional + alert email          |
 | `analytics.queue.js` | `analytics.jobs`     | aggregations, exports, recomputes    |
 
-## Transport strategy (future, not installed)
+## Transport strategy
 
-- **Development / tests:** in-memory Map-based transport (no dependency).
-- **Production:** BullMQ on Redis (single-dependency, battle-tested), with
-  Bull Board for observability. `REDIS_URL` is already reserved in `.env.example`
-  and `config/env.js` (`config.redis`).
+- **Development / tests:** in-memory transport (`memory.queue.js`, single
+  process; messages do not survive a restart).
+- **Production:** BullMQ on Redis when `REDIS_URL` is set. Producers use a
+  fail-fast Redis connection separate from the worker's and every enqueue is
+  bounded by `QUEUE_PRODUCER_TIMEOUT_MS` (typed `QueueError`, HTTP 503).
 - Deployment-independent: the transport is chosen by env/config only, never
   hard-coded.
+- Consumers run only in processes whose `PROCESS_ROLE` is `worker` or `all`
+  (`src/jobs/background.js`); `closeAll({ drainTimeoutMs })` drains them on
+  shutdown.
 
 ## Integration points (already prepared)
 
@@ -54,5 +58,7 @@ operation twice. Message shapes are documented in each queue module.
 
 ## Status
 
-Phase 1.1 defines the contract and names only. Nothing is installed (`no
-Redis`, `no BullMQ`) and no consumer is registered.
+Implemented: connector sync, analytics (report/alert) and export consumers;
+email delivery remains a fail-closed contract. Durable-job behaviour (roles,
+leases, sync runs, reaper, drain) is described in
+`src/docs/backend/queues.md`.

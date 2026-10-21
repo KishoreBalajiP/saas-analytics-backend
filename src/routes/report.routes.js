@@ -23,16 +23,20 @@ import { permission } from '../middleware/permission.middleware.js';
 import { validate } from '../validators/index.js';
 import reportValidator from '../validators/report.validator.js';
 import reportController from '../controllers/report.controller.js';
+// billing: enabling a report schedule needs the scheduled_delivery feature.
+import { requireFeature } from '../middleware/requireFeature.middleware.js';
 
 const router = Router();
 
 const guarded = (action, ...mw) => [authenticate, resolveTenant, permission('reports', action), ...mw];
 const idParam = { params: { id: 'objectId|required' } };
+const enablesSchedule = (req) => req.body?.schedule?.enabled === true || req.body?.schedule?.enabled === 'true';
+const scheduleGate = requireFeature('scheduled_delivery', { when: enablesSchedule });
 
 router.get('/', guarded('view', validate(reportValidator.reportListSchema)), reportController.listReports);
-router.post('/', guarded('create', validate(reportValidator.reportCreateSchema)), reportController.createReport);
+router.post('/', guarded('create', validate(reportValidator.reportCreateSchema), scheduleGate), reportController.createReport);
 router.get('/:id', guarded('view', validate(idParam)), reportController.getReport);
-router.patch('/:id', guarded('update', validate(reportValidator.reportUpdateSchema)), reportController.updateReport);
+router.patch('/:id', guarded('update', validate(reportValidator.reportUpdateSchema), scheduleGate), reportController.updateReport);
 router.post('/:id/run', guarded('export', validate(reportValidator.reportRunSchema)), reportController.runReport);
 router.delete('/:id', guarded('delete', validate(idParam)), reportController.deleteReport);
 router.get('/:id/download', guarded('export', validate(reportValidator.reportDownloadSchema)), reportController.downloadReport);

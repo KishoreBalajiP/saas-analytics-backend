@@ -1,66 +1,179 @@
 /**
- * XLSX parsing utilities (ExcelJS).
+ * XLSX parsing utilities - streaming, bounded (ExcelJS WorkbookReader).
  *
  * WHY IT EXISTS
  *   Shared parsing logic for preview + ingest so both paths stay in sync.
- *   Uses ExcelJS's streaming row iteration to avoid full materialisation.
+ *   Rows are STREAMED with ExcelJS's `stream.xlsx.WorkbookReader`; the
+ *   workbook is never materialised.
  *
- * NOTE
- *   ExcelJS loads the entire workbook into memory (it's not a true
- *   streaming parser like csv-parse). For production-scale files >100 MB
- *   consider a dedicated stream parser; the 10 MB upload cap keeps this
- *   acceptable for now.
+ * SAFETY (untrusted uploads)
+ *   Before any XML is parsed, `xlsx.zipGuard.js` checks the archive (no
+ *   encryption / ZIP64, bounded entry count), measures the REAL inflated
+ *   size of the parts we read against `CONNECTOR_XLSX_MAX_UNCOMPRESSED_MB`,
+ *   and re-orders the parts so the streaming reader never buffers sheets to
+ *   temporary files. While streaming, rows are capped
+ *   (`CONNECTOR_MAX_ROWS_PER_SYNC`) and so are columns per row
+ *   (`CONNECTOR_XLSX_MAX_COLUMNS`). Library errors are mapped to generic,
+ *   typed `ConnectorError`s.
+ *
+ * SHEET SELECTION
+ *   `config.sheet` may be a sheet NAME (string) or a zero-based INDEX
+ *   (number, in workbook order). Default: the first sheet.
  */
 
 import ExcelJS from 'exceljs';
+import env from '../../../config/env.js';
+import { ConnectorError, RowLimitError, CONNECTOR_ERROR_CODES } from '../shared/errors.js';
+import { inspectXlsx, measureInflatedSize, createOrderedXlsxStream } from './xlsx.zipGuard.js';
+
+const READER_OPTIONS = Object.freeze({
+  worksheets: 'emit',
+  sharedStrings: 'cache',
+  // Styles are needed to recognise date-formatted numbers.
+  styles: 'cache',
+  hyperlinks: 'ignore',
+  entries: 'ignore',
+});
+
+function limitsFrom(opts = {}) {
+  return {
+    maxRows: opts.maxRows ?? env.connectors.maxRowsPerSync,
+    maxColumns: opts.maxColumns ?? env.connectors.xlsxMaxColumns,
+    maxUncompressedBytes: opts.maxUncompressedBytes ?? env.connectors.xlsxMaxUncompressedBytes,
+  };
+}
+
+const parseFailed = (message = 'The file is not a valid XLSX workbook.') =>
+  new ConnectorError(CONNECTOR_ERROR_CODES.FILE_PARSE_FAILED, message, { statusCode: 422 });
+
+/** Normalise an ExcelJS cell value to a JSON-friendly primitive (or Date). */
+export function toPrimitive(value) {
+  if (value === null || value === undefined) return null;
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  if (typeof value !== 'object') return value;
+  if (Array.isArray(value.richText)) return value.richText.map((r) => r?.text ?? '').join('');
+  if ('formula' in value || 'sharedFormula' in value || 'result' in value) return toPrimitive(value.result ?? null);
+  if ('error' in value) return null;
+  if ('text' in value) return toPrimitive(value.text);
+  return null;
+}
+
+function headerFields(values) {
+  const seen = new Map();
+  return values.map((v, i) => {
+    const base = toPrimitive(v);
+    let name = base === null || base === '' ? `col_${i}` : String(base);
+    const count = seen.get(name) ?? 0;
+    seen.set(name, count + 1);
+    if (count > 0) name = `${name}_${count + 1}`;
+    return name;
+  });
+}
+
+/**
+ * Stream the rows (as value arrays, 0-based) of the selected sheet.
+ * Yields `{ sheetName, values }`.
+ */
+async function* streamSheetRows(buffer, config, limits) {
+  if (!Buffer.isBuffer(buffer) || buffer.length === 0) throw parseFailed();
+  let inspection;
+  try {
+    inspection = inspectXlsx(buffer, { maxUncompressedBytes: limits.maxUncompressedBytes });
+    await measureInflatedSize(buffer, inspection, { maxUncompressedBytes: limits.maxUncompressedBytes });
+  } catch (error) {
+    if (error instanceof ConnectorError) throw error;
+    throw parseFailed();
+  }
+
+  const source = createOrderedXlsxStream(buffer, inspection);
+  const reader = new ExcelJS.stream.xlsx.WorkbookReader(source, READER_OPTIONS);
+  const wanted = config.sheet;
+  let found = false;
+  try {
+    for await (const worksheet of reader) {
+      const sheets = reader.model?.sheets ?? [];
+      const position = sheets.findIndex((s) => String(s.id) === String(worksheet.id));
+      // Default: the first sheet in workbook (tab) order, which is not
+      // necessarily the first sheet part in the archive; a sheet the
+      // workbook does not list falls back to archive order.
+      const isWanted = wanted === undefined || wanted === null || wanted === ''
+        ? position === 0 || position < 0
+        : typeof wanted === 'number'
+          ? position === wanted
+          : worksheet.name === wanted;
+      if (!isWanted) continue; // the reader drains the part without parsing it
+      found = true;
+      for await (const row of worksheet) {
+        const values = Array.isArray(row.values) ? row.values.slice(1) : [];
+        if (values.length > limits.maxColumns) {
+          throw new ConnectorError(
+            'XLSX_TOO_MANY_COLUMNS',
+            `A row has more than ${limits.maxColumns} columns, the maximum supported.`,
+            {
+              statusCode: 413,
+              details: [{ field: 'file', message: `at most ${limits.maxColumns} columns per row`, maxColumns: limits.maxColumns }],
+            },
+          );
+        }
+        yield { sheetName: worksheet.name, values };
+      }
+      return;
+    }
+  } catch (error) {
+    if (error instanceof ConnectorError) throw error;
+    throw parseFailed();
+  } finally {
+    source.destroy();
+  }
+  if (!found) {
+    throw new ConnectorError('XLSX_SHEET_NOT_FOUND', 'The configured sheet was not found in the workbook.', { statusCode: 422 });
+  }
+}
 
 /**
  * Extract the first N rows for preview + field detection.
  *
  * @param {Buffer} buffer
  * @param {Object} config - { hasHeader?: boolean, sheet?: string|number, limit?: number }
- * @returns {Promise<{ fields: string[], sample: Array, meta: Object }>}
+ * @param {Object} [opts] - limit overrides (tests).
+ * @returns {Promise<{ fields: string[], sample: Array<Object>, meta: Object }>}
  */
-export async function previewXlsx(buffer, config = {}) {
-  const workbook = new ExcelJS.Workbook();
-  await workbook.xlsx.load(buffer);
-
-  const sheet = config.sheet !== undefined
-    ? (typeof config.sheet === 'string' ? workbook.getWorksheet(config.sheet) : workbook.getWorksheet(config.sheet))
-    : workbook.worksheets[0];
-
-  if (!sheet) throw new Error('Specified sheet not found');
-
-  const rows = [];
+export async function previewXlsx(buffer, config = {}, opts = {}) {
+  const limits = limitsFrom(opts);
+  const limit = Math.max(1, Math.min(Number(config.limit) || 10, 100));
   const hasHeader = config.hasHeader ?? true;
-  let fields = [];
-  let headerProcessed = false;
-
-  sheet.eachRow((row, rowNumber) => {
-    if (rows.length >= (config.limit ?? 10)) return;
-    const values = row.values.slice(1); // ExcelJS uses 1-based indexing
-    if (!headerProcessed) {
-      if (hasHeader) {
-        fields = values.map((v, i) => (v !== undefined && v !== null ? String(v) : `col_${i}`));
-        headerProcessed = true;
-        return;
-      } else {
-        fields = values.map((_, i) => `col_${i}`);
-        headerProcessed = true;
-      }
+  let fields = null;
+  let sheetName = null;
+  const sample = [];
+  let truncated = false;
+  for await (const { sheetName: name, values } of streamSheetRows(buffer, config, limits)) {
+    sheetName = name;
+    if (fields === null) {
+      fields = hasHeader ? headerFields(values) : values.map((_, i) => `col_${i}`);
+      if (hasHeader) continue;
     }
-    rows.push(values);
-  });
-
+    if (sample.length >= limit) {
+      truncated = true;
+      break;
+    }
+    sample.push(toRecord(fields, values));
+  }
   return {
-    fields,
-    sample: rows,
-    meta: {
-      sheetName: sheet.name,
-      rowCount: sheet.rowCount,
-      hasHeader,
-    },
+    fields: fields ?? [],
+    sample,
+    meta: { sheetName, rowCount: sample.length, hasHeader, truncated },
   };
+}
+
+function toRecord(fields, values) {
+  const record = {};
+  const width = Math.max(fields.length, values.length);
+  for (let i = 0; i < width; i += 1) {
+    const field = fields[i] ?? `col_${i}`;
+    record[field] = toPrimitive(values[i]);
+  }
+  return record;
 }
 
 /**
@@ -68,40 +181,24 @@ export async function previewXlsx(buffer, config = {}) {
  *
  * @param {Buffer} buffer
  * @param {Object} config - { hasHeader?: boolean, sheet?: string|number }
+ * @param {Object} [opts] - limit overrides (tests).
  * @returns {AsyncIterable<Object>}
+ * @throws {RowLimitError} when the sheet has more data rows than allowed.
  */
-export async function* createRowIterator(buffer, config = {}) {
-  const workbook = new ExcelJS.Workbook();
-  await workbook.xlsx.load(buffer);
-
-  const sheet = config.sheet !== undefined
-    ? (typeof config.sheet === 'string' ? workbook.getWorksheet(config.sheet) : workbook.getWorksheet(config.sheet))
-    : workbook.worksheets[0];
-
-  if (!sheet) throw new Error('Specified sheet not found');
-
+export async function* createRowIterator(buffer, config = {}, opts = {}) {
+  const limits = limitsFrom(opts);
   const hasHeader = config.hasHeader ?? true;
-  let fields = [];
-  let headerProcessed = false;
-
-  for (const row of sheet.getRows(1, sheet.rowCount)) {
-    const values = row.values.slice(1);
-    if (!headerProcessed) {
-      if (hasHeader) {
-        fields = values.map((v, i) => (v !== undefined && v !== null ? String(v) : `col_${i}`));
-      } else {
-        fields = values.map((_, i) => `col_${i}`);
-      }
-      headerProcessed = true;
-      continue;
+  let fields = null;
+  let rows = 0;
+  for await (const { values } of streamSheetRows(buffer, config, limits)) {
+    if (fields === null) {
+      fields = hasHeader ? headerFields(values) : values.map((_, i) => `col_${i}`);
+      if (hasHeader) continue;
     }
-    const record = {};
-    fields.forEach((field, i) => {
-      const val = values[i];
-      record[field] = val === undefined ? null : val;
-    });
-    yield record;
+    rows += 1;
+    if (rows > limits.maxRows) throw new RowLimitError(limits.maxRows);
+    yield toRecord(fields, values);
   }
 }
 
-export default { previewXlsx, createRowIterator };
+export default { previewXlsx, createRowIterator, toPrimitive };

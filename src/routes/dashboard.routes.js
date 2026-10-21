@@ -16,6 +16,8 @@
  *   - POST   /:id/duplicate              duplicate       dashboards.update
  *   - POST   /:id/share                  grant share     dashboards.update
  *   - DELETE /:id/share/:entryId         revoke share    dashboards.update
+ *   - GET    /:id/shares                 list shares     dashboards.view (+ owner/dashboards.assign)
+ *   - GET    /datasets/:datasetId/schema builder fields  dashboards.update + connectors.view
  *   - DELETE /:id                        soft-delete     dashboards.delete
  *   - GET    /:id/widgets                list widgets    dashboards.view
  *   - POST   /:id/widgets                create widget   dashboards.update
@@ -53,6 +55,9 @@ router.get('/:id', guarded('view'), dashboardController.getDashboard);
 router.patch('/:id', guarded('update', validate(dashboardValidator.dashboardUpdateSchema)), dashboardController.updateDashboard);
 router.post('/:id/publish', guarded('update'), dashboardController.publishDashboard);
 router.post('/:id/duplicate', guarded('update'), dashboardController.duplicateDashboard);
+// vizbuilder: share management + builder field list.
+router.get('/datasets/:datasetId/schema', guarded('update', permission('connectors', 'view')), dashboardController.getDatasetSchema);
+router.get('/:id/shares', guarded('view'), dashboardController.listShares);
 router.post('/:id/share', guarded('update', validate(dashboardValidator.shareSchema)), dashboardController.shareDashboard);
 router.delete('/:id/share/:entryId', guarded('update'), dashboardController.revokeShare);
 router.delete('/:id', guarded('delete'), dashboardController.deleteDashboard);

@@ -29,6 +29,7 @@ import { Permission } from '../models/Permission.js';
 import { RolePermission } from '../models/RolePermission.js';
 import { UserRole } from '../models/UserRole.js';
 import { AdminRole } from '../models/AdminRole.js';
+import { adminGrantTenantFilter } from './roleGrant.repository.js';
 
 /** Paginated module list. */
 export const listModules = async ({ filter = {}, page = 1, limit = 20 } = {}) => {
@@ -152,17 +153,22 @@ export const deletePermission = async (id, by) => {
  *
  *   actor (AdminRole | UserRole) -> roleIds -> RolePermission -> Permission.key
  *
- * Admins resolve their platform grants (`tenantId === null`) when no
- * tenant scope is supplied, or their grants scoped to a specific support
- * tenant when one is.
+ * Admins resolve their platform grants (`tenantId === null`) plus, when a
+ * tenant scope is supplied (the admin's `tenantScope`), the grants scoped to
+ * that tenant. `/admin-auth/me` and the permission middleware therefore see
+ * the same effective set; WHERE a scoped admin may act is enforced by
+ * `middleware/adminScope.middleware.js`, not here.
  *
  * @param {{ actorType: 'admin'|'user', actorId: string, tenantId?: string|null }} actor
  * @returns {Promise<Set<string>>}
  */
 export const resolvePermissionsForActor = async ({ actorType, actorId, tenantId = null }) => {
+  // Temporary grants stop counting the moment they expire; the TTL index
+  // only removes them later (and is not built until indexes are provisioned).
+  const live = { $or: [{ expiresAt: null }, { expiresAt: { $gt: new Date() } }] };
   const roleIds = actorType === 'admin'
-    ? (await AdminRole.find({ adminId: actorId, tenantId }).select('roleId').lean()).map((r) => r.roleId)
-    : (await UserRole.find({ tenantId, userId: actorId }).select('roleId').lean()).map((r) => r.roleId);
+    ? (await AdminRole.find({ adminId: actorId, tenantId: adminGrantTenantFilter(tenantId), ...live }).select('roleId').lean()).map((r) => r.roleId)
+    : (await UserRole.find({ tenantId, userId: actorId, ...live }).select('roleId').lean()).map((r) => r.roleId);
 
   if (roleIds.length === 0) return new Set();
 

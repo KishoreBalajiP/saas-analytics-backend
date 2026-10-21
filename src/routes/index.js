@@ -98,6 +98,47 @@ import adminSubscriptionRoutes from './admin-subscription.routes.js';
 import adminEntitlementRoutes from './admin-entitlement.routes.js';
 import billingWebhookRoutes from './billing-webhook.routes.js';
 
+// Phase 1 roadmap 1.2 - workspace self-service settings (time zone).
+import workspaceSettingsRoutes from './workspace-settings.routes.js';
+// rls: dataset grants, row-level security rules, user attributes.
+import dataAccessRoutes from './data-access.routes.js';
+// mfa-tenant: workspace security policy and Owner-assisted MFA reset.
+import workspaceSecurityRoutes from './workspace-security.routes.js';
+
+// reports: roadmap 1.5 - signed artefact downloads (report runs, analytics exports).
+import fileRoutes from './file.routes.js';
+
+// members: workspace members, roles, ownership and deletion (roadmap 2.10).
+import workspaceMembersRoutes from './workspace-members.routes.js';
+import adminTenantDeletionRoutes from './admin-tenant-deletion.routes.js';
+
+// support: workspace consent for support access + the support session itself (roadmap 2.3).
+import workspaceSupportRoutes from './workspace-support.routes.js';
+import supportSessionRoutes from './support-session.routes.js';
+
+// detection: platform security alerts (roadmap 2.6).
+import securityAlertRoutes from './security-alert.routes.js';
+
+// ai-catalogue: metric definitions (roadmap 4.A1).
+import metricRoutes from './metric.routes.js';
+
+// ai-ask: natural-language analytics (roadmap 4.A2).
+import aiRoutes from './ai.routes.js';
+
+// ai-insights: deterministic insights feed (roadmap 4.A3).
+import insightRoutes from './insight.routes.js';
+
+// observability: /metrics, /status, /client-errors (roadmap 2.8).
+import observabilityRoutes from './observability.routes.js';
+
+// backups: tenant data export (roadmap 2.9).
+import workspaceDataExportRoutes from './workspace-data-export.routes.js';
+import tenantDataExportRoutes from './tenant-data-export.routes.js';
+import dataExportDownloadRoutes from './data-export-download.routes.js';
+
+// delivery: roadmap 3.4 - destinations, delivery history, unsubscribe.
+import deliveryRoutes from './delivery.routes.js';
+
 const router = Router();
 
 // Phase 1 - retained mounts (kept first for stability)
@@ -111,6 +152,8 @@ router.use('/webhooks', webhookRoutes);
 
 // Sprint 9 - External API + API Keys
 router.use('/api-keys', apiKeyRoutes);
+// devapi: versioned mount (documented); `/external` stays as the legacy alias.
+router.use('/external/v1', externalApiRoutes);
 router.use('/external', externalApiRoutes);
 
 // Phase 1.2 - Platform Management surface (admin + tenant portals share
@@ -119,6 +162,10 @@ router.use('/admin-auth', adminAuthRoutes);
 router.use('/admin/dashboard', platformDashboardRoutes);
 router.use('/admin', adminRoutes);
 router.use('/tenants', tenantRoutes);
+// backups: platform tenant export routes must precede the `/tenants/:id`
+// workspace subscription router (its router-level authenticate rejects
+// admin tokens).
+router.use('/tenants/:id/data-exports', tenantDataExportRoutes);
 router.use('/roles', roleRoutes);
 router.use('/permissions', permissionRoutes);
 router.use('/master-data', masterDataRoutes);
@@ -146,5 +193,45 @@ router.use('/admin/plans', adminPlanRoutes);
 router.use('/admin/subscriptions', adminSubscriptionRoutes);
 router.use('/admin/entitlements', adminEntitlementRoutes);
 router.use('/billing/webhook', billingWebhookRoutes);
+
+// Phase 1 roadmap 1.2 - workspace self-service settings (time zone).
+router.use('/workspace/settings', workspaceSettingsRoutes);
+// rls: dataset access and row-level security administration.
+router.use('/data-access', dataAccessRoutes);
+// mfa-tenant: workspace security (MFA policy, member MFA status and reset).
+router.use('/workspace/security', workspaceSecurityRoutes);
+
+// detection: platform security alerts (roadmap 2.6).
+router.use('/admin/security-alerts', securityAlertRoutes);
+
+// support: workspace consent for support access + the support session itself (roadmap 2.3).
+router.use('/workspace/support-access', workspaceSupportRoutes);
+router.use('/support-session', supportSessionRoutes);
+
+// members: workspace members, roles, ownership and deletion (roadmap 2.10).
+router.use('/workspace', workspaceMembersRoutes);
+router.use('/admin/tenant-deletions', adminTenantDeletionRoutes);
+
+// reports: roadmap 1.5 - signed artefact downloads (token-gated, no session).
+router.use('/files', fileRoutes);
+
+// delivery: roadmap 3.4
+router.use('/delivery', deliveryRoutes);
+
+// backups: tenant data export (roadmap 2.9).
+router.use('/workspace/data-exports', workspaceDataExportRoutes);
+router.use('/data-exports', dataExportDownloadRoutes);
+
+// observability: /metrics (token), /status (public), /client-errors (public).
+router.use('/', observabilityRoutes);
+
+// ai-insights: deterministic insights feed (roadmap 4.A3).
+router.use('/insights', insightRoutes);
+
+// ai-ask: natural-language analytics (roadmap 4.A2).
+router.use('/ai', aiRoutes);
+
+// ai-catalogue: metric definitions (roadmap 4.A1).
+router.use('/metrics', metricRoutes);
 
 export default router;

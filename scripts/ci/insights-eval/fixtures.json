@@ -1,0 +1,14 @@
+{
+  "items": [
+    { "id": "pct", "cells": { "current": { "value": 880 }, "previous": { "value": 1000 } },
+      "claims": [ { "text": "Revenue fell 12% to 880 compared with 1000.", "cells": ["current", "previous"] } ], "expectKept": 1 },
+    { "id": "diff", "cells": { "current": { "value": 250 }, "previous": { "value": 200 } },
+      "claims": [ { "text": "Orders rose by 50.", "cells": ["current", "previous"] } ], "expectKept": 1 },
+    { "id": "invented", "cells": { "current": { "value": 250 }, "previous": { "value": 200 } },
+      "claims": [ { "text": "Orders rose by 73.", "cells": ["current", "previous"] } ], "expectKept": 0 },
+    { "id": "causal", "cells": { "current": { "value": 250 }, "previous": { "value": 200 } },
+      "claims": [ { "text": "Orders rose to 250 because of the campaign.", "cells": ["current"] } ], "expectKept": 0 },
+    { "id": "hedged", "cells": { "current": { "value": 250 } },
+      "claims": [ { "text": "A possible contributor is the campaign, which may have led to 250 orders.", "cells": ["current"], "label": "possible_explanation" } ], "expectKept": 1 }
+  ]
+}

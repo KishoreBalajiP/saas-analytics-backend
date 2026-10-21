@@ -23,23 +23,19 @@
  */
 
 import logger from '../utils/logger.js';
-import { createQueue, closeAll as closeAllQueues } from '../queues/index.js';
+import { createQueue, closeAll as closeAllQueues, getQueueStats as getAllQueueStats } from '../queues/index.js';
 import { QUEUE_NAMES } from '../queues/constants.js';
+import { QueueError, QUEUE_ERROR_CODES } from '../queues/errors.js';
 
 /** Per-process queue handle cache. */
 const handles = new Map();
 
 /**
- * Typed error so callers can map queue failures to HTTP responses.
+ * Typed error so callers can map queue failures to HTTP responses
+ * (`QUEUE_TIMEOUT` / `QUEUE_UNAVAILABLE` -> 503). Defined in
+ * `queues/errors.js`; re-exported here for feature code.
  */
-export class QueueError extends Error {
-  constructor(code, message) {
-    super(message);
-    this.name = 'QueueError';
-    this.code = code;
-    this.isOperational = true;
-  }
-}
+export { QueueError, QUEUE_ERROR_CODES };
 
 /* ------------------------------ primitives ------------------------------ */
 
@@ -52,7 +48,7 @@ export class QueueError extends Error {
  */
 export function getQueue(name, options = {}) {
   if (!name || typeof name !== 'string') {
-    throw new QueueError('INVALID_INPUT', 'getQueue requires a queue name');
+    throw new QueueError(QUEUE_ERROR_CODES.INVALID_INPUT, 'getQueue requires a queue name');
   }
   const cached = handles.get(name);
   if (cached && Object.keys(options).length === 0) return cached;
@@ -110,13 +106,27 @@ export function on(name, event, listener) {
 }
 
 /**
- * Close every queue handle this service has created.
+ * Close every queue handle this process has created. Consumers stop taking
+ * new jobs and in-flight jobs get up to `drainTimeoutMs` to finish.
  *
- * @returns {Promise<void>}
+ * @param {Object} [options]
+ * @param {number} [options.drainTimeoutMs=0]
+ * @returns {Promise<Array<{ name: string, transport: string, drained: boolean }>>}
  */
-export async function closeAll() {
+export async function closeAll({ drainTimeoutMs = 0 } = {}) {
   handles.clear();
-  await closeAllQueues();
+  return closeAllQueues({ drainTimeoutMs });
+}
+
+/**
+ * Per-queue counts for monitoring (bounded per queue).
+ *
+ * @param {Object} [options]
+ * @param {number} [options.timeoutMs]
+ * @returns {Promise<Array<Object>>}
+ */
+export function getQueueStats(options = {}) {
+  return getAllQueueStats(options);
 }
 
 /* ----------------------------- typed helpers ---------------------------- */
@@ -187,9 +197,12 @@ async function safe(op) {
     logger.debug({ queue: result?.name ?? 'unknown' }, 'queue enqueue');
     return result;
   } catch (err) {
-    if (err instanceof QueueError) throw err;
+    if (err instanceof QueueError) {
+      logger.error({ err: { message: err.message, code: err.code }, queue: err.queue }, 'queue operation failed');
+      throw err;
+    }
     logger.error({ err: { message: err?.message } }, 'queue operation failed');
-    throw new QueueError('QUEUE_OPERATION_FAILED', err?.message ?? 'Queue operation failed');
+    throw new QueueError(QUEUE_ERROR_CODES.UNAVAILABLE, 'The job queue is unavailable; please retry shortly', { cause: err });
   }
 }
 
@@ -200,6 +213,7 @@ export default {
   registerConsumer,
   on,
   closeAll,
+  getQueueStats,
   enqueueConnectorSync,
   enqueueEmail,
   enqueueAnalytics,

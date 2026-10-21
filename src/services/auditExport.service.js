@@ -10,8 +10,13 @@
  *   download the artifact via a short-lived URL.
  *
  * DESIGN CONSTRAINTS
- *   - Filters are sanitised ONCE at request time (`sanitizeAuditFilters`)
- *     so the consumer never re-trusts request-shaped input.
+ *   - Filters are sanitised ONCE at request time with the whitelist of the
+ *     export's kind (`sanitizeAuditFilters` for the audit trail,
+ *     `sanitizeAccessLogFilters` for access logs) so the consumer never
+ *     re-trusts request-shaped input and no supported filter is dropped.
+ *   - CSV rows carry the record id (`_id`) in the `id` column, and the
+ *     category, severity and chain position (`seq`, `hash`) so an export can
+ *     be checked against the live chain.
  *   - The export is bounded by `MAX_EXPORT_ROWS`; callers who need more
  *     should page with narrower filters.
  *   - A completed export writes a normal audit event (module `audit_logs`,
@@ -19,25 +24,41 @@
  */
 
 import { randomUUID } from 'node:crypto';
+import env from '../config/env.js';
 import ApiError from '../utils/ApiError.js';
+import clock from '../utils/clock.js';
+import { exportExpiredError, isPastExpiry } from '../utils/exportExpiry.js';
 import auditLogRepository from '../repositories/auditLog.repository.js';
 import auditExportRepository from '../repositories/auditExport.repository.js';
 import * as storageService from './storage.service.js';
 import * as queueService from './queue.service.js';
 import { QUEUE_NAMES } from '../queues/constants.js';
-import { sanitizeAuditFilters, buildAuditFilter } from '../utils/auditFilters.js';
+import { sanitizeAuditFilters, sanitizeAccessLogFilters, buildAuditFilter } from '../utils/auditFilters.js';
 import { emit as emitAudit } from './auditLog.service.js';
 
 /** Hard cap on exported rows per request. */
 export const MAX_EXPORT_ROWS = 10000;
-/** How long the stored artifact stays downloadable. */
-export const EXPORT_ARTIFACT_TTL_MS = 24 * 60 * 60 * 1000;
+/**
+ * How long the stored artifact stays downloadable (RETENTION_EXPORT_DAYS,
+ * default 1 day). After that status polls answer 410 and the cleanup job
+ * deletes the stored object.
+ */
+export const EXPORT_ARTIFACT_TTL_MS = (env.retention.exportDays > 0 ? env.retention.exportDays : 1) * 24 * 60 * 60 * 1000;
+
+export { exportExpiredError };
+
+/** Whether an export row is past its download window at `now`. */
+export function isExportExpired(row, now = clock.now()) {
+  if (!row) return false;
+  if (row.status === 'expired') return true;
+  return row.status === 'completed' && isPastExpiry(row.expiresAt, now);
+}
 
 const FORMATS = new Set(['json', 'csv']);
 const CSV_HEADER = [
   'id', 'occurredAt', 'actorType', 'actorId', 'actorDisplay', 'tenantId',
   'module', 'action', 'resourceType', 'resourceId', 'result', 'errorCode',
-  'ip', 'requestId', 'reason',
+  'ip', 'requestId', 'reason', 'category', 'severity', 'userAgent', 'seq', 'hash',
 ];
 
 /**
@@ -61,7 +82,7 @@ export async function requestExport({ kind = 'audit', tenantId = null, requested
     throw ApiError.badRequest('kind must be "audit" or "access-log"');
   }
 
-  const sanitised = sanitizeAuditFilters(filters);
+  const sanitised = kind === 'access-log' ? sanitizeAccessLogFilters(filters) : sanitizeAuditFilters(filters);
   const exportId = `exp_${randomUUID()}`;
 
   await auditExportRepository.create({
@@ -98,6 +119,9 @@ export async function getExportStatus({ exportId, tenantId = null } = {}) {
   }
   const row = await auditExportRepository.findByExportId(exportId, { tenantId });
   if (!row) throw ApiError.notFound('Audit export not found');
+  const now = clock.now();
+  // Past its window the export is gone: never sign a new URL for it.
+  if (isExportExpired(row, now)) throw exportExpiredError(row.expiresAt);
 
   const status = {
     exportId: row.exportId,
@@ -113,8 +137,12 @@ export async function getExportStatus({ exportId, tenantId = null } = {}) {
   };
 
   if (row.status === 'completed' && row.storageKey) {
+    // The signed URL never outlives the export itself.
+    const remainingSec = row.expiresAt
+      ? Math.floor((new Date(row.expiresAt).getTime() - now.getTime()) / 1000)
+      : Math.floor(EXPORT_ARTIFACT_TTL_MS / 1000);
     const downloadUrl = await storageService.presignedUrl(row.storageKey, {
-      ttlSec: Math.floor(EXPORT_ARTIFACT_TTL_MS / 1000),
+      ttlSec: Math.max(1, Math.min(Math.floor(EXPORT_ARTIFACT_TTL_MS / 1000), remainingSec)),
     });
     status.downloadUrl = downloadUrl;
     status.fileName = row.fileName ?? null;
@@ -143,7 +171,9 @@ export async function processExport({ exportId } = {}) {
   }
 
   try {
-    const filter = buildAuditFilter({ ...(row.filters ?? {}), tenantId: row.tenantId ?? undefined });
+    // A tenant-scoped export is pinned to its tenant; a platform export may
+    // still filter by tenant.
+    const filter = buildAuditFilter({ ...(row.filters ?? {}), tenantId: row.tenantId ?? row.filters?.tenantId ?? undefined });
     const rows = await collectRows(filter);
     const format = row.format === 'csv' ? 'csv' : 'json';
     const ext = format === 'csv' ? 'csv' : 'json';
@@ -159,7 +189,7 @@ export async function processExport({ exportId } = {}) {
         generatedAt: new Date().toISOString(),
         filters: row.filters ?? {},
         count: rows.length,
-        rows,
+        rows: rows.map((r) => ({ id: String(r._id), ...r })),
       });
     }
 
@@ -167,7 +197,7 @@ export async function processExport({ exportId } = {}) {
       storageKey,
       fileName,
       recordCount: rows.length,
-      expiresAt: new Date(Date.now() + EXPORT_ARTIFACT_TTL_MS),
+      expiresAt: new Date(clock.now().getTime() + EXPORT_ARTIFACT_TTL_MS),
     });
 
     await emitAudit({
@@ -186,6 +216,51 @@ export async function processExport({ exportId } = {}) {
     await auditExportRepository.markFailed(exportId, err?.message ?? 'Export failed');
     throw err;
   }
+}
+
+/**
+ * Delete the stored artefacts of exports past their download window and mark
+ * the rows `expired` (cleanup job). Rows stay so a late poll gets 410; the
+ * retention policy deletes them after RETENTION_EXPORT_RECORD_DAYS.
+ *
+ * @param {Object} [opts]
+ * @param {Date} [opts.now]
+ * @param {boolean} [opts.dryRun=false] - only count.
+ * @param {number} [opts.batchSize=500]
+ * @param {number} [opts.maxBatches=200]
+ * @param {string[]} [opts.excludeTenantIds=[]] - tenants under legal hold.
+ * @returns {Promise<{ matched: number, expired: number, objectsDeleted: number, failed: number }>}
+ */
+export async function expireArtifacts({ now = clock.now(), dryRun = false, batchSize = 500, maxBatches = 200, excludeTenantIds = [] } = {}) {
+  if (dryRun) {
+    const matched = await auditExportRepository.countExpiredArtifacts({ now, excludeTenantIds });
+    return { matched, expired: 0, objectsDeleted: 0, failed: 0 };
+  }
+  const out = { matched: 0, expired: 0, objectsDeleted: 0, failed: 0 };
+  for (let batch = 0; batch < maxBatches; batch += 1) {
+    const rows = await auditExportRepository.findExpiredArtifacts({ now, limit: batchSize, excludeTenantIds });
+    if (rows.length === 0) break;
+    out.matched += rows.length;
+    let batchFailed = 0;
+    for (const row of rows) {
+      if (row.storageKey) {
+        try {
+          await storageService.del(row.storageKey);
+          out.objectsDeleted += 1;
+        } catch {
+          // Keep the row as it is so the next run retries the delete.
+          out.failed += 1;
+          batchFailed += 1;
+          continue;
+        }
+      }
+      if (await auditExportRepository.markExpired(row.exportId, { now })) out.expired += 1;
+    }
+    // A failed row would be returned again by the next batch: stop here and
+    // let the next run retry it.
+    if (rows.length < batchSize || batchFailed > 0) break;
+  }
+  return out;
 }
 
 /* ------------------------------ internals -------------------------------- */
@@ -215,11 +290,19 @@ async function collectRows(filter) {
   return rows;
 }
 
+/** CSV cell value: `id` is the row's `_id`; legacy rows count as `change`. */
+function csvValue(row, field) {
+  if (field === 'id') return row._id != null ? String(row._id) : '';
+  if (field === 'category') return row.category ?? 'change';
+  if (field === 'occurredAt' && row.occurredAt instanceof Date) return row.occurredAt.toISOString();
+  return row[field] ?? '';
+}
+
 /** Serialise rows to CSV with a stable header and RFC-4180 quoting. */
 function toCsv(rows) {
   const lines = [CSV_HEADER.join(',')];
   for (const row of rows) {
-    lines.push(CSV_HEADER.map((field) => escapeCsv(row[field] ?? '')).join(','));
+    lines.push(CSV_HEADER.map((field) => escapeCsv(csvValue(row, field))).join(','));
   }
   return lines.join('\n');
 }
@@ -233,6 +316,9 @@ export default {
   requestExport,
   getExportStatus,
   processExport,
+  expireArtifacts,
+  isExportExpired,
+  exportExpiredError,
   MAX_EXPORT_ROWS,
   EXPORT_ARTIFACT_TTL_MS,
 };

@@ -16,8 +16,9 @@
  *     `RolePermission` join rows so membership never mutates a Role doc.
  *
  * INDEXES
- *   - unique sparse({ tenantId: 1, name: 1 }) - a role name is unique per
- *     scope (platform or tenant). This supersedes the earlier
+ *   - unique partial({ tenantId: 1, name: 1 }) over live rows (`deletedAt:
+ *     null`) - a role name is unique per scope (platform or tenant) and a
+ *     deleted role's name can be reused (roadmap 2.10, db.07). This supersedes the earlier
  *     `{ level, name }` plan because `{ level, name }` would collide
  *     across tenants (two tenants may both define a role named `analyst`).
  *   - { level: 1 }
@@ -51,8 +52,12 @@ const roleSchema = new mongoose.Schema(
   { timestamps: true },
 );
 
-// A role name is unique per scope (platform or tenant), never global.
-roleSchema.index({ tenantId: 1, name: 1 }, { unique: true, sparse: true });
+// A role name is unique per scope (platform or tenant), never global, and
+// only among live rows so a deleted role's name can be created again.
+roleSchema.index(
+  { tenantId: 1, name: 1 },
+  { unique: true, partialFilterExpression: { deletedAt: null } },
+);
 
 // Level and tenantId are two views of the same fact; keep them in sync.
 roleSchema.pre('validate', function validateRoleScope(next) {

@@ -61,7 +61,9 @@ test('loginSchema accepts an optional 6-digit mfaToken but rejects bad ones', ()
 test('refreshSchema and logoutSchema allow an empty body (token comes via cookie)', () => {
   assert.equal(run(refreshSchema, {}).error, undefined);
   assert.equal(run(logoutSchema, {}).error, undefined);
-  assert.equal(run(refreshSchema, { refreshToken: 'abc' }).req.validated.body.refreshToken, 'abc');
+  // A body token is dropped: the refresh credential is cookie-only.
+  assert.equal(run(refreshSchema, { refreshToken: 'abc' }).req.validated.body.refreshToken, undefined);
+  assert.equal(run(logoutSchema, { refreshToken: 'abc' }).req.validated.body.refreshToken, undefined);
 });
 
 test('forgotPasswordSchema requires a valid email', () => {

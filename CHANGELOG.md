@@ -7,6 +7,19 @@ here. Dates are ISO 8601.
 
 ## [Unreleased] - Phase 2
 
+### Roadmap 2.6 — Platform security detection (detection)
+
+- 15 versioned detection rules over LoginAttempt, security events, the
+  access trace, exports, sync runs, request signals and queue health
+  (`src/services/securityDetection/`), run every 5 minutes by the
+  `security-detection` job with per-rule watermarks.
+- `SecurityAlert` with dedupe, severity escalation, false-positive
+  suppression, evidence references and audit-policy retention; on-call
+  notification for high-severity alerts through the delivery pipeline.
+- `/api/v1/admin/security-alerts` (list, evidence, acknowledge, false
+  positive, resolve, rule catalogue) behind `security.alerts.view/update`.
+- See `src/docs/backend/security-detection.md`.
+
 ### Sprint 9 — External API + API Keys + Embed + Product Delivery (close: 2026-08-16)
 
 Sprint 9 ships the **external-facing product surface** and completes the

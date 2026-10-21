@@ -24,6 +24,11 @@ import {
 } from '../../src/validators/permission.validator.js';
 import {
   createAdminSchema,
+  invitationAcceptSchema,
+  stepUpSchema,
+  credentialResetSchema,
+  loginSchema,
+  mfaDisableSchema,
   updateAdminSchema,
   suspendSchema,
   restoreSchema,
@@ -128,13 +133,34 @@ test('permission listSchema accepts filter query params', () => {
 // admin validator
 // ---------------------------------------------------------------------------
 
-test('createAdminSchema requires email + strong password', () => {
-  assert.equal(run(createAdminSchema, { body: { email: 'a@b.com', password: 'longenough' } }).error, undefined);
-  assert.ok(run(createAdminSchema, { body: { email: 'a@b.com' } }).error);
-  const short = run(createAdminSchema, { body: { email: 'a@b.com', password: 'short' } });
-  assert.ok(short.error.errors.some((e) => e.field === 'password'));
-  const badType = run(createAdminSchema, { body: { email: 'a@b.com', password: 'longenough', adminType: 'ceo' } });
+// adminauth (adm.09): admins are invited by email; the inviter never types
+// a password, so `password` (and `status`) are dropped from the body.
+test('createAdminSchema (invite) requires an email and drops any password', () => {
+  const ok = run(createAdminSchema, { body: { email: 'a@b.com', password: 'longenough', status: 'active' } });
+  assert.equal(ok.error, undefined);
+  assert.equal(ok.req.validated.body.password, undefined, 'a typed password is never accepted');
+  assert.equal(ok.req.validated.body.status, undefined, 'status is not chosen by the inviter');
+  assert.ok(run(createAdminSchema, { body: {} }).error);
+  assert.ok(run(createAdminSchema, { body: { email: 'not-an-email' } }).error);
+  const badType = run(createAdminSchema, { body: { email: 'a@b.com', adminType: 'ceo' } });
   assert.ok(badType.error.errors.some((e) => e.field === 'adminType'));
+});
+
+test('adminauth schemas: invitation accept, step-up, credential reset, login recovery code', () => {
+  const token = 'x'.repeat(43);
+  assert.equal(run(invitationAcceptSchema, { body: { token, password: 'longenough' } }).error, undefined);
+  assert.ok(run(invitationAcceptSchema, { body: { token, password: 'short' } }).error.errors.some((e) => e.field === 'password'));
+  assert.ok(run(invitationAcceptSchema, { body: { token: 'short', password: 'longenough' } }).error);
+  assert.equal(run(stepUpSchema, { body: { password: 'pw', code: '123456' } }).error, undefined);
+  assert.ok(run(stepUpSchema, { body: { password: 'pw', code: '12345' } }).error);
+  assert.ok(run(stepUpSchema, { body: { code: '123456' } }).error, 'password required');
+  assert.equal(run(stepUpSchema, { body: { password: 'pw', recoveryCode: 'abcd-efgh-jkmn-pqrs' } }).error, undefined);
+  assert.ok(run(stepUpSchema, { body: { password: 'pw', recoveryCode: '<script>alert(1)</script>' } }).error);
+  assert.equal(run(credentialResetSchema, { params: { id: OID }, body: { reason: 'lost phone' } }).error, undefined);
+  assert.ok(run(credentialResetSchema, { params: { id: OID }, body: {} }).error, 'reason required');
+  assert.ok(run(credentialResetSchema, { params: { id: BAD_OID }, body: { reason: 'lost phone' } }).error);
+  assert.equal(run(loginSchema, { body: { email: 'a@b.com', password: 'pw', recoveryCode: 'ABCD-EFGH-JKMN-PQRS' } }).error, undefined);
+  assert.equal(run(mfaDisableSchema, { body: { password: 'pw', recoveryCode: 'ABCD-EFGH-JKMN-PQRS' } }).error, undefined);
 });
 
 test('updateAdminSchema requires an id param', () => {

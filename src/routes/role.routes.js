@@ -16,7 +16,8 @@
  *   - DELETE /:id/permissions       - revoke a permission (by key)
  *
  * MIDDLEWARE ORDER
- *   adminAuth -> permission(<module.action>) -> validate -> handler
+ *   adminAuth -> permission(<module.action>) -> adminScope.platform()
+ *   -> validate -> handler (tenant-scoped admins are refused)
  *
  * HOW TO EXTEND
  *   - Role assignment NEVER edits a Permission; it edits the join row.
@@ -28,17 +29,18 @@ import { Router } from 'express';
 import { validate } from '../validators/index.js';
 import { adminAuth } from '../middleware/adminAuth.middleware.js';
 import { permission } from '../middleware/permission.middleware.js';
+import { adminScope } from '../middleware/adminScope.middleware.js';
 import roleValidator from '../validators/role.validator.js';
 import roleController from '../controllers/role.controller.js';
 
 const router = Router();
 
-router.get('/', adminAuth, permission('iam.roles', 'view'), validate(roleValidator.listSchema), roleController.listRoles);
-router.post('/', adminAuth, permission('iam.roles', 'create'), validate(roleValidator.createRoleSchema), roleController.createRole);
-router.get('/:id', adminAuth, permission('iam.roles', 'view'), roleController.getRole);
-router.patch('/:id', adminAuth, permission('iam.roles', 'update'), validate(roleValidator.updateRoleSchema), roleController.updateRole);
-router.delete('/:id', adminAuth, permission('iam.roles', 'delete'), roleController.deleteRole);
-router.post('/:id/permissions', adminAuth, permission('iam.roles', 'assign'), validate(roleValidator.addPermissionSchema), roleController.addPermissionToRole);
-router.delete('/:id/permissions', adminAuth, permission('iam.roles', 'assign'), validate(roleValidator.removePermissionSchema), roleController.removePermissionFromRole);
+router.get('/', adminAuth, permission('iam.roles', 'view'), adminScope.platform(), validate(roleValidator.listSchema), roleController.listRoles);
+router.post('/', adminAuth, permission('iam.roles', 'create'), adminScope.platform(), validate(roleValidator.createRoleSchema), roleController.createRole);
+router.get('/:id', adminAuth, permission('iam.roles', 'view'), adminScope.platform(), roleController.getRole);
+router.patch('/:id', adminAuth, permission('iam.roles', 'update'), adminScope.platform(), validate(roleValidator.updateRoleSchema), roleController.updateRole);
+router.delete('/:id', adminAuth, permission('iam.roles', 'delete'), adminScope.platform(), roleController.deleteRole);
+router.post('/:id/permissions', adminAuth, permission('iam.roles', 'assign'), adminScope.platform(), validate(roleValidator.addPermissionSchema), roleController.addPermissionToRole);
+router.delete('/:id/permissions', adminAuth, permission('iam.roles', 'assign'), adminScope.platform(), validate(roleValidator.removePermissionSchema), roleController.removePermissionFromRole);
 
 export default router;

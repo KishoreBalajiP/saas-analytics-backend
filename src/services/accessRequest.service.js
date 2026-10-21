@@ -1,9 +1,22 @@
+/**
+ * Access Request Service.
+ *
+ * Anonymous visitors request access to a workspace; platform admins review
+ * the queue and approve (an invitation into an existing active tenant) or
+ * reject. Authorization is enforced on the routes by explicit permission
+ * keys (`iam.access_requests.view` / `.approve`, roadmap 2.1) rather than by
+ * `adminType`, and approval may only invite with a role from
+ * `APPROVABLE_ROLES` so a reviewer can never mint an Owner or Admin.
+ */
+
 import { randomBytes } from 'node:crypto';
 import AccessRequest from '../models/AccessRequest.js';
 import ApiError from '../utils/ApiError.js';
 import tenantInvitationService from './tenantInvitation.service.js';
 import tenantRepository from '../repositories/tenant.repository.js';
-import adminRepository from '../repositories/admin.repository.js';
+
+/** Tenant roles an access-request approval may invite with. */
+export const APPROVABLE_ROLES = Object.freeze(['Viewer', 'Manager']);
 
 function safe(row) {
   return {
@@ -43,13 +56,15 @@ export async function list({ status = 'pending', page = 1, limit = 20 } = {}) {
   return { docs: rows.map(safe), page, limit, total, pages: Math.ceil(total / limit) || 1 };
 }
 
-export async function assertPlatformAdmin(admin) {
-  const account = admin?.id ? await adminRepository.findById(admin.id) : null;
-  if (!account || !['super', 'platform'].includes(account.adminType)) throw ApiError.forbidden('Platform administrator access is required');
+function requireReviewer(admin) {
+  if (!admin?.id) throw ApiError.forbidden('Platform administrator access is required');
 }
 
 export async function approve({ id, tenantId, roleName = 'Viewer', note = '', admin }) {
-  await assertPlatformAdmin(admin);
+  requireReviewer(admin);
+  if (!APPROVABLE_ROLES.includes(roleName)) {
+    throw ApiError.badRequest(`roleName must be one of ${APPROVABLE_ROLES.join(', ')}`);
+  }
   const row = await AccessRequest.findById(id);
   if (!row) throw ApiError.notFound('Access request not found');
   if (row.status !== 'pending') throw ApiError.conflict('Access request has already been decided');
@@ -67,7 +82,7 @@ export async function approve({ id, tenantId, roleName = 'Viewer', note = '', ad
 }
 
 export async function reject({ id, note = '', admin }) {
-  await assertPlatformAdmin(admin);
+  requireReviewer(admin);
   const row = await AccessRequest.findById(id);
   if (!row) throw ApiError.notFound('Access request not found');
   if (row.status !== 'pending') throw ApiError.conflict('Access request has already been decided');
@@ -76,4 +91,4 @@ export async function reject({ id, note = '', admin }) {
   return safe(row);
 }
 
-export default { submit, list, approve, reject, assertPlatformAdmin };
+export default { submit, list, approve, reject, APPROVABLE_ROLES };

@@ -147,6 +147,10 @@ request is rejected with 503 (configurable to fail-open for reads).
 - Cache layer MUST be enabled for any route mounting the middleware.
 - 64 KiB cap per stored outcome prevents cache fill by large payloads.
 - Coalescing handles concurrent retries for the same key.
+- Amended by roadmap 1.12: mounted in `authenticate` / `adminAuth` for
+  authenticated mutations carrying `X-Idempotency-Key`, header-only keys
+  scoped by actor + tenant + method + path, encrypted 2xx outcomes, fail-open
+  on that mount (see `adr/ADR-008-idempotency-middleware.md`).
 
 ## ADR-009: Service-wrapper abstraction for infrastructure
 

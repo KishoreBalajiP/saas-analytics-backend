@@ -30,6 +30,9 @@ export function validateCreateApiKey(body) {
       errors.push({ field: 'expiresAt', message: 'expiresAt must be a valid ISO-8601 date' });
     }
   }
+  if (body.ipAllowList !== undefined && body.ipAllowList !== null && !Array.isArray(body.ipAllowList)) {
+    errors.push({ field: 'ipAllowList', message: 'ipAllowList must be an array' });
+  }
   return { valid: errors.length === 0, errors };
 }
 

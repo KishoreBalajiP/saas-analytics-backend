@@ -221,10 +221,12 @@ test('assignRole/revokeRole reflect in admin permission resolution', async () =>
     await permissionService.resolveActorPermissions({ actorType: 'admin', actorId: admin._id, tenantId: null }),
     ['iam.users.update'],
   );
-  // Platform grants must not leak into a tenant scope.
+  // Roadmap 2.1: an admin scoped to a tenant keeps its platform grants
+  // (the scope confines WHERE it acts, enforced by adminScope middleware),
+  // so /admin-auth/me and the permission middleware resolve the same set.
   assert.deepEqual(
     await permissionService.resolveActorPermissions({ actorType: 'admin', actorId: admin._id, tenantId: 't1' }),
-    [],
+    ['iam.users.update'],
   );
 
   await adminService.revokeRole({ adminId: admin._id, roleId: platformRole._id });

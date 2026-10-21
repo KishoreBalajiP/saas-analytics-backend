@@ -6,8 +6,10 @@
  *   (missed deliveries, deploys during payment, dashboard replays).
  *
  * RESPONSIBILITY
- *   Sweep bounded pending-transaction batches through
- *   `billingReconcile.service.reconcilePending`. Disabled by default
+ *   Sweep bounded batches through `billingReconcile.service.reconcilePending`:
+ *   open checkouts in order of their next check (with backoff, stale ones
+ *   expired), captured-but-unapplied transactions, and unfinished stored
+ *   webhook events (billing, roadmap 3.1). Disabled by default
  *   (`JOB_BILLING_RECONCILE_ENABLED=false`); enable per environment in
  *   `.env.example`. No-op when Razorpay itself is disabled.
  *
@@ -34,5 +36,6 @@ export default {
     }
     const result = await billingReconcileService.reconcilePending({ by: 'scheduler' });
     logger.info({ result }, 'Billing reconcile job executed');
+    return result;
   },
 };

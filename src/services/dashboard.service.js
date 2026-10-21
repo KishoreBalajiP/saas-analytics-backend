@@ -21,11 +21,26 @@
  *     dataset connector; `viewDashboard` runs every widget and reports
  *     partial failures per-widget.
  *
+ * QUERY CONTRACT
+ *   Widget queries, dashboard default filters and view-time overrides are
+ *   validated by the analytics engine's strict contract
+ *   (`analytics.engine.validateQuery`): unknown or invalid parts are a 400
+ *   INVALID_QUERY with field errors (`query.filters[0].op`,
+ *   `filters.dateRange.field`, ...), never silently dropped. Relative date
+ *   presets are stored as presets and resolved at execution time in the
+ *   workspace time zone.
+ *
+ * PRECEDENCE
+ *   dateRange: view override > widget query > dashboard default.
+ *   filters:   widget query (with its own filtersOp) > dashboard default;
+ *              view-time override filters NARROW the result (AND-ed group).
+ *
  * CACHE POLICY
- *   The analytics cache key encodes the effective query PLUS the widget and
- *   dashboard identities and their `updatedAt` revisions. Editing a widget
- *   (or its dashboard filters) therefore immediately busts its cached
- *   results; underlying data changes still honour the analytics TTL.
+ *   The analytics cache key encodes the prepared query (absolute window,
+ *   time zone), the dataset version of the widget's connector, and the
+ *   widget and dashboard identities and `updatedAt` revisions. Editing a
+ *   widget (or its dashboard filters) or syncing its dataset therefore
+ *   immediately busts its cached results.
  *   History persistence (AnalyticsQuery) is deliberately NOT written for
  *   widget reads - only explicit `/analytics` runs create history.
  *
@@ -44,8 +59,10 @@ import usageService from './usage.service.js';
 import {
   Dashboard,
   DASHBOARD_STATUSES,
-  DATE_RANGE_PRESETS,
   DASHBOARD_LIMITS,
+  DASHBOARD_VISIBILITY,
+  SHARE_LEVELS,
+  SHARE_PRINCIPALS,
 } from '../models/Dashboard.js';
 import { WIDGET_TYPES, WIDGET_LIMITS, QUERY_FIELDS } from '../models/Widget.js';
 import dashboardRepository from '../repositories/dashboard.repository.js';
@@ -54,8 +71,19 @@ import connectorRepository from '../repositories/connector.repository.js';
 import * as auditLogService from './auditLog.service.js';
 import * as analyticsCache from './analytics.cache.js';
 import * as engine from './analytics.engine.js';
+// vizbuilder: visualization spec, dataset schema contract, share principals.
+import { validateVisualization, resolveVisualization } from './visualizationSpec.js';
+import * as datasetSchemaService from './datasetSchema.service.js';
+import { UserRole } from '../models/UserRole.js';
+import { Role } from '../models/Role.js';
+import { User } from '../models/User.js';
+// ai-catalogue: P7 attribution of computed widget runs.
+import { recordRun } from './queryAttribution.service.js';
 
 const { MAX_WIDGETS_PER_DASHBOARD, MAX_WIDGETS_EXECUTED_PER_REQUEST, WIDGET_CACHE_TTL_SEC } = DASHBOARD_LIMITS;
+
+/** Widgets of one dashboard view executed at the same time. */
+const VIEW_CONCURRENCY = 4;
 
 /* ------------------------------ helpers ---------------------------------- */
 
@@ -67,10 +95,6 @@ function clampInt(value, fallback, min, max) {
 
 function escapeRegExp(value) {
   return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-function isValidDate(value) {
-  return value !== undefined && value !== null && !Number.isNaN(new Date(value).getTime());
 }
 
 /** Audit a dashboard-domain event. Best-effort: never throw into the caller. */
@@ -98,36 +122,17 @@ function sanitizeLayout(layout) {
   };
 }
 
-function sanitizeDateRange(dateRange) {
-  if (dateRange === undefined || dateRange === null) return null;
-  if (typeof dateRange !== 'object' || Array.isArray(dateRange)) {
-    throw ApiError.badRequest('dateRange must be an object');
-  }
-  const preset = DATE_RANGE_PRESETS.includes(dateRange.preset) ? dateRange.preset : null;
-  if (!preset) throw ApiError.badRequest(`dateRange.preset must be one of ${DATE_RANGE_PRESETS.join(', ')}`);
-  if (preset === 'custom' && (!isValidDate(dateRange.from) || !isValidDate(dateRange.to))) {
-    throw ApiError.badRequest('custom date range requires valid from and to dates');
-  }
-  const out = { preset };
-  if (dateRange.from !== undefined) out.from = dateRange.from;
-  if (dateRange.to !== undefined) out.to = dateRange.to;
-  return out;
+/**
+ * Validate a filter envelope `{ dateRange?, filters?, filtersOp? }` (dashboard
+ * defaults, view overrides) against the engine contract. Presets are kept.
+ */
+export function sanitizeFilterEnvelope(envelope, prefix = 'filters.') {
+  if (envelope === undefined || envelope === null) return envelope;
+  return engine.validateQuery(envelope, { keys: engine.FILTER_ENVELOPE_KEYS, prefix });
 }
 
 function sanitizeFilters(filters) {
-  if (filters === undefined || filters === null) return filters;
-  if (typeof filters !== 'object' || Array.isArray(filters)) throw ApiError.badRequest('filters must be an object');
-  const out = {};
-  if (filters.dateRange !== undefined) out.dateRange = sanitizeDateRange(filters.dateRange);
-  if (filters.filters !== undefined) {
-    if (!Array.isArray(filters.filters)) throw ApiError.badRequest('filters.filters must be an array');
-    out.filters = filters.filters;
-  }
-  if (filters.filtersOp !== undefined) {
-    if (!['and', 'or'].includes(filters.filtersOp)) throw ApiError.badRequest('filtersOp must be "and" or "or"');
-    out.filtersOp = filters.filtersOp;
-  }
-  return out;
+  return sanitizeFilterEnvelope(filters, 'filters.');
 }
 
 function sanitizeRefresh(refresh) {
@@ -155,19 +160,14 @@ function sanitizePosition(position) {
   };
 }
 
-/** Whitelist a widget's analytics query to the safe contract fields. */
+/**
+ * Validate a widget's analytics query against the engine contract (the
+ * `QUERY_FIELDS` subset: the dataset comes from `datasetId`). Unknown keys
+ * and invalid parts are a 400 with `query.`-prefixed field errors.
+ */
 function sanitizeWidgetQuery(query) {
   if (query === undefined || query === null) return query;
-  if (typeof query !== 'object' || Array.isArray(query)) throw ApiError.badRequest('query must be an object');
-  const out = {};
-  for (const key of QUERY_FIELDS) {
-    if (query[key] !== undefined) out[key] = query[key];
-  }
-  if (out.filtersOp !== undefined && !['and', 'or'].includes(out.filtersOp)) {
-    throw ApiError.badRequest('query.filtersOp must be "and" or "or"');
-  }
-  if (out.dateRange !== undefined) out.dateRange = sanitizeDateRange(out.dateRange);
-  return out;
+  return engine.validateQuery(query, { keys: QUERY_FIELDS, prefix: 'query.' });
 }
 
 function sanitizeWidgetPatch(patch = {}) {
@@ -184,7 +184,7 @@ function sanitizeWidgetPatch(patch = {}) {
   }
   if (patch.datasetId !== undefined) out.datasetId = patch.datasetId;
   if (patch.query !== undefined) out.query = sanitizeWidgetQuery(patch.query);
-  if (patch.visualization !== undefined) out.visualization = patch.visualization;
+  if (patch.visualization !== undefined) out.visualization = patch.visualization ?? {};
   if (patch.position !== undefined) out.position = sanitizePosition(patch.position);
   return out;
 }
@@ -210,80 +210,182 @@ function sanitizeDashboardPatch(patch = {}) {
   if (patch.layout !== undefined) out.layout = sanitizeLayout(patch.layout);
   if (patch.filters !== undefined) out.filters = sanitizeFilters(patch.filters);
   if (patch.refresh !== undefined) out.refresh = sanitizeRefresh(patch.refresh);
+  if (patch.visibility !== undefined) {
+    if (!DASHBOARD_VISIBILITY.includes(patch.visibility)) throw ApiError.badRequest(`visibility must be one of ${DASHBOARD_VISIBILITY.join(', ')}`);
+    out.visibility = patch.visibility;
+  }
   return out;
 }
 
-/** Resolve a date-range preset (or explicit range) into `{ from, to }` ISO strings. */
-function resolveDateRange(dateRange, now = new Date()) {
-  if (!dateRange || typeof dateRange !== 'object') return null;
-  const { preset, from, to } = dateRange;
-  if (!preset) return { from: from ?? null, to: to ?? null };
-  const startOfDay = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
-  const endOfDay = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999);
-  switch (preset) {
-    case 'today':
-      return { from: startOfDay(now).toISOString(), to: endOfDay(now).toISOString() };
-    case 'yesterday': {
-      const day = new Date(now);
-      day.setDate(day.getDate() - 1);
-      return { from: startOfDay(day).toISOString(), to: endOfDay(day).toISOString() };
-    }
-    case 'last_7_days': {
-      const from = new Date(now);
-      from.setDate(from.getDate() - 6);
-      return { from: startOfDay(from).toISOString(), to: endOfDay(now).toISOString() };
-    }
-    case 'last_30_days': {
-      const from = new Date(now);
-      from.setDate(from.getDate() - 29);
-      return { from: startOfDay(from).toISOString(), to: endOfDay(now).toISOString() };
-    }
-    case 'this_month':
-      return {
-        from: new Date(now.getFullYear(), now.getMonth(), 1).toISOString(),
-        to: new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999).toISOString(),
-      };
-    case 'previous_month':
-      return {
-        from: new Date(now.getFullYear(), now.getMonth() - 1, 1).toISOString(),
-        to: new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999).toISOString(),
-      };
-    case 'custom':
-      return { from: from ?? null, to: to ?? null };
-    default:
-      return null;
-  }
-}
+/* ------------------------ vizbuilder: widget checks ------------------------ */
+
+const TOP_LEVEL_QUERY_FIELDS = new Set(['connectorId', 'ingestedAt', 'sourceRowId']);
+const NON_NUMERIC_TYPES = new Set(['date', 'datetime', 'boolean']);
 
 /**
- * Merge dashboard default filters + the widget's query + request overrides
- * into the effective engine parameters. Precedence: request overrides >
- * widget query > dashboard defaults.
+ * Check every field and aggregation of a widget query against the dataset
+ * schema (contract owner: datasets). Unknown fields and numeric aggregations
+ * over non-numeric columns are field errors. Skipped when no schema / no
+ * profiled fields exist yet (a dataset that has not synced).
  */
-function buildWidgetParams({ widget, dashboard, overrides = {} }) {
-  const widgetQuery = widget.query && typeof widget.query === 'object' && !Array.isArray(widget.query) ? widget.query : {};
-  const dashboardFilters = dashboard?.filters && typeof dashboard.filters === 'object' ? dashboard.filters : {};
+async function assertQueryMatchesSchema(tenantId, datasetId, query) {
+  if (!query) return;
+  const schema = await datasetSchemaService.getSchema({ tenantId, connectorId: String(datasetId) });
+  if (!schema || !Array.isArray(schema.fields) || !schema.fields.length) return;
+  const types = new Map(schema.fields.map((f) => [f.name, f.type]));
+  const errors = [];
+  const check = (field, at) => {
+    if (field === undefined || field === null || TOP_LEVEL_QUERY_FIELDS.has(field)) return;
+    if (!types.has(field)) errors.push({ field: at, message: `"${field}" is not a field of this dataset` });
+  };
+  (query.filters ?? []).forEach((f, i) => check(f?.field, `query.filters[${i}].field`));
+  (query.groupBy ?? []).forEach((g, i) => check(typeof g === 'string' ? g : g?.field, `query.groupBy[${i}].field`));
+  if (query.dateRange?.field) check(query.dateRange.field, 'query.dateRange.field');
+  (query.metrics ?? []).forEach((m, i) => {
+    if (!m?.field) return;
+    check(m.field, `query.metrics[${i}].field`);
+    if (['sum', 'avg', 'min', 'max'].includes(m.op) && NON_NUMERIC_TYPES.has(types.get(m.field))) {
+      errors.push({ field: `query.metrics[${i}].op`, message: `${m.op} needs a numeric field ("${m.field}" is ${types.get(m.field)})` });
+    }
+  });
+  if (errors.length) throw new ApiError(400, 'Invalid analytics query', { code: engine.QUERY_ERROR_CODES.INVALID_QUERY, errors });
+}
 
+/* ------------------------- vizbuilder: sharing ----------------------------- */
+
+/** Access levels, weakest first. */
+const ACCESS_RANK = Object.freeze({ view: 1, edit: 2, manage: 3 });
+
+/**
+ * Build the caller's access context (controller helper): id, role ids and
+ * whether they may manage every dashboard (`dashboards.assign`).
+ */
+export async function accessContext({ tenantId, userId, permissions = [] } = {}) {
+  if (!userId) return null;
+  const now = new Date();
+  const roleIds = (await UserRole.find({ tenantId, userId, $or: [{ expiresAt: null }, { expiresAt: { $gt: now } }] }).select('roleId').lean())
+    .map((r) => String(r.roleId));
+  return { userId: String(userId), roleIds, canManageAll: permissions.includes('dashboards.assign') };
+}
+
+/** The caller's access level on a dashboard: 'manage' | 'edit' | 'view' | null. */
+export function accessLevel(dashboard, access) {
+  if (!access) return 'manage'; // internal callers (jobs, embeds) are already scoped.
+  if (access.canManageAll || (dashboard.createdBy && String(dashboard.createdBy) === access.userId)) return 'manage';
+  if (dashboard.visibility !== 'restricted') return 'edit'; // workspace-wide: RBAC decides.
+  let best = null;
+  for (const s of dashboard.shares ?? []) {
+    const match = (s.principalType === 'user' && s.principalId === access.userId)
+      || (s.principalType === 'role' && access.roleIds.includes(s.principalId));
+    if (match && (!best || ACCESS_RANK[s.level] > ACCESS_RANK[best])) best = s.level;
+  }
+  return best;
+}
+
+/** Throw unless the caller holds `needed` on the dashboard; no access looks like not found. */
+function requireAccess(dashboard, access, needed) {
+  const level = accessLevel(dashboard, access);
+  if (!level) throw ApiError.notFound('Dashboard not found');
+  if (ACCESS_RANK[level] < ACCESS_RANK[needed]) {
+    throw new ApiError(403, `This dashboard is shared with you as ${level === 'view' ? 'view only' : level}`, { code: 'DASHBOARD_ACCESS_DENIED' });
+  }
+  return level;
+}
+
+/** Load a tenant dashboard and check access. */
+async function loadDashboard(tenantId, dashboardId, access, needed) {
+  const dashboard = await dashboardRepository.findById(dashboardId, { tenantId });
+  if (!dashboard) throw ApiError.notFound('Dashboard not found');
+  requireAccess(dashboard, access, needed);
+  return dashboard;
+}
+
+/** Mongo filter for dashboards the caller can see in a list. */
+function visibleFilter(access) {
+  if (!access || access.canManageAll) return {};
   return {
-    filters: overrides.filters ?? widgetQuery.filters ?? dashboardFilters.filters ?? [],
-    filtersOp: overrides.filtersOp ?? widgetQuery.filtersOp ?? dashboardFilters.filtersOp ?? 'and',
-    dateRange: resolveDateRange(overrides.dateRange ?? widgetQuery.dateRange ?? dashboardFilters.dateRange ?? null),
+    $or: [
+      { visibility: { $ne: 'restricted' } },
+      { createdBy: access.userId },
+      { shares: { $elemMatch: { principalType: 'user', principalId: access.userId } } },
+      ...(access.roleIds.length ? [{ shares: { $elemMatch: { principalType: 'role', principalId: { $in: access.roleIds } } } }] : []),
+    ],
+  };
+}
+
+const asObject = (value) => (value && typeof value === 'object' && !Array.isArray(value) ? value : {});
+
+/**
+ * The effective (unresolved) query of a widget on its dashboard:
+ * dateRange from the widget, else the dashboard default; filters from the
+ * widget (with its own filtersOp), else the dashboard default pair.
+ * Shared by widget execution, widget-source reports and widget-source alerts
+ * so all three read the same numbers.
+ */
+export function mergeWidgetQuery({ widget, dashboard }) {
+  const widgetQuery = asObject(widget?.query);
+  // A stored query is held to the same contract as a new one: a key outside
+  // the widget contract (saved before the strict contract, or an engine
+  // option such as `tenantId`) is rejected, never ignored or obeyed.
+  engine.validateQuery(widgetQuery, { keys: QUERY_FIELDS });
+  const dashboardFilters = asObject(dashboard?.filters);
+  const filtersFromWidget = widgetQuery.filters !== undefined && widgetQuery.filters !== null;
+  const params = {
+    filters: filtersFromWidget ? widgetQuery.filters : dashboardFilters.filters ?? [],
+    filtersOp: (filtersFromWidget ? widgetQuery.filtersOp : dashboardFilters.filtersOp) ?? 'and',
     metrics: widgetQuery.metrics ?? [],
     groupBy: widgetQuery.groupBy ?? [],
     orderBy: widgetQuery.orderBy ?? [],
     pagination: widgetQuery.pagination ?? {},
   };
+  const dateRange = widgetQuery.dateRange ?? dashboardFilters.dateRange ?? null;
+  if (dateRange) params.dateRange = dateRange;
+  return params;
 }
 
-/** Cache key = effective-query hash + widget + dashboard revisions. */
-function buildWidgetCacheKey({ tenantId, widget, dashboard, params }) {
+/**
+ * Apply a validated filter envelope on top of a base query: its dateRange
+ * replaces the base window, its filters are AND-ed as an extra group (they
+ * narrow, never widen, the base result).
+ */
+export function applyFilterEnvelope(params, envelope) {
+  if (!envelope) return params;
+  const out = { ...params, filterGroups: [...(params.filterGroups ?? [])] };
+  if (envelope.dateRange) out.dateRange = envelope.dateRange;
+  if (Array.isArray(envelope.filters) && envelope.filters.length) {
+    out.filterGroups.push({ filters: envelope.filters, filtersOp: envelope.filtersOp ?? 'and' });
+  }
+  return out;
+}
+
+/** Cache key = prepared-query hash (incl. dataset version) + widget + dashboard revisions. */
+function buildWidgetCacheKey({ tenantId, widget, dashboard, prepared, connector }) {
   const base = analyticsCache.buildCacheKey({
+    ...prepared,
     tenantId,
-    connectorIds: [String(widget.datasetId)],
-    ...params,
+    dataVersions: [{ id: String(connector._id), version: connector.dataVersion ?? 0 }],
   });
   const rev = (value) => (value ? new Date(value).getTime() : 0);
   return `${base}:widget:${widget._id}:dash:${dashboard._id}:w${rev(widget.updatedAt)}:d${rev(dashboard.updatedAt)}`;
+}
+
+/** Run `worker` over `items` with at most `limit` in flight; settles like Promise.allSettled. */
+async function settleWithConcurrency(items, limit, worker) {
+  const results = new Array(items.length);
+  let next = 0;
+  async function lane() {
+    while (next < items.length) {
+      const index = next;
+      next += 1;
+      try {
+        results[index] = { status: 'fulfilled', value: await worker(items[index]) };
+      } catch (reason) {
+        results[index] = { status: 'rejected', reason };
+      }
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, lane));
+  return results;
 }
 
 /** Verify the widget's dataset is a connector owned by the tenant. */
@@ -296,8 +398,8 @@ async function assertDatasetOwned(tenantId, datasetId) {
 /* ------------------------------ dashboards -------------------------------- */
 
 /** Paginated, tenant-scoped dashboard list (optional status/search filter). */
-export async function listDashboards({ tenantId, page = 1, limit = 20, status, search } = {}) {
-  const filter = {};
+export async function listDashboards({ tenantId, page = 1, limit = 20, status, search, access } = {}) {
+  const filter = { ...visibleFilter(access) };
   if (status && DASHBOARD_STATUSES.includes(status)) filter.status = status;
   if (search && typeof search === 'string' && search.trim()) {
     filter.name = { $regex: escapeRegExp(search.trim()), $options: 'i' };
@@ -308,9 +410,7 @@ export async function listDashboards({ tenantId, page = 1, limit = 20, status, s
 /** Create a dashboard (draft by default). */
 export async function createDashboard({ tenantId, actorId = null, name, description = '', layout, filters, refresh } = {}) {
   if (typeof name !== 'string' || !name.trim()) throw ApiError.badRequest('dashboard name is required');
-  // Enforce dashboard-count quota before creation.
-  await usageService.checkAndConsume({ tenantId, metric: 'dashboards', requested: 1 });
-  const saved = await dashboardRepository.create({
+  const data = {
     tenantId,
     name: name.trim(),
     description: description ?? '',
@@ -318,7 +418,9 @@ export async function createDashboard({ tenantId, actorId = null, name, descript
     filters: filters !== undefined ? sanitizeFilters(filters) : null,
     refresh: refresh !== undefined ? sanitizeRefresh(refresh) : { enabled: false, intervalSec: 300 },
     createdBy: actorId,
-  });
+  };
+  // Dashboard-count quota: consumed atomically, given back if the create fails.
+  const saved = await usageService.withQuota({ tenantId, metric: 'dashboards', by: actorId }, () => dashboardRepository.create(data));
   await audit({
     tenantId, actorId, action: 'dashboard.created', resourceId: String(saved._id),
     after: { name: saved.name, status: saved.status },
@@ -327,9 +429,12 @@ export async function createDashboard({ tenantId, actorId = null, name, descript
 }
 
 /** Fetch a dashboard (optionally with its widgets). */
-export async function getDashboard({ tenantId, dashboardId, includeWidgets = false } = {}) {
-  const dashboard = await dashboardRepository.findById(dashboardId, { tenantId });
-  if (!dashboard) throw ApiError.notFound('Dashboard not found');
+export async function getDashboard({ tenantId, dashboardId, includeWidgets = false, access } = {}) {
+  const found = await dashboardRepository.findById(dashboardId, { tenantId });
+  if (!found) throw ApiError.notFound('Dashboard not found');
+  const level = requireAccess(found, access, 'view');
+  // Share entries are visible to managers only.
+  const dashboard = { ...found, access: level, ...(level === 'manage' ? {} : { shares: undefined }) };
   if (!includeWidgets) return { dashboard };
   const widgets = await widgetRepository.list({
     tenantId,
@@ -341,12 +446,11 @@ export async function getDashboard({ tenantId, dashboardId, includeWidgets = fal
 }
 
 /** Update a dashboard (whitelisted fields only). */
-export async function updateDashboard({ tenantId, dashboardId, actorId = null, patch = {} } = {}) {
-  const dashboard = await dashboardRepository.findById(dashboardId, { tenantId });
-  if (!dashboard) throw ApiError.notFound('Dashboard not found');
-  // Enforce dashboard-count quota before update.
-  await usageService.checkAndConsume({ tenantId, metric: 'dashboards', requested: 1 });
+export async function updateDashboard({ tenantId, dashboardId, actorId = null, access, patch = {} } = {}) {
+  const dashboard = await loadDashboard(tenantId, dashboardId, access, 'edit');
+  // Updating a dashboard does not create one: no `dashboards` quota use.
   const updates = sanitizeDashboardPatch(patch);
+  if (updates.visibility !== undefined) requireAccess(dashboard, access, 'manage');
   if (Object.keys(updates).length === 0) return dashboard;
   updates.updatedBy = actorId;
   const updated = await dashboardRepository.update(dashboardId, updates);
@@ -360,9 +464,8 @@ export async function updateDashboard({ tenantId, dashboardId, actorId = null, p
 }
 
 /** Publish a dashboard (draft -> published). */
-export async function publishDashboard({ tenantId, dashboardId, actorId = null } = {}) {
-  const dashboard = await dashboardRepository.findById(dashboardId, { tenantId });
-  if (!dashboard) throw ApiError.notFound('Dashboard not found');
+export async function publishDashboard({ tenantId, dashboardId, actorId = null, access } = {}) {
+  const dashboard = await loadDashboard(tenantId, dashboardId, access, 'edit');
   if (dashboard.status === 'published') return dashboard;
   if (dashboard.status !== 'draft') {
     throw ApiError.badRequest(`only draft dashboards can be published (current: ${dashboard.status})`);
@@ -377,12 +480,11 @@ export async function publishDashboard({ tenantId, dashboardId, actorId = null }
 }
 
 /** Duplicate a dashboard and all of its widgets (copy is a fresh draft). */
-export async function duplicateDashboard({ tenantId, dashboardId, actorId = null } = {}) {
-  const dashboard = await dashboardRepository.findById(dashboardId, { tenantId });
-  if (!dashboard) throw ApiError.notFound('Dashboard not found');
+export async function duplicateDashboard({ tenantId, dashboardId, actorId = null, access } = {}) {
+  const dashboard = await loadDashboard(tenantId, dashboardId, access, 'view');
   const widgets = await widgetRepository.list({ tenantId, dashboardId, page: 1, limit: MAX_WIDGETS_PER_DASHBOARD });
-
-  const copy = await dashboardRepository.create({
+  // A duplicate is a new dashboard, so it counts against the quota.
+  const copy = await usageService.withQuota({ tenantId, metric: 'dashboards', by: actorId }, () => dashboardRepository.create({
     tenantId,
     name: `${dashboard.name} (copy)`,
     description: dashboard.description ?? '',
@@ -392,7 +494,7 @@ export async function duplicateDashboard({ tenantId, dashboardId, actorId = null
     refresh: dashboard.refresh ?? { enabled: false, intervalSec: 300 },
     shares: [],
     createdBy: actorId,
-  });
+  }));
   for (const w of widgets.docs) {
     await widgetRepository.create({
       tenantId,
@@ -414,51 +516,85 @@ export async function duplicateDashboard({ tenantId, dashboardId, actorId = null
 }
 
 /** Soft-delete a dashboard and cascade to its widgets. */
-export async function deleteDashboard({ tenantId, dashboardId, actorId = null } = {}) {
-  const dashboard = await dashboardRepository.findById(dashboardId, { tenantId });
-  if (!dashboard) throw ApiError.notFound('Dashboard not found');
-  // Enforce: dashboard count decrements on soft-delete.
-  // The counter will be decremented after the delete; we check first to ensure tenant is not blocked.
-  await usageService.checkAndConsume({ tenantId, metric: 'dashboards', requested: 1 });
-  await dashboardRepository.remove(dashboardId, actorId);
+export async function deleteDashboard({ tenantId, dashboardId, actorId = null, access } = {}) {
+  const dashboard = await loadDashboard(tenantId, dashboardId, access, 'manage');
+  if (!(await dashboardRepository.remove(dashboardId, actorId))) throw ApiError.notFound('Dashboard not found');
   await widgetRepository.softDeleteByDashboard(dashboardId, actorId);
+  // Deleting a dashboard frees one unit of the `dashboards` quota.
+  await usageService.release({ tenantId, metric: 'dashboards', requested: 1, by: actorId });
   await audit({ tenantId, actorId, action: 'dashboard.deleted', resourceId: dashboardId });
   return true;
 }
 
 /* ------------------------------ sharing ----------------------------------- */
 
-/** Grant a (revocable) email share on a dashboard. */
-export async function shareDashboard({ tenantId, dashboardId, actorId = null, email, role = 'viewer', expiresAt = null } = {}) {
-  const dashboard = await dashboardRepository.findById(dashboardId, { tenantId });
-  if (!dashboard) throw ApiError.notFound('Dashboard not found');
-  const normalized = String(email).trim().toLowerCase();
-  if (!normalized) throw ApiError.badRequest('email is required');
-  if (dashboard.shares?.some((s) => s.email === normalized)) {
-    throw ApiError.conflict(`${normalized} already has access to this dashboard`);
+/** Verify a share principal (tenant user or tenant role) exists. */
+async function assertPrincipal(tenantId, principalType, principalId) {
+  if (!SHARE_PRINCIPALS.includes(principalType)) throw ApiError.badRequest(`principalType must be one of ${SHARE_PRINCIPALS.join(', ')}`);
+  const id = String(principalId ?? '');
+  if (!/^[0-9a-fA-F]{24}$/.test(id)) throw ApiError.badRequest('principalId must be an id');
+  const found = principalType === 'user'
+    ? await User.exists({ _id: id, tenantId, deletedAt: null })
+    : await Role.exists({ _id: id, tenantId });
+  if (!found) throw ApiError.badRequest(`${principalType} not found in this workspace`);
+  return id;
+}
+
+/**
+ * List share grants (managers only) with display names, plus the tenant's
+ * users and roles the manager can share with (first 200 of each).
+ */
+export async function listShares({ tenantId, dashboardId, access } = {}) {
+  const dashboard = await loadDashboard(tenantId, dashboardId, access, 'manage');
+  const [users, roles] = await Promise.all([
+    User.find({ tenantId, deletedAt: null, status: 'active' }).select('email profile.name').limit(200).lean(),
+    Role.find({ tenantId }).select('name').limit(200).lean(),
+  ]);
+  const userList = users.map((u) => ({ id: String(u._id), name: u.profile?.name ?? u.email, email: u.email }));
+  const roleList = roles.map((r) => ({ id: String(r._id), name: r.name }));
+  const nameOf = (s) => (s.principalType === 'user'
+    ? userList.find((u) => u.id === s.principalId)?.email
+    : roleList.find((r) => r.id === s.principalId)?.name) ?? s.principalId;
+  return {
+    visibility: dashboard.visibility ?? 'workspace',
+    shares: (dashboard.shares ?? []).map((s) => ({ ...s, principalName: nameOf(s) })),
+    candidates: { users: userList, roles: roleList },
+  };
+}
+
+/**
+ * Grant (or change) a share on a dashboard for a tenant user or role at
+ * `view` or `edit` level. Only the owner or a `dashboards.assign` holder
+ * manages shares. Shares matter once the dashboard is `restricted`.
+ */
+export async function shareDashboard({ tenantId, dashboardId, actorId = null, access, principalType, principalId, level = 'view' } = {}) {
+  const dashboard = await loadDashboard(tenantId, dashboardId, access, 'manage');
+  if (!SHARE_LEVELS.includes(level)) throw ApiError.badRequest(`level must be one of ${SHARE_LEVELS.join(', ')}`);
+  const id = await assertPrincipal(tenantId, principalType, principalId);
+  if (dashboard.shares?.some((s) => s.principalType === principalType && s.principalId === id)) {
+    throw ApiError.conflict(`this ${principalType} already has access to this dashboard`);
   }
-  const share = { email: normalized, role, enabled: true, expiresAt: expiresAt || null, createdBy: actorId };
+  const share = { principalType, principalId: id, level, createdBy: actorId, createdAt: new Date() };
   const updated = await dashboardRepository.addShare(dashboardId, share);
   if (!updated) throw ApiError.notFound('Dashboard not found');
   const added = updated.shares?.[updated.shares.length - 1] ?? share;
   await audit({
     tenantId, actorId, action: 'dashboard.shared', resourceId: dashboardId,
-    after: { email: normalized, role },
+    after: { principalType, principalId: id, level },
   });
   return added;
 }
 
 /** Revoke a share grant by its sub-document id. */
-export async function revokeShare({ tenantId, dashboardId, actorId = null, shareId } = {}) {
-  const dashboard = await dashboardRepository.findById(dashboardId, { tenantId });
-  if (!dashboard) throw ApiError.notFound('Dashboard not found');
+export async function revokeShare({ tenantId, dashboardId, actorId = null, access, shareId } = {}) {
+  const dashboard = await loadDashboard(tenantId, dashboardId, access, 'manage');
   const existing = dashboard.shares?.find((s) => String(s._id) === String(shareId));
   if (!existing) throw ApiError.notFound('Share entry not found');
   const updated = await dashboardRepository.removeShare(dashboardId, shareId);
   if (!updated) throw ApiError.notFound('Dashboard not found');
   await audit({
     tenantId, actorId, action: 'dashboard.share_revoked', resourceId: dashboardId,
-    before: { email: existing.email },
+    before: { principalType: existing.principalType, principalId: existing.principalId, level: existing.level },
   });
   return true;
 }
@@ -466,34 +602,36 @@ export async function revokeShare({ tenantId, dashboardId, actorId = null, share
 /* ------------------------------- widgets ---------------------------------- */
 
 /** Paginated widget list for a dashboard. */
-export async function listWidgets({ tenantId, dashboardId, page = 1, limit = 50 } = {}) {
-  const dashboard = await dashboardRepository.findById(dashboardId, { tenantId });
-  if (!dashboard) throw ApiError.notFound('Dashboard not found');
+export async function listWidgets({ tenantId, dashboardId, page = 1, limit = 50, access } = {}) {
+  await loadDashboard(tenantId, dashboardId, access, 'view');
   return widgetRepository.list({ tenantId, dashboardId, page, limit });
 }
 
 /** Create a widget on a dashboard (dataset must be tenant-owned). */
-export async function createWidget({ tenantId, dashboardId, actorId = null, data = {} } = {}) {
-  const dashboard = await dashboardRepository.findById(dashboardId, { tenantId });
-  if (!dashboard) throw ApiError.notFound('Dashboard not found');
+export async function createWidget({ tenantId, dashboardId, actorId = null, data = {}, access } = {}) {
+  await loadDashboard(tenantId, dashboardId, access, 'edit');
   if (typeof data.name !== 'string' || !data.name.trim()) throw ApiError.badRequest('widget name is required');
   if (!WIDGET_TYPES.includes(data.type)) throw ApiError.badRequest(`widget type must be one of ${WIDGET_TYPES.join(', ')}`);
   await assertDatasetOwned(tenantId, data.datasetId);
+  // vizbuilder: reject invalid queries / visualization specs at save time.
+  const query = sanitizeWidgetQuery(data.query);
+  await assertQueryMatchesSchema(tenantId, data.datasetId, query);
+  const visualization = validateVisualization({ type: data.type, query, visualization: data.visualization });
   // Enforce per-dashboard widget limit (separate from overall dashboard quota).
   const count = await widgetRepository.countByDashboard(dashboardId);
   if (count >= MAX_WIDGETS_PER_DASHBOARD) {
     throw ApiError.conflict(`dashboard supports at most ${MAX_WIDGETS_PER_DASHBOARD} widgets`);
   }
-  // Enforce overall dashboard-count quota at the tenant level.
-  await usageService.checkAndConsume({ tenantId, metric: 'dashboards', requested: 1 });
+  // Adding a widget does not create a dashboard: no `dashboards` quota use
+  // (the per-dashboard widget cap above bounds widgets).
   const saved = await widgetRepository.create({
     tenantId,
     dashboardId,
     name: data.name.trim(),
     type: data.type,
     datasetId: data.datasetId,
-    query: sanitizeWidgetQuery(data.query),
-    visualization: data.visualization ?? {},
+    query,
+    visualization,
     position: sanitizePosition(data.position),
     createdBy: actorId,
   });
@@ -505,18 +643,31 @@ export async function createWidget({ tenantId, dashboardId, actorId = null, data
 }
 
 /** Fetch a single widget (scoped by tenant + dashboard). */
-export async function getWidget({ tenantId, dashboardId, widgetId } = {}) {
+export async function getWidget({ tenantId, dashboardId, widgetId, access } = {}) {
+  await loadDashboard(tenantId, dashboardId, access, 'view');
   const widget = await widgetRepository.findById(widgetId, { tenantId, dashboardId });
   if (!widget) throw ApiError.notFound('Widget not found');
   return widget;
 }
 
 /** Update a widget (whitelisted fields only; dataset re-verified when changed). */
-export async function updateWidget({ tenantId, dashboardId, widgetId, actorId = null, patch = {} } = {}) {
+export async function updateWidget({ tenantId, dashboardId, widgetId, actorId = null, patch = {}, access } = {}) {
+  await loadDashboard(tenantId, dashboardId, access, 'edit');
   const widget = await widgetRepository.findById(widgetId, { tenantId, dashboardId });
   if (!widget) throw ApiError.notFound('Widget not found');
   const updates = sanitizeWidgetPatch(patch);
   if (updates.datasetId !== undefined) await assertDatasetOwned(tenantId, updates.datasetId);
+  // vizbuilder: the saved combination (type + query + visualization) must be valid.
+  if (['type', 'query', 'visualization', 'datasetId'].some((k) => updates[k] !== undefined)) {
+    const type = updates.type ?? widget.type;
+    const query = updates.query !== undefined ? updates.query : widget.query;
+    if (updates.query !== undefined || updates.datasetId !== undefined) {
+      await assertQueryMatchesSchema(tenantId, updates.datasetId ?? widget.datasetId, query);
+    }
+    updates.visualization = validateVisualization({
+      type, query, visualization: updates.visualization !== undefined ? updates.visualization : widget.visualization,
+    });
+  }
   if (Object.keys(updates).length === 0) return widget;
   updates.updatedBy = actorId;
   const updated = await widgetRepository.update(widgetId, updates);
@@ -529,7 +680,8 @@ export async function updateWidget({ tenantId, dashboardId, widgetId, actorId = 
 }
 
 /** Soft-delete a widget. */
-export async function removeWidget({ tenantId, dashboardId, widgetId, actorId = null } = {}) {
+export async function removeWidget({ tenantId, dashboardId, widgetId, actorId = null, access } = {}) {
+  await loadDashboard(tenantId, dashboardId, access, 'edit');
   const widget = await widgetRepository.findById(widgetId, { tenantId, dashboardId });
   if (!widget) throw ApiError.notFound('Widget not found');
   await widgetRepository.remove(widgetId, actorId);
@@ -550,22 +702,58 @@ export async function removeWidget({ tenantId, dashboardId, widgetId, actorId = 
  * connector must be owned by the tenant. The engine additionally injects
  * `tenantId` into its base `$match` as a second line of defence.
  */
-export async function executeWidget({ tenantId, dashboardId, widgetId, overrides = {} } = {}) {
-  const dashboard = await dashboardRepository.findById(dashboardId, { tenantId });
-  if (!dashboard) throw ApiError.notFound('Dashboard not found');
+export async function executeWidget({ tenantId, dashboardId, widgetId, overrides = {}, actorId = null, actorType = null, page, limit, access } = {}) {
+  // View-time overrides are a filter envelope: validated strictly up front.
+  const cleanOverrides = Object.fromEntries(Object.entries(asObject(overrides)).filter(([, v]) => v !== undefined));
+  const envelope = Object.keys(cleanOverrides).length ? sanitizeFilterEnvelope(cleanOverrides, '') : null;
+
+  const dashboard = await loadDashboard(tenantId, dashboardId, access, 'view');
   const widget = await widgetRepository.findById(widgetId, { tenantId, dashboardId });
   if (!widget) throw ApiError.notFound('Widget not found');
-  await assertDatasetOwned(tenantId, widget.datasetId);
+  const connector = await assertDatasetOwned(tenantId, widget.datasetId);
 
-  const params = buildWidgetParams({ widget, dashboard, overrides });
-  const cacheKey = buildWidgetCacheKey({ tenantId, widget, dashboard, params });
+  const params = applyFilterEnvelope(mergeWidgetQuery({ widget, dashboard }), envelope);
+  // vizbuilder: the spec drives paging (tables) and top N (bar/pie).
+  const viz = resolveVisualization({ type: widget.type, query: widget.query, visualization: widget.visualization });
+  const topN = applyTopN(params, viz);
+  if (!topN && (page !== undefined || limit !== undefined || viz.pageSize)) {
+    params.pagination = {
+      ...params.pagination,
+      ...(page !== undefined ? { page: clampInt(page, 1, 1, 100000) } : {}),
+      ...(limit !== undefined || viz.pageSize ? { limit: clampInt(limit ?? viz.pageSize, 50, 1, 200) } : {}),
+    };
+  }
+  // Execution keys go last so nothing in the stored query can replace them.
+  const { options: prepared, window } = await engine.prepareQuery({
+    ...params,
+    tenantId,
+    connectorIds: [String(widget.datasetId)],
+  });
+  const cacheKey = buildWidgetCacheKey({ tenantId, widget, dashboard, prepared, connector });
 
+  const startedAt = Date.now();
   const { result, cached } = await analyticsCache.cachedQuery(
     cacheKey,
-    () => engine.queryRows({ tenantId, connectorIds: [String(widget.datasetId)], ...params }),
+    () => runWithTopN(prepared, { ...params, tenantId, connectorIds: [String(widget.datasetId)] }, topN, viz),
     WIDGET_CACHE_TTL_SEC,
   );
+  // ai-catalogue: a computed (not cached) run records its attribution.
+  if (!cached) {
+    await recordRun({
+      tenantId,
+      source: 'widget',
+      sourceId: String(widget._id),
+      actorType,
+      actorId,
+      prepared,
+      window,
+      dataVersions: [{ id: String(connector._id), version: connector.dataVersion ?? 0 }],
+      result,
+      durationMs: Date.now() - startedAt,
+    });
+  }
 
+  const withPreset = engine.withRequestedPreset(result, params.dateRange);
   return {
     widgetId: String(widget._id),
     name: widget.name,
@@ -573,17 +761,87 @@ export async function executeWidget({ tenantId, dashboardId, widgetId, overrides
     datasetId: String(widget.datasetId),
     cached,
     cacheKey,
-    result,
+    result: {
+      ...withPreset,
+      visualization: viz,
+      provenance: buildProvenance({ widget, connector, result: withPreset, params, cached }),
+    },
   };
 }
+
+/* ---------------------- vizbuilder: top N + provenance --------------------- */
+
+/** Metric ops whose totals are additive (an "Other" bucket = total - top N). */
+const ADDITIVE_OPS = new Set(['count', 'sum', 'count_non_null']);
+
+/** For bar/pie specs with `limit`: order by the first measure and fetch the top N. */
+function applyTopN(params, viz) {
+  if (!viz.limit || !['bar', 'pie'].includes(viz.type) || !viz.xField || !viz.measures.length) return null;
+  const direction = viz.sort?.by === 'measure' && viz.sort.direction === 'asc' ? 'asc' : 'desc';
+  params.orderBy = [{ field: viz.measures[0], direction }];
+  params.pagination = { page: 1, limit: viz.limit };
+  return { limit: viz.limit, showOther: viz.showOther };
+}
+
+/** Run the query; with top N, also compute "top N of M" and the Other bucket. */
+async function runWithTopN(prepared, params, topN, viz) {
+  const result = await engine.queryRows(prepared);
+  if (!topN) return result;
+  if (viz.sort?.by === 'dimension') {
+    const dir = viz.sort.direction === 'desc' ? -1 : 1;
+    result.rows.sort((a, b) => (a[viz.xField] > b[viz.xField] ? dir : a[viz.xField] < b[viz.xField] ? -dir : 0));
+  }
+  const info = { limit: topN.limit, of: result.total, other: null };
+  if (topN.showOther && result.total > topN.limit) {
+    const metrics = Array.isArray(params.metrics) && params.metrics.length ? params.metrics : [{ op: 'count' }];
+    const { options: totalsQuery } = await engine.prepareQuery({ ...params, groupBy: [], orderBy: [], pagination: {}, metrics });
+    const totals = (await engine.queryRows(totalsQuery)).rows[0] ?? {};
+    const other = { [viz.xField]: 'Other' };
+    for (const m of metrics) {
+      const alias = engine.metricAlias(m);
+      other[alias] = ADDITIVE_OPS.has(m.op)
+        ? (Number(totals[alias]) || 0) - result.rows.reduce((acc, r) => acc + (Number(r[alias]) || 0), 0)
+        : null;
+    }
+    info.other = other;
+    result.rows = [...result.rows, { ...other, __other: true }];
+  }
+  result.topN = info;
+  return result;
+}
+
+/** "How this was calculated": data window, zone, dataset freshness, query summary. */
+function buildProvenance({ widget, connector, result, params, cached }) {
+  const metrics = (params.metrics ?? []).map((m) => ({ op: m.op, field: m.field ?? null, alias: engine.metricAlias(m) }));
+  return {
+    window: result.window ?? null,
+    timezone: result.timezone ?? null,
+    dataset: {
+      id: String(connector._id),
+      name: connector.name ?? null,
+      type: connector.type ?? null,
+      dataVersion: connector.dataVersion ?? 0,
+      lastSyncedAt: connector.lastSyncedAt ?? null,
+    },
+    metrics,
+    groupBy: (params.groupBy ?? []).map((g) => (typeof g === 'string' ? { field: g, bucket: null } : { field: g.field, bucket: g.bucket ?? null })),
+    filterCount: (params.filters ?? []).length + (params.filterGroups ?? []).reduce((n, g) => n + g.filters.length, 0),
+    excluded: result.excluded ?? {},
+    // DEPENDS(ai-catalogue): metric definitions are attached once MetricDefinition exists.
+    metricDefinitions: [],
+    executedAt: result.executedAt ?? null,
+    cached: Boolean(cached),
+    widgetUpdatedAt: widget.updatedAt ?? null,
+  };
+}
+
 
 /**
  * Execute every widget on a dashboard. Partial failures are allowed: a
  * broken widget must not take down the whole dashboard view.
  */
-export async function viewDashboard({ tenantId, dashboardId } = {}) {
-  const dashboard = await dashboardRepository.findById(dashboardId, { tenantId });
-  if (!dashboard) throw ApiError.notFound('Dashboard not found');
+export async function viewDashboard({ tenantId, dashboardId, actorId = null, actorType = null, access } = {}) {
+  const dashboard = await loadDashboard(tenantId, dashboardId, access, 'view');
   const widgets = await widgetRepository.list({
     tenantId,
     dashboardId,
@@ -591,20 +849,39 @@ export async function viewDashboard({ tenantId, dashboardId } = {}) {
     limit: MAX_WIDGETS_EXECUTED_PER_REQUEST,
   });
 
-  const settled = await Promise.allSettled(
-    widgets.docs.map((w) => executeWidget({ tenantId, dashboardId, widgetId: String(w._id) })),
+  // Bounded fan-out: one view never queues more than VIEW_CONCURRENCY
+  // aggregations against the tenant's analytics concurrency limit.
+  const settled = await settleWithConcurrency(
+    widgets.docs,
+    VIEW_CONCURRENCY,
+    (w) => executeWidget({ tenantId, dashboardId, widgetId: String(w._id), actorId, actorType, access }),
   );
 
+  // Each entry carries the engine result directly (`result.rows`, …), the
+  // same shape as the single-widget execute endpoint and the frontend's
+  // DashboardExecutionEntry contract.
   const results = settled.map((r, i) => {
     const w = widgets.docs[i];
     if (r.status === 'fulfilled') {
-      return { widgetId: String(w._id), name: w.name, status: 'ok', result: r.value };
+      return {
+        widgetId: String(w._id),
+        name: w.name,
+        type: w.type,
+        status: 'ok',
+        cached: r.value.cached,
+        result: r.value.result,
+      };
     }
     return {
       widgetId: String(w._id),
       name: w.name,
+      type: w.type,
       status: 'error',
-      error: r.reason?.message ?? 'Widget execution failed',
+      error: {
+        message: r.reason?.message ?? 'Widget execution failed',
+        code: r.reason?.code,
+        ...(Array.isArray(r.reason?.errors) && r.reason.errors.length ? { errors: r.reason.errors } : {}),
+      },
     };
   });
 
@@ -621,6 +898,9 @@ export default {
   deleteDashboard,
   shareDashboard,
   revokeShare,
+  listShares,
+  accessContext,
+  accessLevel,
   listWidgets,
   createWidget,
   getWidget,
@@ -628,5 +908,8 @@ export default {
   removeWidget,
   executeWidget,
   viewDashboard,
+  mergeWidgetQuery,
+  applyFilterEnvelope,
+  sanitizeFilterEnvelope,
   _meta: { module: 'dashboards', cacheTtlSec: WIDGET_CACHE_TTL_SEC },
 };

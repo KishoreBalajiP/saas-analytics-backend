@@ -20,8 +20,24 @@
 import asyncHandler from '../utils/asyncHandler.js';
 import ApiResponse from '../utils/ApiResponse.js';
 import tenantService from '../services/tenant.service.js';
+import { adminScopeOf } from '../middleware/adminScope.middleware.js';
+import { emit as auditEmit } from '../services/auditLog.service.js';
+import { DEFAULT_SETTINGS } from '../services/tenantSettings.service.js';
 
 const actor = (req) => req.admin?.id ?? null;
+
+// config: audit row for `GET /tenants/:id/settings?includeSecrets=true`.
+async function auditSecretRead(req, group) {
+  const keys = DEFAULT_SETTINGS.filter((s) => s.isSecret && (!group || s.group === group)).map((s) => s.key);
+  await auditEmit({
+    actor: { type: 'admin', id: req.admin?.id ?? null, display: req.admin?.email ?? null },
+    action: 'tenant_settings.secrets_revealed',
+    module: 'iam.tenants',
+    resource: { type: 'tenant', id: String(req.params.id) },
+    tenantId: String(req.params.id),
+    after: { group: group ?? 'all', keys },
+  }).catch(() => {});
+}
 
 /** POST /tenants - create a tenant (optionally run onboarding in one call). */
 export const createTenant = asyncHandler(async (req, res) => {
@@ -35,12 +51,18 @@ export const createTenant = asyncHandler(async (req, res) => {
   return ApiResponse.created(res, result.tenant, 'Tenant created');
 });
 
-/** GET /tenants - paginated tenant list (platform admin surface). */
+/**
+ * GET /tenants - paginated tenant list (platform admin surface). A
+ * tenant-scoped admin only ever sees its own tenant.
+ */
 export const listTenants = asyncHandler(async (req, res) => {
   const { status, search, page, limit } = req.validated?.query ?? {};
+  const filter = {};
+  if (status) filter.status = status;
+  if (search) filter.search = search;
   const result = await tenantService.list({
-    filter: { status },
-    search,
+    filter,
+    onlyTenantId: adminScopeOf(req),
     page: page ?? 1,
     limit: limit ?? 20,
   });
@@ -159,6 +181,8 @@ export const getTenantSettings = asyncHandler(async (req, res) => {
     group,
     includeSecrets: includeSecrets === true,
   });
+  // config: a plaintext secret read is audited (keys only, never values).
+  if (includeSecrets === true) await auditSecretRead(req, group);
   return ApiResponse.ok(res, settings, 'Tenant settings fetched');
 });
 
@@ -180,6 +204,7 @@ export const changeTenantOwner = asyncHandler(async (req, res) => {
     tenantId: req.params.id,
     userId: req.validated?.body?.userId,
     by: actor(req),
+    reason: req.validated?.body?.reason ?? null,
   });
   return ApiResponse.ok(res, tenant, 'Tenant owner changed');
 });

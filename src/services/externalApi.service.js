@@ -22,6 +22,8 @@
  *     (without write access).
  */
 
+// rls: dataset grants and row-level security.
+import dataAccess from './dataAccess.service.js';
 import analyticsEngine from './analytics.engine.js';
 import connectorRepository from '../repositories/connector.repository.js';
 import dashboardService from './dashboard.service.js';
@@ -37,15 +39,24 @@ export const SCOPE_ACTIONS = Object.freeze({
 /** Verify a key has the required scope (throws if not). */
 export function requireScope(key, scope) {
   if (!key.scopes?.includes(scope)) {
-    throw ApiError.forbidden(`Scope "${scope}" is required`);
+    // devapi: stable code for the external API.
+    throw new ApiError(403, `Scope "${scope}" is required`, { code: 'INSUFFICIENT_SCOPE' });
   }
+}
+
+/** devapi: malformed ids are a typed 404, never a CastError 500. */
+const OBJECT_ID = /^[0-9a-fA-F]{24}$/u;
+function assertId(id, what) {
+  if (!OBJECT_ID.test(String(id))) throw ApiError.notFound(`${what} not found`);
 }
 
 /** List connectors (datasets) the tenant owns. */
 export async function listDatasets({ tenantId, page = 1, limit = 50 } = {}) {
+  // rls: datasets hidden from the key's creator are not listed.
+  const hidden = await dataAccess.hiddenConnectorIds(tenantId);
   const result = await connectorRepository.list({
     tenantId,
-    filter: { status: 'active' },
+    filter: { status: 'active', ...(hidden.length ? { _id: { $nin: hidden } } : {}) },
     page,
     limit,
   });
@@ -66,8 +77,11 @@ export async function listDatasets({ tenantId, page = 1, limit = 50 } = {}) {
 
 /** Get a single dataset (connector). */
 export async function getDataset({ tenantId, datasetId } = {}) {
+  assertId(datasetId, 'Dataset');
   const connector = await connectorRepository.findById(datasetId, { tenantId });
   if (!connector) throw ApiError.notFound('Dataset not found');
+  // rls
+  if ((await dataAccess.hiddenConnectorIds(tenantId)).includes(String(connector._id))) throw ApiError.notFound('Dataset not found');
   return {
     id: connector._id,
     name: connector.name,
@@ -80,56 +94,50 @@ export async function getDataset({ tenantId, datasetId } = {}) {
   };
 }
 
+/** Query keys an API caller may send (the dataset comes from the path). */
+const EXTERNAL_QUERY_KEYS = Object.freeze(['filters', 'filtersOp', 'dateRange', 'metrics', 'groupBy', 'orderBy', 'pagination']);
+
 /**
- * Query a dataset (connector) via the analytics engine.
- * Returns the engine result { rows, total, page, pages, limit, columns, executedAt, groupMode }.
+ * Query a dataset (connector) via the analytics engine, under the same
+ * strict contract as every other consumer: unknown or invalid parts are 400
+ * INVALID_QUERY with field errors. Relative presets resolve in the
+ * workspace time zone.
+ * Returns the engine result { rows, total, page, pages, limit, columns,
+ * executedAt, groupMode, timezone, window }.
  */
 export async function queryDataset({ tenantId, datasetId, query = {} } = {}) {
+  const validated = analyticsEngine.validateQuery(query, { keys: EXTERNAL_QUERY_KEYS });
+
   // Verify dataset exists and belongs to tenant.
+  if (!/^[0-9a-fA-F]{24}$/.test(String(datasetId))) throw ApiError.notFound('Dataset not found');
   const connector = await connectorRepository.findById(datasetId, { tenantId });
   if (!connector) throw ApiError.notFound('Dataset not found');
 
-  // Delegate to analytics engine with connector-scoped query.
-  const engineQuery = {
-    tenantId,
-    connectorIds: [datasetId],
-    filters: query.filters,
-    filtersOp: query.filtersOp,
-    dateRange: query.dateRange,
-    metrics: query.metrics,
-    groupBy: query.groupBy,
-    orderBy: query.orderBy,
-    pagination: query.pagination,
-  };
-  return analyticsEngine.queryRows(engineQuery);
+  return analyticsEngine.queryRows({ ...validated, tenantId, connectorIds: [String(connector._id)] });
 }
 
 /** List raw rows from a dataset (simple pagination, no aggregations). */
 export async function listDatasetRows({ tenantId, datasetId, page = 1, limit = 100 } = {}) {
+  assertId(datasetId, 'Dataset');
   const connector = await connectorRepository.findById(datasetId, { tenantId });
   if (!connector) throw ApiError.notFound('Dataset not found');
 
-  // Use connectorRowRepository list (connectorRow = ingested row).
-  // Note: connectorRowRepository doesn't have a direct list method exposed
-  // with connectorId+tenantId in this project. We'll use the engine with
-  // count metric and no groupBy to get raw rows. Or use the existing
-  // connectorRow list if available.
-  // Let's use the analytics engine with a simple query: count per row (no groupBy)
-  // returns each row as a "group" with count=1. Better: use connectorRowRepository.
-  // Let me check - connectorRowRepository has list({connectorId, tenantId, page, limit}).
-  // I'll import it.
   const connectorRowRepository = (await import('../repositories/connectorRow.repository.js')).default;
-  const result = await connectorRowRepository.list({ connectorId: datasetId, tenantId, page, limit });
+  // rls: dataset grants and row rules of the key's creator.
+  const match = await dataAccess.rowListMatch({ tenantId, connectorId: datasetId });
+  const result = await connectorRowRepository.list({ connectorId: datasetId, tenantId, page, limit, match });
   return result;
 }
 
 /** Get a published dashboard (read-only, no widgets execution). */
 export async function getDashboard({ tenantId, dashboardId } = {}) {
-  const dashboard = await dashboardService.getDashboard({ tenantId, dashboardId });
-  if (!dashboard) throw ApiError.notFound('Dashboard not found');
+  assertId(dashboardId, 'Dashboard');
+  // getDashboard returns `{ dashboard }` and throws 404 when missing.
+  const { dashboard } = await dashboardService.getDashboard({ tenantId, dashboardId });
   // Only published dashboards are visible via external API.
-  if (dashboard.status !== 'published') throw ApiError.notFound('Dashboard not found');
-  return dashboard;
+  if (!dashboard || dashboard.status !== 'published') throw ApiError.notFound('Dashboard not found');
+  const { shares, createdBy, updatedBy, deletedAt, deletedBy, __v, ...publicFields } = dashboard;
+  return publicFields;
 }
 
 export default {

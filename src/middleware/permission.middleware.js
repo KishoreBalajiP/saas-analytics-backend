@@ -31,11 +31,18 @@
  *   - Fail closed: no identity and no declared key both yield 403, never a
  *     pass-through.
  *   - Runs AFTER `adminAuth` / `auth` (needs `req.admin` or `req.user`).
+ *   - Auditor admins are read-only (roadmap 2.1): an admin whose live
+ *     `adminType` is `auditor` is refused every action outside
+ *     `READ_ONLY_ACTIONS`, even when a custom role grants the key.
+ *   - Every refusal is recorded as a rate-limited `request.denied` security
+ *     event (`audit.middleware.js#auditDenied`).
  */
 
 import ApiError from '../utils/ApiError.js';
 import { getActor } from './actor.js';
 import permissionService from '../services/permission.service.js';
+import { isReadOnlyAction } from '../constants/platformRoles.js';
+import { auditDenied } from './audit.middleware.js';
 
 /** Resolve a (module, action) pair that may be a function of the request. */
 function resolveKey(req, moduleOrFn, actionOrFn) {
@@ -50,7 +57,7 @@ function resolveKey(req, moduleOrFn, actionOrFn) {
 async function resolveActorPerms(req, next) {
   const actor = getActor(req);
   if (!actor) {
-    next(ApiError.forbidden('Authenticated identity is required'));
+    next(auditDenied(req, ApiError.forbidden('Authenticated identity is required'), 'no_identity'));
     return null;
   }
   try {
@@ -80,13 +87,18 @@ export function permission(moduleOrFn, actionOrFn) {
   return async (req, _res, next) => {
     const { module, action } = resolveKey(req, moduleOrFn, actionOrFn);
     if (!module || !action) {
-      return next(ApiError.forbidden('Route did not declare a permission key'));
+      return next(auditDenied(req, ApiError.forbidden('Route did not declare a permission key'), 'no_permission_key'));
     }
 
     const perms = await resolveActorPerms(req, next);
     if (!perms) return undefined;
     if (!perms.has(`${module}.${action}`)) {
-      return next(ApiError.forbidden(`You do not have the "${module}.${action}" permission`));
+      const key = `${module}.${action}`;
+      return next(auditDenied(req, ApiError.forbidden(`You do not have the "${key}" permission`), 'permission_missing', { permission: key }));
+    }
+    if (req.admin && req.admin.adminType === 'auditor' && !isReadOnlyAction(action)) {
+      const key = `${module}.${action}`;
+      return next(auditDenied(req, ApiError.forbidden('Auditors have read-only access'), 'auditor_read_only', { permission: key }));
     }
     return next();
   };
@@ -109,7 +121,8 @@ export function denyIf(moduleOrFn, actionOrFn) {
     const perms = await resolveActorPerms(req, next);
     if (!perms) return undefined;
     if (perms.has(`${module}.${action}`)) {
-      return next(ApiError.forbidden(`You are not allowed to use "${module}.${action}"`));
+      const key = `${module}.${action}`;
+      return next(auditDenied(req, ApiError.forbidden(`You are not allowed to use "${key}"`), 'permission_denied_by_rule', { permission: key }));
     }
     return next();
   };

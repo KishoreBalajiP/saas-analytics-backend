@@ -70,15 +70,56 @@ export const completeRun = async (id, runId, patch) => {
   return Report.findById(id).lean();
 };
 
-/** Find enabled scheduled reports whose next run is due (platform-wide scan). */
+const SCHEDULABLE_STATUSES = ['draft', 'active', 'paused'];
+
+/** Claim filter: nobody holds the schedule lease (or it expired). */
+const leaseFree = (now) => ({ $or: [{ lockedUntil: null }, { lockedUntil: { $lte: now } }] });
+
+/**
+ * Find enabled scheduled reports whose next run is due (platform-wide scan),
+ * oldest first. Candidates only: the caller must `claimDueSchedule` each one.
+ */
 export const findByDueSchedule = async ({ now = new Date(), limit = 50 } = {}) =>
   Report.find({
     'schedule.enabled': true,
     nextRunAt: { $lte: now },
-    status: { $in: ['draft', 'active', 'paused'] },
+    status: { $in: SCHEDULABLE_STATUSES },
+    ...leaseFree(now),
   })
+    .sort({ nextRunAt: 1 })
     .limit(limit)
+    .select({ _id: 1, tenantId: 1, nextRunAt: 1, schedule: 1, format: 1 })
     .lean();
+
+/**
+ * Atomically claim one due schedule: matches only while `nextRunAt` still has
+ * the value the scan saw and no live lease exists, and advances `nextRunAt`
+ * in the same write. Exactly one concurrent caller gets the document back;
+ * everyone else gets null.
+ */
+export const claimDueSchedule = ({ id, expectedNextRunAt, nextRunAt, owner, leaseMs, now = new Date() }) =>
+  Report.findOneAndUpdate(
+    {
+      _id: id,
+      'schedule.enabled': true,
+      nextRunAt: expectedNextRunAt,
+      status: { $in: SCHEDULABLE_STATUSES },
+      ...leaseFree(now),
+    },
+    {
+      $set: {
+        nextRunAt,
+        lockedBy: owner,
+        lockedUntil: new Date(now.getTime() + leaseMs),
+        lastScheduledAt: now,
+      },
+    },
+    { new: true, lean: true },
+  );
+
+/** Release a schedule claim held by `owner`. */
+export const releaseScheduleClaim = (id, owner) =>
+  Report.updateOne({ _id: id, lockedBy: owner }, { $set: { lockedBy: null, lockedUntil: null } });
 
 export default {
   list,
@@ -89,5 +130,7 @@ export default {
   addRun,
   completeRun,
   findByDueSchedule,
+  claimDueSchedule,
+  releaseScheduleClaim,
   _meta: { leanReturns: true, tenancy: 'tenant' },
 };

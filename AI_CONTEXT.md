@@ -153,6 +153,16 @@ into a single MongoDB aggregation over `ConnectorRow` (filters, date presets,
 `tenantScope` plugin. Dashboards (`dashboard.service.js`) execute each widget's
 whitelisted query contract through this engine with a cache key that encodes
 the widget/dashboard `updatedAt` revisions.
+The engine owns ONE strict query contract (JSDoc at the top of
+`analytics.engine.js`): the analytics endpoint, widgets, reports, alerts and
+the external API all validate through it, and anything unknown or invalid is
+a 400 `INVALID_QUERY` with field errors, never dropped. `dateRange.field`
+names the business date column (`ingestedAt` only when asked); presets are
+stored as presets and resolved at run time in the workspace time zone
+(`localization.timezone`, `GET/PATCH /workspace/settings`). Cache keys also
+carry each connector's `dataVersion` (bumped on every row write), and
+aggregations run under `maxTimeMS` and a per-tenant concurrency limit
+(`analytics.limiter.js`, 429 `QUERY_CONCURRENCY_LIMIT`).
 
 **Infrastructure abstraction** — feature code only consumes service wrappers
 (`cache.service.js`, `queue.service.js`, `storage.service.js`,
@@ -201,10 +211,17 @@ The load-bearing rules (enforced by CI or mandatory by docs):
   `@aws-sdk/client-s3`, `nodemailer`). Use the service wrappers.
 - **Every route mounts auth middleware** (`authenticate` / `adminAuth` /
   `optionalAuthenticate`) or an explicit `ci:routes-exempt` annotation.
+- **Every platform-admin route declares `permission(module, action)`**
+  (enforced by `ci:check-routes`) **and an `adminScope.*` guard** so
+  tenant-scoped admins stay in their tenant
+  ([platform-roles.md](src/docs/backend/platform-roles.md)).
 - **Every Mongoose model applies at least one shared plugin.**
 - **Every request is validated** with `validateRequest(schema)` — bad input is
   `422`, not `500`.
-- **Every `POST` is idempotency-safe** (`X-Idempotency-Key`).
+- **Every authenticated mutation is idempotency-safe** when the client sends
+  `X-Idempotency-Key`: `authenticate` / `adminAuth` apply
+  `idempotency.middleware.js` (keys scoped by actor + tenant + method + path).
+  Public routes (login, register, ...) are not covered.
 - **Throw `ApiError` factories only**; never raw `new Error(...)` or raw errors
   to clients; the global `errorHandler` formats every response envelope.
 - **Fail closed.** Unimplemented security middleware returns `501`, never

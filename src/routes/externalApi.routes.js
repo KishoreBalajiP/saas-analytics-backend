@@ -1,63 +1,93 @@
 /**
- * External API Routes (Sprint 9 - implemented).
+ * External API Routes (Sprint 9; devapi roadmap 3.3).
  *
- * All endpoints require X-Api-Key header (apiKeyAuth middleware).
- * Scopes are enforced inline via externalApiService.requireScope.
- * Dedicated rate limiter (config.security.rateLimit.external).
+ * Mounted twice (routes/index.js): `/external/v1` (versioned, documented in
+ * the OpenAPI reference at `/external/openapi.json`) and `/external`
+ * (legacy alias, same handlers).
  *
- * MIDDLEWARE ORDER
- *   authenticateApiKey -> externalLimiter -> handler
+ * MIDDLEWARE ORDER (API:limiter-order)
+ *   authenticateApiKey (validates X-Api-Key + IP allow-list, meters the
+ *   daily quota, records usage) -> apiKeyRateLimit (per key) -> handler
+ *
+ * Every route here must appear in src/openapi/externalApi.spec.js
+ * (tests/devapi asserts it).
  */
 
 import { Router } from 'express';
-import { authenticateApiKey } from '../middleware/apiKeyAuth.middleware.js';
+import { authenticateApiKey, apiKeyRateLimit } from '../middleware/apiKeyAuth.middleware.js';
+// rls: data access follows the key's creator.
+import { apiKeyDataActor } from '../middleware/dataAccess.middleware.js';
 import { createRateLimiter } from '../middleware/rateLimiter.middleware.js';
 import env from '../config/env.js';
 import * as externalController from '../controllers/externalApi.controller.js';
+// billing: plan feature gate (api_access) on every external API route.
+import { requireFeature } from '../middleware/requireFeature.middleware.js';
 
 const router = Router();
 
-const externalLimiter = createRateLimiter({
+// Public docs only: per-IP limiter (no key involved).
+const docsLimiter = createRateLimiter({
   windowMs: env.security.rateLimit.external.windowMs,
   limit: env.security.rateLimit.external.max,
 });
 
-// Inline authenticateApiKey on each route so ci:check-routes sees the auth guard.
-// Order: authenticateApiKey (validates X-Api-Key, attaches req.apiKey + req.tenant)
-//        externalLimiter (per-IP rate limit for external surface)
+router.get(
+  '/openapi.json', // ci:routes-exempt: public API reference document, no data
+  docsLimiter,
+  externalController.openApiSpec,
+);
+
 router.get(
   '/datasets',
   authenticateApiKey(),
-  externalLimiter,
+  requireFeature('api_access'),
+  apiKeyRateLimit,
+  apiKeyDataActor,
   externalController.listDatasets,
 );
 
 router.get(
   '/datasets/:datasetId',
   authenticateApiKey(),
-  externalLimiter,
+  requireFeature('api_access'),
+  apiKeyRateLimit,
+  apiKeyDataActor,
   externalController.getDataset,
 );
 
 router.get(
   '/datasets/:datasetId/query',
   authenticateApiKey(),
-  externalLimiter,
+  requireFeature('api_access'),
+  apiKeyRateLimit,
+  apiKeyDataActor,
   externalController.queryDataset,
 );
 
 router.get(
   '/datasets/:datasetId/rows',
   authenticateApiKey(),
-  externalLimiter,
+  requireFeature('api_access'),
+  apiKeyRateLimit,
+  apiKeyDataActor,
   externalController.listDatasetRows,
 );
 
 router.get(
   '/dashboards/:dashboardId',
   authenticateApiKey(),
-  externalLimiter,
+  requireFeature('api_access'),
+  apiKeyRateLimit,
+  apiKeyDataActor,
   externalController.getDashboard,
+);
+
+// devapi: leaked-key kill switch; the only mutation (audited).
+router.delete(
+  '/keys/self',
+  authenticateApiKey(),
+  apiKeyRateLimit,
+  externalController.revokeSelf,
 );
 
 export default router;

@@ -15,6 +15,8 @@ import rbacCache from '../../src/services/rbac.cache.service.js';
 import userRepository from '../../src/repositories/user.repository.js';
 import connectorRepository from '../../src/repositories/connector.repository.js';
 import { ConnectorRow } from '../../src/models/ConnectorRow.js';
+// billing: tenants exercising paid features need a plan that includes them.
+import { entitleTenant } from '../helpers/billing.js';
 
 const PASSWORD = 'Password123!';
 
@@ -25,6 +27,7 @@ after(async () => { await stopHttp(); await stopMongo(); });
 async function onboard() {
   const owner = { email: `owner-${shortToken(10).toLowerCase()}@example.com`, name: 'Owner', password: PASSWORD };
   const { tenant } = await tenantService.create({ tenant: { name: `Al ${shortToken(10)}` }, owner, initialize: true, by: 'root' });
+  await entitleTenant(tenant._id);
   const tenantId = tenant._id.toString();
   const login = await api('/api/v1/auth/login', { method: 'POST', headers: { 'X-Tenant-Id': tenantId }, body: { email: owner.email, password: PASSWORD } });
   assert.equal(login.status, 200);
@@ -145,6 +148,41 @@ test('disabled alerts never trigger and cooldown suppresses duplicates', async (
   const second = await api(`/api/v1/alerts/${enabledId}/evaluate`, { method: 'POST', headers: auth });
   assert.equal(second.json.data.triggered, false, 'second immediate evaluate must be suppressed by cooldown');
   assert.equal(second.json.data.suppressed, true);
+});
+
+test('the metric must be an output of the query, and every evaluation is recorded (HTTP)', async () => {
+  const { auth } = await onboard();
+  const datasetId = await seedDataset(await tenantOf(auth));
+  const query = { datasetId, groupBy: ['region'], metrics: [{ op: 'sum', field: 'amount', alias: 'revenue' }] };
+
+  const bad = await createAlert(auth, datasetId, { metric: 'sum_amount', query });
+  assert.equal(bad.status, 400, JSON.stringify(bad.json));
+  assert.equal(bad.json.code, 'ALERT_METRIC_INVALID');
+  assert.deepEqual(bad.json.errors, [{ field: 'metric', message: "must be one of the query's outputs: revenue" }]);
+
+  const created = await createAlert(auth, datasetId, { metric: 'revenue', groupEvaluation: 'any', condition: 'gt', threshold: 150, query });
+  assert.equal(created.status, 201, JSON.stringify(created.json));
+  assert.equal(created.json.data.groupEvaluation, 'any');
+  const alertId = created.json.data._id;
+
+  const first = await api(`/api/v1/alerts/${alertId}/evaluate`, { method: 'POST', headers: auth });
+  assert.equal(first.status, 200, JSON.stringify(first.json));
+  assert.equal(first.json.data.triggered, true, 'US (200) > 150');
+  assert.equal(first.json.data.value, 200);
+  assert.equal(first.json.data.groupsEvaluated, 2);
+  assert.equal(first.json.data.groupsMatched, 1);
+
+  const second = await api(`/api/v1/alerts/${alertId}/evaluate`, { method: 'POST', headers: auth });
+  assert.equal(second.json.data.outcome, 'suppressed');
+  const events = await api(`/api/v1/alerts/${alertId}/events`, { headers: auth });
+  assert.deepEqual(events.json.data.map((e) => e.status).sort(), ['suppressed', 'triggered']);
+  const stored = await api(`/api/v1/alerts/${alertId}`, { headers: auth });
+  assert.equal(stored.json.data.lastEvaluation.outcome, 'suppressed');
+  assert.ok(new Date(stored.json.data.nextEvaluationAt) > new Date());
+
+  const patched = await api(`/api/v1/alerts/${alertId}`, { method: 'PATCH', headers: auth, body: { metric: 'count' } });
+  assert.equal(patched.status, 400);
+  assert.equal(patched.json.code, 'ALERT_METRIC_INVALID');
 });
 
 async function tenantOf(auth) {

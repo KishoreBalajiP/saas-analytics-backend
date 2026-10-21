@@ -1,5 +1,9 @@
 # Platform / feature-flags
 
+> **Implemented (roadmap 2.4).** See `STATUS.md` for the real source files.
+> Sections below marked "architecture only" describe the original design.
+
+
 Feature flags let the platform team ship behaviour behind a runtime gate.
 A flag may be on globally, on for a tenant, on for a cohort, or off.
 

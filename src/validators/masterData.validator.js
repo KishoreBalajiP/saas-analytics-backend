@@ -7,9 +7,12 @@
  *   path traversal / stray keys never reach the repository.
  *
  * RESPONSIBILITY
- *   - listSchema     GET  /:catalogue                        (page, limit, locale, search)
- *   - createSchema   POST /:catalogue                        (body + catalogue param)
- *   - updateSchema   PATCH /:catalogue/:id                   (id param; body is free-form patch)
+ *   - listSchema       GET  /:catalogue              (page, limit, locale, search <= 64)
+ *   - itemSchema       GET/DELETE /:catalogue/:id    (catalogue + id params)
+ *   - catalogueSchema  POST /:catalogue/import|export (catalogue param)
+ *   - createSchema     POST /:catalogue              (whitelisted body + catalogue param)
+ *   - updateSchema     PATCH /:catalogue/:id         (whitelisted patch: code, name,
+ *                                                     locale, data; never isSystem)
  *
  * CODING GUIDELINES
  *   - `catalogue` MUST match `/^[a-z0-9_]+$/` to keep it index-safe.
@@ -19,22 +22,38 @@
 
 const CATALOGUE_RE = /^[a-z0-9_]+$/;
 
+/** Longest accepted search term (it is regex-escaped before use). */
+export const MAX_SEARCH_LENGTH = 64;
+
+const catalogueParam = { type: 'string', required: true, pattern: CATALOGUE_RE };
+
 export const listSchema = {
-  params: { catalogue: { type: 'string', required: true, pattern: CATALOGUE_RE } },
+  params: { catalogue: catalogueParam },
   query: {
     page: { type: 'integer', min: 1 },
     limit: { type: 'integer', min: 1, max: 100 },
-    locale: { type: 'string' },
-    search: { type: 'string' },
+    locale: { type: 'string', maxLength: 16 },
+    search: { type: 'string', maxLength: MAX_SEARCH_LENGTH },
   },
 };
 
+export const itemSchema = {
+  params: {
+    catalogue: catalogueParam,
+    id: { type: 'objectId', required: true },
+  },
+};
+
+export const catalogueSchema = {
+  params: { catalogue: catalogueParam },
+};
+
 export const createSchema = {
-  params: { catalogue: { type: 'string', required: true, pattern: CATALOGUE_RE } },
+  params: { catalogue: catalogueParam },
   body: {
     code: { type: 'string', required: true, maxLength: 60 },
     name: { type: 'string', required: true, maxLength: 120 },
-    locale: { type: 'string' },
+    locale: { type: 'string', maxLength: 16 },
     data: { type: 'object' },
     isSystem: { type: 'boolean' },
   },
@@ -42,13 +61,23 @@ export const createSchema = {
 
 export const updateSchema = {
   params: {
-    catalogue: { type: 'string', required: true, pattern: CATALOGUE_RE },
+    catalogue: catalogueParam,
     id: { type: 'objectId', required: true },
+  },
+  // Whitelist: unknown keys (catalogue, isSystem, audit fields) are dropped.
+  body: {
+    code: { type: 'string', minLength: 1, maxLength: 60 },
+    name: { type: 'string', minLength: 1, maxLength: 120 },
+    locale: { type: 'string', maxLength: 16 },
+    data: { type: 'object' },
   },
 };
 
 export default {
   listSchema,
+  itemSchema,
+  catalogueSchema,
   createSchema,
   updateSchema,
+  MAX_SEARCH_LENGTH,
 };

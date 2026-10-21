@@ -1,46 +1,97 @@
 /**
- * /api/v1/settings routes - Hot-reloadable, scoped settings.
+ * /api/v1/settings routes - platform settings (roadmap 2.4 - implemented).
  *
  * WHY IT EXISTS
- *   Most configuration must be changeable without redeploy. Settings are
- *   platform OR tenant-scoped, typed, versioned, and audited. Reads go
- *   through `src/cache/` so the hot path stays fast. Backed by `platform/
- *   settings/`.
+ *   Platform admins change the PLATFORM value of each catalogue setting
+ *   (`DEFAULT_SETTINGS` in `services/tenantSettings.service.js`) without a
+ *   redeploy. Tenants inherit the platform value unless they override it
+ *   (tenant overrides: `/tenants/:id/settings`, `/workspace/settings`).
  *
- * RESPONSIBILITY (planned, NOT implemented)
- *   - GET    /                     - list (scope-dependent)
- *   - GET    /:key                 - get one (resolves effective value)
- *   - PUT    /:key                 - update (optimistic concurrency)
- *   - POST   /                     - create
- *   - DELETE /:key                 - delete (refuses if read-only)
- *   - GET    /tenants/:tenantId/...  - tenant-scoped views
+ * ENDPOINTS
+ *   - GET    /                 list (secrets masked)          settings.view
+ *   - GET    /:key             one setting (secret masked)    settings.view
+ *   - PUT    /:key             change { value, version? }     settings.update
+ *                                (+ settings.secrets.update for a secret)
+ *   - POST   /:key/reset       back to the built-in default   settings.update
+ *   - GET    /:key/history     versions, newest first         settings.view
+ *   - POST   /:key/rollback    restore { toVersion }          settings.update
+ *   - GET    /:key/secret      decrypted secret (audited)     settings.secrets.view
  *
- * HOW TO EXTEND
- *   - Use `If-Match: <version>` header on writes (Phase 2).
- *   - Writes invalidate the cache key `settings:<scope>:<tenantId>:<key>`.
- *   - Read endpoint never returns `isSecret: true` values in plaintext.
+ * MIDDLEWARE ORDER
+ *   adminAuth -> requirePlatformScope -> permission(...) -> validate -> handler
+ *
+ * RULES
+ *   - Every change is validated per key, versioned (optimistic concurrency
+ *     on `version`, 409 VERSION_CONFLICT), recorded in the history and
+ *     audited with secrets redacted.
+ *   - Settings are a code-defined catalogue: there is no create/delete.
  */
 
 import { Router } from 'express';
-import asyncHandler from '../utils/asyncHandler.js';
+import { adminAuth } from '../middleware/adminAuth.middleware.js';
+import { permission } from '../middleware/permission.middleware.js';
+import { requirePlatformScope } from '../middleware/configAccess.middleware.js';
+import { validate } from '../validators/index.js';
+import settingValidator from '../validators/setting.validator.js';
+import settingController from '../controllers/setting.controller.js';
 
 const router = Router();
 
-const notImplemented = (op) =>
-  asyncHandler(async (_req, res) => {
-    res.status(501).json({
-      success: false,
-      statusCode: 501,
-      message: `${op} is not implemented yet (Phase 1.2 architecture placeholder)`,
-      hint: 'See src/modules/platform/settings/README.md',
-    });
-  });
-
-router.get('/', notImplemented('GET /settings'));
-router.get('/:key', notImplemented('GET /settings/:key'));
-router.put('/:key', notImplemented('PUT /settings/:key'));
-router.post('/', notImplemented('POST /settings'));
-router.delete('/:key', notImplemented('DELETE /settings/:key'));
-router.get('/tenants/:tenantId/settings', notImplemented('GET /settings/tenants/:tenantId/settings'));
+router.get(
+  '/',
+  adminAuth,
+  requirePlatformScope,
+  permission('settings', 'view'),
+  validate(settingValidator.listSchema),
+  settingController.listSettings,
+);
+router.get(
+  '/:key',
+  adminAuth,
+  requirePlatformScope,
+  permission('settings', 'view'),
+  validate(settingValidator.keyParamSchema),
+  settingController.getSetting,
+);
+router.put(
+  '/:key',
+  adminAuth,
+  requirePlatformScope,
+  permission('settings', 'update'),
+  validate(settingValidator.updateSchema),
+  settingController.updateSetting,
+);
+router.post(
+  '/:key/reset',
+  adminAuth,
+  requirePlatformScope,
+  permission('settings', 'update'),
+  validate(settingValidator.resetSchema),
+  settingController.resetSetting,
+);
+router.get(
+  '/:key/history',
+  adminAuth,
+  requirePlatformScope,
+  permission('settings', 'view'),
+  validate(settingValidator.historySchema),
+  settingController.settingHistory,
+);
+router.post(
+  '/:key/rollback',
+  adminAuth,
+  requirePlatformScope,
+  permission('settings', 'update'),
+  validate(settingValidator.rollbackSchema),
+  settingController.rollbackSetting,
+);
+router.get(
+  '/:key/secret',
+  adminAuth,
+  requirePlatformScope,
+  permission('settings.secrets', 'view'),
+  validate(settingValidator.keyParamSchema),
+  settingController.revealSecret,
+);
 
 export default router;

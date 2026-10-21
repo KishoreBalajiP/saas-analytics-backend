@@ -24,6 +24,7 @@ import ApiError from '../utils/ApiError.js';
 import { getActor } from './actor.js';
 import roleService from '../services/role.service.js';
 import adminRepository from '../repositories/admin.repository.js';
+import { auditDenied } from './audit.middleware.js';
 
 /**
  * Require the actor to hold ANY role, or at least one of `allowedRoles`.
@@ -34,7 +35,7 @@ import adminRepository from '../repositories/admin.repository.js';
 export function requireRole(...allowedRoles) {
   return async (req, _res, next) => {
     const actor = getActor(req);
-    if (!actor) return next(ApiError.forbidden('Authenticated identity is required'));
+    if (!actor) return next(auditDenied(req, ApiError.forbidden('Authenticated identity is required'), 'no_identity'));
 
     let roles;
     try {
@@ -48,10 +49,10 @@ export function requireRole(...allowedRoles) {
     }
 
     if (roles.length === 0) {
-      return next(ApiError.forbidden('You do not have a role assigned to this identity'));
+      return next(auditDenied(req, ApiError.forbidden('You do not have a role assigned to this identity'), 'role_missing'));
     }
     if (allowedRoles.length > 0 && !allowedRoles.some((r) => roles.includes(r))) {
-      return next(ApiError.forbidden('You do not have permission to perform this action'));
+      return next(auditDenied(req, ApiError.forbidden('You do not have permission to perform this action'), 'role_missing', { roles: allowedRoles }));
     }
     return next();
   };
@@ -68,7 +69,7 @@ export function requireAdminType(...allowedAdminTypes) {
   return async (req, _res, next) => {
     const actor = getActor(req);
     if (!actor || actor.type !== 'admin') {
-      return next(ApiError.forbidden('Platform admin identity is required'));
+      return next(auditDenied(req, ApiError.forbidden('Platform admin identity is required'), 'admin_type'));
     }
 
     let admin;
@@ -77,9 +78,9 @@ export function requireAdminType(...allowedAdminTypes) {
     } catch (err) {
       return next(err);
     }
-    if (!admin) return next(ApiError.forbidden('Admin account not found'));
+    if (!admin) return next(auditDenied(req, ApiError.forbidden('Admin account not found'), 'no_identity'));
     if (!allowedAdminTypes.includes(admin.adminType)) {
-      return next(ApiError.forbidden('Your admin type does not allow this action'));
+      return next(auditDenied(req, ApiError.forbidden('Your admin type does not allow this action'), 'admin_type', { adminTypes: allowedAdminTypes }));
     }
     return next();
   };

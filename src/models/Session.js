@@ -16,6 +16,8 @@
  *     sessions are purged by the TTL index on `expiresAt`).
  *   - JWT access tokens carry `sessionId`; the middleware rejects when
  *     the session is not `active`.
+ *   - `authenticatedAt` + `familyId` survive rotation, so the absolute
+ *     session lifetime is enforced from the original sign-in.
  *
  * PLUGINS
  *   tenantScope (optional: platform sessions have `tenantId: null`),
@@ -34,6 +36,11 @@ import { tenantScope, paginate, optimisticConcurrency, audit } from './plugins/i
 export const MODEL_NAME = 'Session';
 export const SESSION_STATUSES = Object.freeze(['active', 'revoked', 'expired']);
 export const ACTOR_TYPES = Object.freeze(['user', 'admin', 'service']);
+// adminauth: a restricted session may only complete one pending step.
+// `mfa_enrollment`: a privileged admin signed in without MFA and may only
+// enrol it (see `authenticateToken({ allowRestrictions })`).
+export const SESSION_RESTRICTION_MFA_ENROLLMENT = 'mfa_enrollment';
+export const SESSION_RESTRICTIONS = Object.freeze([SESSION_RESTRICTION_MFA_ENROLLMENT]);
 
 const sessionSchema = new mongoose.Schema(
   {
@@ -56,11 +63,28 @@ const sessionSchema = new mongoose.Schema(
     ip: { type: String, default: '' },
     userAgent: { type: String, default: '' },
     issuedAt: { type: Date, default: () => new Date() },
+    // Original sign-in time of this session family. Rotation copies it to
+    // the successor, so the absolute lifetime (`AUTH_SESSION_ABSOLUTE_TTL`)
+    // is measured from the login, never from the latest refresh. Null only
+    // on sessions written before the field existed (issuedAt is used then).
+    authenticatedAt: { type: Date, default: null },
+    // Stable id shared by every rotation of one login (the first sessionId).
+    familyId: { type: String, default: null },
     lastUsedAt: { type: Date, default: () => new Date() },
     expiresAt: { type: Date, required: true, index: { expires: 0 } },
     status: { type: String, enum: [...SESSION_STATUSES], default: 'active', index: true },
     revokedAt: { type: Date, default: null },
     revokedReason: { type: String, default: null },
+    // Successor's sessionId once this session was rotated. Set in the same
+    // atomic update that ends this session, so a refresh that lost a
+    // concurrent rotation race can find the session that won.
+    replacedBy: { type: String, default: null },
+    // adminauth: null for a normal session, else one of SESSION_RESTRICTIONS.
+    // Rotation copies it; enrolling MFA lifts it for the whole family.
+    restriction: { type: String, enum: [...SESSION_RESTRICTIONS, null], default: null },
+    // adminauth: last successful step-up (password + current code) on this
+    // login. Sensitive admin actions need it within ADMIN_STEP_UP_TTL_MS.
+    stepUpAt: { type: Date, default: null },
   },
   { timestamps: true },
 );

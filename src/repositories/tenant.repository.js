@@ -158,6 +158,39 @@ export const archive = (id, { by = null, reason = null } = {}) =>
     { new: true, runValidators: true, lean: true },
   );
 
+// members: ownership and deletion writes (roadmap 2.10).
+
+/**
+ * Point `ownerId` at a new owner only while it still holds the value the
+ * caller read (compare-and-set), so two concurrent transfers cannot both win.
+ * Returns the updated tenant, or null when `ownerId` changed meanwhile.
+ */
+export const compareAndSetOwner = (id, { expected = null, next, by = null }) =>
+  Tenant.findOneAndUpdate(
+    { _id: id, ownerId: expected ?? null },
+    { $set: { ownerId: next ? String(next) : null, updatedBy: by } },
+    { new: true, runValidators: true, lean: true },
+  );
+
+/**
+ * Close a workspace for deletion: `active` -> `disabled` with the deletion
+ * reason. Only matches an active tenant. Returns the updated doc or null.
+ */
+export const disableForDeletion = (id, { by = null, reason = null } = {}) =>
+  Tenant.findOneAndUpdate(
+    { _id: id, status: 'active' },
+    { $set: { status: 'disabled', disabledAt: new Date(), disabledReason: reason, updatedBy: by } },
+    { new: true, runValidators: true, lean: true },
+  );
+
+/** Archived tenants archived before `before` (purge scheduling). */
+export const listArchivedBefore = ({ before, limit = 100 }) =>
+  Tenant.find({ status: 'archived', archivedAt: { $ne: null, $lte: before } })
+    .sort({ archivedAt: 1 })
+    .limit(limit)
+    .select('_id slug name status archivedAt')
+    .lean();
+
 /** Count tenants in a status (used by statistics / platform dashboard). */
 export const countByStatus = (status) => Tenant.countDocuments({ status });
 
@@ -180,5 +213,8 @@ export default {
   disable,
   archive,
   countByStatus,
+  compareAndSetOwner,
+  disableForDeletion,
+  listArchivedBefore,
   _meta: { leanReturns: true, tenancy: 'platform', immutable: ['slug'] },
 };

@@ -40,7 +40,18 @@ const KNOWN_FEATURE_KEYS = Object.freeze([
   'sso',
   'embed',
   'webhook_connectors',
+  // billing: feature-entitlement contract keys (requireFeature).
+  'embedding',
+  'api_access',
+  'scheduled_delivery',
+  'ai_assistant',
+  'audit_streaming',
+  'row_level_security',
 ]);
+
+// billing: prepaid plan prices (`data.prices`).
+const SUPPORTED_CURRENCIES = Object.freeze(['INR']);
+const MAX_PRICE_MINOR = 100_000_000_00;
 
 function limitSchema() {
   return {
@@ -78,6 +89,9 @@ export const planDataSchema = {
     graceDays: { type: 'integer', min: 0, max: 90 },
     features: featuresSchema(),
     limits: limitsSchema(),
+    // billing: `[{ interval: 'month'|'year', amountMinor, currency }]`,
+    // fully validated by plan.service#normalizePrices.
+    prices: { type: 'array' },
   },
 };
 
@@ -125,6 +139,9 @@ export const planConstants = Object.freeze({
   PLAN_TIER_MAX,
   /** Safety net for entitlement overrides; see plan section 7.3. */
   OVERRIDE_SAFETY_FACTOR: 1000,
+  // billing: plan price validation.
+  SUPPORTED_CURRENCIES,
+  MAX_PRICE_MINOR,
 });
 
 export default {

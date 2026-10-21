@@ -10,7 +10,8 @@
  *   - query(options)        - run (cached) queryRows + persist a run record.
  *   - getQuery(tenantId,id) - fetch a historical run.
  *   - listQueries(...)      - paginated run history.
- *   - scheduleExport(opts)  - hand off an async export to the queue.
+ *   - scheduleExport(opts)  - validate + hand off an async export to the queue.
+ *   - getExport / downloadExport - status and signed download of an export.
  *
  * CODING GUIDELINES
  *   - A cache hit does NOT create a history record (only real computation does).
@@ -24,67 +25,13 @@ import ApiError from '../utils/ApiError.js';
 import * as engine from './analytics.engine.js';
 import * as analyticsCache from './analytics.cache.js';
 import * as repository from '../repositories/analytics.repository.js';
+import connectorRepository from '../repositories/connector.repository.js';
 import * as scheduler from './analytics.scheduler.js';
+import * as analyticsExport from './analyticsExport.service.js';
+// ai-catalogue: P7 attribution of every computed run.
+import { buildAttribution } from './queryAttribution.service.js';
 
-/**
- * Run (or serve a cached) analytics query for a tenant.
- */
-export async function query(options) {
-  const {
-    tenantId,
-    connectorIds,
-    filters,
-    filtersOp,
-    dateRange,
-    metrics,
-    groupBy,
-    orderBy,
-    pagination,
-    ttlSec,
-  } = options || {};
-
-  if (!tenantId) throw ApiError.badRequest('tenantId is required');
-
-  const params = { connectorIds, filters, filtersOp, dateRange, metrics, groupBy, orderBy, pagination };
-  const cacheKey = analyticsCache.buildCacheKey({ tenantId, ...params });
-
-  const { result, cached } = await analyticsCache.cachedQuery(cacheKey, () =>
-    engine.queryRows({ tenantId, ...params }),
-  );
-
-  if (!cached) {
-    const meta = await repository
-      .createQuery({
-        tenantId,
-        createdBy: null,
-        params,
-        status: 'ready',
-        connectorIds: connectorIds || [],
-        resultMeta: {
-          rowCount: result.rows.length,
-          columns: result.columns,
-          cached: false,
-          cacheKey,
-          ttlSec: ttlSec ?? analyticsCache.DEFAULT_TTL_SEC,
-          executedAt: result.executedAt,
-        },
-      })
-      .catch(() => null); // best-effort history persistence
-    return {
-      rows: result.rows,
-      total: result.total,
-      page: result.page,
-      pages: result.pages,
-      limit: result.limit,
-      columns: result.columns,
-      executedAt: result.executedAt,
-      groupMode: result.groupMode,
-      cached: false,
-      cacheKey,
-      queryId: meta ? String(meta._id) : null,
-    };
-  }
-
+function shape(result, { cached, cacheKey, queryId }) {
   return {
     rows: result.rows,
     total: result.total,
@@ -94,10 +41,78 @@ export async function query(options) {
     columns: result.columns,
     executedAt: result.executedAt,
     groupMode: result.groupMode,
-    cached: true,
+    timezone: result.timezone,
+    window: result.window,
+    cached,
     cacheKey,
-    queryId: null,
+    queryId,
+    // ai-catalogue: present only for a compared query.
+    ...(result.compare ? { compare: result.compare } : {}),
   };
+}
+
+/**
+ * Run (or serve a cached) analytics query for a tenant.
+ *
+ * The query is validated against the engine's strict contract first (400
+ * INVALID_QUERY on any unknown or invalid part), then prepared: relative
+ * presets resolve to an absolute window in the workspace time zone. The
+ * cache key is built from the prepared query plus the dataset versions of
+ * the connectors it reads, so results refresh as soon as a sync lands.
+ */
+export async function query(options) {
+  const { tenantId, actorId = null, actorType = null, source = 'analytics', ttlSec, ...rest } = options || {};
+  if (!tenantId) throw ApiError.badRequest('tenantId is required');
+
+  // ai-catalogue: the analytics endpoint also accepts `compare` (period over period).
+  const params = engine.validateQuery(rest, { extra: { compare: engine.validateCompare } });
+  const { options: prepared, window } = await engine.prepareQuery({ ...params, tenantId });
+  const dataVersions = await connectorRepository.dataVersions(tenantId, prepared.connectorIds);
+  const cacheKey = analyticsCache.buildCacheKey({ ...prepared, dataVersions });
+
+  const startedAt = Date.now();
+  const { result, cached } = await analyticsCache.cachedQuery(
+    cacheKey,
+    () => engine.queryRows(prepared),
+    ttlSec ?? analyticsCache.DEFAULT_TTL_SEC,
+  );
+
+  // The cache holds the result of the absolute window; report the preset
+  // that was actually asked for.
+  const answer = engine.withRequestedPreset(result, params.dateRange);
+  if (cached) return shape(answer, { cached: true, cacheKey, queryId: null });
+
+  const meta = await repository
+    .createQuery({
+      tenantId,
+      createdBy: actorId,
+      // The query as asked (presets kept), so a re-run from history moves
+      // with the clock instead of replaying a frozen window.
+      params,
+      status: 'ready',
+      connectorIds: params.connectorIds || [],
+      resultMeta: {
+        rowCount: result.rows.length,
+        columns: result.columns,
+        cached: false,
+        cacheKey,
+        ttlSec: ttlSec ?? analyticsCache.DEFAULT_TTL_SEC,
+        executedAt: result.executedAt,
+      },
+      // ai-catalogue: who ran it, which dataset versions, which window and engine parameters.
+      attribution: buildAttribution({
+        source,
+        actorType,
+        actorId,
+        prepared,
+        window: result.window ?? window,
+        dataVersions,
+        result,
+        durationMs: Date.now() - startedAt,
+      }),
+    })
+    .catch(() => null); // best-effort history persistence
+  return shape(answer, { cached: false, cacheKey, queryId: meta ? String(meta._id) : null });
 }
 
 /** Fetch a single historical run. */
@@ -106,13 +121,28 @@ export async function getQuery({ tenantId, id }) {
 }
 
 /** Paginated run history for a tenant. */
-export async function listQueries({ tenantId, page, limit, status }) {
-  return repository.listQueries({ tenantId, page, limit, status });
+export async function listQueries({ tenantId, page, limit, status, kind }) {
+  return repository.listQueries({ tenantId, page, limit, status, kind });
 }
 
-/** Schedule an async export (enqueue + record a `pending` run). */
-export async function scheduleExport(opts) {
-  return scheduler.scheduleExport(opts);
+/**
+ * Schedule an async export of the WHOLE result of a query: validate the
+ * request (format + strict query contract + workspace datasets), record a
+ * `pending` export and enqueue it. See analyticsExport.service.js.
+ */
+export async function scheduleExport({ tenantId, actorId = null, body } = {}) {
+  const { format, query } = await analyticsExport.validateExportRequest({ tenantId, body });
+  return scheduler.scheduleExport({ tenantId, actorId, format, query });
 }
 
-export default { query, getQuery, listQueries, scheduleExport };
+/** Status of one of the caller's exports. */
+export async function getExport({ tenantId, actorId, exportId }) {
+  return analyticsExport.getStatus({ tenantId, actorId, exportId });
+}
+
+/** Short-lived signed download URL of one of the caller's ready exports. */
+export async function downloadExport({ tenantId, actorId, exportId }) {
+  return analyticsExport.getDownload({ tenantId, actorId, exportId });
+}
+
+export default { query, getQuery, listQueries, scheduleExport, getExport, downloadExport };

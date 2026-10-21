@@ -21,6 +21,8 @@
  *   - `isSystem` roles are immutable: update and remove throw 409.
  *   - Remove refuses while `countAssignments(roleId) > 0` (409).
  *   - Every mutation invalidates the RBAC cache for the affected scope.
+ *   - Permission grants and revocations are security events
+ *     (`rbac.permission.granted` / `rbac.permission.revoked`).
  *   - All expected failures use `ApiError` factories.
  */
 
@@ -28,6 +30,60 @@ import ApiError from '../utils/ApiError.js';
 import roleRepository from '../repositories/role.repository.js';
 import permissionRepository from '../repositories/permission.repository.js';
 import { invalidateScope, resolve } from './rbac.cache.service.js';
+import adminRepository from '../repositories/admin.repository.js';
+import { securityEvent } from './securityEvent.service.js';
+import {
+  LEGACY_PLATFORM_ROLE_NAMES,
+  PLATFORM_ROLES,
+  findPlatformRole,
+  isBuiltInPlatformRole,
+} from '../constants/platformRoles.js';
+
+/** Names reserved for built-in (and legacy bootstrap) platform roles. */
+const RESERVED_PLATFORM_ROLE_NAMES = new Set([
+  ...PLATFORM_ROLES.map((r) => r.name),
+  ...LEGACY_PLATFORM_ROLE_NAMES,
+]);
+
+/**
+ * Built-in platform roles are defined in code (`constants/platformRoles.js`)
+ * and converged by `npm run db:permissions`; their grants are not editable
+ * over HTTP (create a custom role instead).
+ */
+function assertNotBuiltIn(role) {
+  if (isBuiltInPlatformRole(role)) {
+    throw ApiError.conflict('Built-in platform roles are managed by the role catalogue; create a custom role instead');
+  }
+}
+
+/** Display metadata for a platform role row (built-in roles get labels). */
+function decorate(role, permissionCount) {
+  const definition = isBuiltInPlatformRole(role) ? findPlatformRole(role.name) : null;
+  return {
+    ...role,
+    scope: role.tenantId == null ? 'platform' : 'tenant',
+    builtIn: Boolean(definition),
+    label: definition?.label ?? role.name,
+    adminType: definition?.adminType ?? null,
+    permissionCount,
+  };
+}
+
+/**
+ * Changing the permissions of a platform role (tenantId null) is a privilege
+ * change for every admin who holds it, so only an active super admin may do
+ * it. Requests attribute the actor by ObjectId; null or a non-ObjectId label
+ * is an internal/system caller.
+ */
+async function assertMayEditRolePermissions({ role, by }) {
+  const isPlatformRole = role.tenantId === null || role.tenantId === undefined;
+  if (isPlatformRole && by && /^[0-9a-fA-F]{24}$/.test(String(by))) {
+    const actorDoc = await adminRepository.findById(by);
+    if (!actorDoc || actorDoc.status !== 'active' || actorDoc.adminType !== 'super') {
+      throw ApiError.forbidden('Only an active super administrator can change platform role permissions');
+    }
+  }
+}
 
 /** Fields a caller may patch on a role. `scope`/`level`/`isSystem` are excluded. */
 const UPDATABLE = ['name', 'description'];
@@ -45,7 +101,9 @@ const UPDATABLE = ['name', 'description'];
 export async function list({ tenantId = null, search, page = 1, limit = 20 } = {}) {
   const filter = {};
   if (search) filter.name = { $regex: escapeRegExp(search), $options: 'i' };
-  return roleRepository.list({ tenantId, filter, page, limit });
+  const result = await roleRepository.list({ tenantId, filter, page, limit });
+  const counts = await roleRepository.countPermissionsForRoles(result.docs.map((r) => String(r._id)));
+  return { ...result, docs: result.docs.map((r) => decorate(r, counts.get(String(r._id)) ?? 0)) };
 }
 
 /**
@@ -61,6 +119,9 @@ export async function list({ tenantId = null, search, page = 1, limit = 20 } = {
 export async function create({ name, tenantId = null, description = '', by = null } = {}) {
   const normalized = String(name ?? '').trim();
   if (!normalized) throw ApiError.badRequest('Role name is required');
+  if (tenantId == null && RESERVED_PLATFORM_ROLE_NAMES.has(normalized)) {
+    throw ApiError.conflict(`"${normalized}" is reserved for a built-in platform role`);
+  }
   const existing = await roleRepository.findByName({ tenantId, name: normalized });
   if (existing) throw ApiError.conflict(`A role named "${normalized}" already exists in this scope`);
   const role = await roleRepository.create({
@@ -154,10 +215,17 @@ export async function addPermission({ roleId, permissionKey, by = null } = {}) {
   if (!role) throw ApiError.notFound('Role not found');
   const permission = await permissionRepository.findPermissionByKey(permissionKey);
   if (!permission) throw ApiError.notFound(`Permission "${permissionKey}" not found`);
+  assertNotBuiltIn(role);
+  await assertMayEditRolePermissions({ role, by });
 
   const joined = await roleRepository.attachPermission(roleId, permission._id, by);
   await invalidateScope(role.tenantId ?? null);
   if (!joined) return { alreadyGranted: true };
+  await securityEvent('PERMISSION_GRANTED', {
+    tenantId: role.tenantId ?? null,
+    resource: { type: 'role', id: String(roleId) },
+    metadata: { roleId: String(roleId), roleName: role.name, permission: permissionKey },
+  });
   return joined;
 }
 
@@ -176,9 +244,18 @@ export async function removePermission({ roleId, permissionKey, by = null } = {}
   if (!role) throw ApiError.notFound('Role not found');
   const permission = await permissionRepository.findPermissionByKey(permissionKey);
   if (!permission) throw ApiError.notFound(`Permission "${permissionKey}" not found`);
+  assertNotBuiltIn(role);
+  if (role.tenantId === null || role.tenantId === undefined) await assertMayEditRolePermissions({ role, by });
 
   const removed = await roleRepository.detachPermission(roleId, permission._id);
   await invalidateScope(role.tenantId ?? null);
+  if (removed > 0) {
+    await securityEvent('PERMISSION_REVOKED', {
+      tenantId: role.tenantId ?? null,
+      resource: { type: 'role', id: String(roleId) },
+      metadata: { roleId: String(roleId), roleName: role.name, permission: permissionKey },
+    });
+  }
   return { removed };
 }
 

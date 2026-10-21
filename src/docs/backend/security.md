@@ -36,12 +36,14 @@
 
 | Threat | Surface | Mitigation | Owning Sprint |
 | --- | --- | --- | --- |
-| Brute force | `/login`, `/refresh` | `strictLimiter` + persisted account lockout | Sprint 1 |
+| Brute force | `/login`, `/refresh` | Per-route limiters (IP + account) + persisted account lockout that decays after the window | Sprint 1 / 1.9 |
 | Credential stuffing | `/login` | Argon2id (slow) + lockout + rate limit | Sprint 1 |
 | User enumeration | `/login` | Generic error messages | Sprint 1 |
 | Token theft | access + refresh | Short access TTL (15 min) + rotating refresh + family revocation | Sprint 1 |
-| Token replay | refresh | Family revocation on reuse | Sprint 1 |
-| XSS / cookie theft | refresh cookie | HttpOnly + Secure + SameSite | Sprint 1 |
+| Token replay | refresh | Family revocation on reuse; a lagging duplicate within `AUTH_REFRESH_REUSE_GRACE_MS` (10 s) of the rotation, one hop only, gets an access token for the live successor and no new cookie | Sprint 1 / 1.9 |
+| XSS / cookie theft | refresh cookie | HttpOnly + Secure + SameSite; the refresh token and session id are never in a response body; per-portal cookie name + path | Sprint 1 / 1.9 |
+| Stale access after suspension | access token | Account and tenant status re-checked on every authenticated request and socket handshake | 1.9 |
+| Endless session | refresh | Absolute lifetime (`AUTH_SESSION_ABSOLUTE_TTL`) enforced at refresh regardless of rotation | 1.9 |
 | CSRF | refresh cookie + access token | SameSite=Lax + bearer access token | Sprint 1 |
 | MFA bypass | `/login` | TOTP required for `super_admin` | Sprint 1 |
 | Cross-tenant access | every business endpoint | `resolveTenant` + `tenantIsolation` + `tenantScope` plugin | Sprints 1–2 |
@@ -56,6 +58,7 @@
 | Audit-log gap | every mutation | `audit` plugin emits on every save | Sprint 0 + Sprint 8 (consumer that persists `AuditLog` rows was originally Sprint 7; re-scoped — see `phases/sprint-7.md`) |
 | Hash-chain tamper | audit log | Sequential IDs in MVP; hash-chain in Phase 3 | Phase 3 |
 | Impersonation abuse | `/support/*` | Mandatory reason + daily cap + double log | Sprint 8 |
+| Impersonation abuse (roadmap 2.3) | `/support/*`, `/workspace/support-access`, `/support-session` | Diagnostics first; workspace consent or four-eyes break-glass required; read-only support sessions (unsafe methods 403 `IMPERSONATION_READ_ONLY`), time-boxed (<= 60 min, no refresh); operator id (`impersonatedBy`) on every access-log and audit row; atomic per-admin daily cap; tenant-visible grants, sessions and activity | Roadmap 2.3 |
 
 ## Controls Catalogue
 
@@ -102,15 +105,30 @@
 - **Sensitive fields:** stripped before persistence.
 
 ### Rate limiting
-- **Global:** `apiLimiter` (300/15min).
-- **Auth:** `strictLimiter` (20/15min) on `/login` + `/refresh`.
-- **Per-account:** lockout after N failed attempts.
+- **Global:** `apiLimiter` (300/15min per IP).
+- **Auth (per portal, one bucket per route class, `AUTH_RATE_LIMIT_*`):**
+  login 10/15min per IP + account and 50/15min per IP; refresh 120/15min
+  per IP + session cookie; password forgot 5 per IP + account, reset 5 per
+  IP;
+  registration 10, email verify/resend 5 per IP; invitation preview/accept
+  20 per IP; admin MFA 10 per admin. Counters are shared through Redis
+  when `REDIS_URL` is set (`rate-limit-redis`), in memory otherwise. A
+  limit returns 429 `RATE_LIMITED` with `Retry-After`.
+- **Per-account:** lockout after N failed attempts; the counter restarts
+  once the lockout window has passed.
+- **Trust proxy:** limits key on `req.ip`; set `TRUST_PROXY` to the real
+  number of proxy hops or `X-Forwarded-For` can be spoofed.
 
 ### Headers
 - `helmet()` for the standard set.
 - `X-Tenant-Id`, `X-Idempotency-Key`, `X-Request-Id` exposed in
   CORS.
-- `X-Idempotent-Replay: true` on cached idempotency responses.
+- `X-Idempotent-Replay: true` on cached idempotency responses. Every
+  authenticated POST/PUT/PATCH/DELETE with `X-Idempotency-Key` is
+  replay-safe: keys are scoped by actor + tenant + method + path, only 2xx
+  outcomes are stored (24 h, encrypted), a different body with the same
+  key is 422 `IDEMPOTENCY_KEY_REUSED`, and a concurrent duplicate on
+  another instance is 409 `IDEMPOTENCY_IN_PROGRESS`.
 
 ## Best Practices
 

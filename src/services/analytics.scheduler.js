@@ -1,55 +1,33 @@
 /**
- * Analytics Scheduler (Sprint 5 - implemented).
+ * Analytics Scheduler (Sprint 5 - implemented; roadmap 1.5).
  *
  * PURPOSE
  *   Owns everything that happens OFF the HTTP hot path for analytics: async
- *   export jobs. A request comes in on `POST /analytics/export`, the service
- *   persists a `pending` AnalyticsQuery record, and this module enqueues a
- *   job on the analytics queue so a worker can run it later with retries.
+ *   export jobs. A request comes in on `POST /analytics/export`, a `pending`
+ *   export record (AnalyticsQuery, kind `export`) is persisted and a job is
+ *   enqueued on the analytics queue; the analytics worker
+ *   (`jobs/analytics.worker.js`, type `export`) writes the artefact through
+ *   `analyticsExport.service.processExport`.
  *
  * RESPONSIBILITY
- *   - scheduleExport({ tenantId, actorId, params }) -> { jobId, accepted }.
+ *   - scheduleExport({ tenantId, actorId, format, query })
+ *       -> { exportId, jobId, accepted, queued, status: 'pending', format }.
  *   - registerConsumer(handler) -> wire a worker to the analytics queue.
  *
- * MESSAGE SHAPE (produced here, consumed by the Sprint 9 worker):
- *   { jobId, tenantId, type: 'export', params }
+ * MESSAGE SHAPE (produced here, consumed by the analytics worker):
+ *   { jobId: 'export-<exportId>', tenantId, type: 'export', params: { exportId } }
  */
 
-import ApiError from '../utils/ApiError.js';
-import * as analyticsRepository from '../repositories/analytics.repository.js';
-import { enqueueAnalytics, getQueue } from './queue.service.js';
+import { getQueue } from './queue.service.js';
 import { QUEUE_NAMES } from '../queues/constants.js';
+import * as analyticsExportService from './analyticsExport.service.js';
 
 /**
- * Persist a `pending` query record and enqueue an async export job. The
- * returned `jobId` doubles as the AnalyticsQuery id so the worker can update
- * the run record on completion.
+ * Persist a `pending` export record and enqueue its job. `query` must
+ * already be validated (`analyticsExport.service.validateExportRequest`).
  */
-export async function scheduleExport({ tenantId, actorId, params = {} }) {
-  if (!tenantId) throw ApiError.badRequest('tenantId is required');
-
-  const query = await analyticsRepository.createQuery({
-    tenantId,
-    createdBy: actorId ?? null,
-    params,
-    status: 'pending',
-    connectorIds: params.connectorIds || [],
-    resultMeta: {},
-  });
-
-  const job = await enqueueAnalytics({
-    jobId: String(query._id),
-    tenantId,
-    type: 'export',
-    params,
-  });
-
-  return {
-    jobId: String(query._id),
-    accepted: true,
-    queued: true,
-    workerJobId: job?.id ?? null,
-  };
+export async function scheduleExport({ tenantId, actorId, format = 'csv', query = {} }) {
+  return analyticsExportService.scheduleExport({ tenantId, actorId, format, query });
 }
 
 /**

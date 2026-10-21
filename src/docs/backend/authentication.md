@@ -136,6 +136,15 @@ Cookie: refresh=<opaque>
    one, sign a new access token, set a new refresh cookie.
 4. Audit row: `module: 'iam.auth', action: 'refresh'`.
 
+### Admin MFA policy, recovery codes and step-up (roadmap 2.2)
+
+See `src/modules/iam/auth/STATUS.md` ("Admin authentication completeness")
+and the API contract (`frontend-api-contract.md`, section 2). In short:
+privileged admins without MFA sign in to an enrolment-only session;
+`/mfa/verify` returns ten one-time recovery codes; `POST /admin-auth/step-up`
+opens a short window for sensitive actions; super admins can reset another
+admin's MFA or password; admins are invited by email.
+
 ### TOTP enrolment (super_admin)
 
 ```http
@@ -145,7 +154,7 @@ Authorization: Bearer <admin-access>
 
 1. Server generates a TOTP secret + otpauth URL.
 2. Stores the secret hashed on the `Admin` record (pending = true).
-3. Returns a QR code (data URL).
+3. Returns the secret and `otpauth://` URL once (no QR image; the client shows the setup key).
 
 ```http
 POST /api/v1/admin-auth/mfa/verify
@@ -154,8 +163,8 @@ Authorization: Bearer <admin-access>
 ```
 
 1. Server verifies the TOTP code against the stored secret.
-2. On success: marks `mfaEnrolled = true`.
-3. Future logins require the TOTP code.
+2. On success: marks `mfaEnabled = true` and returns ten one-time recovery codes (only digests are stored).
+3. Future logins require the TOTP code or one recovery code.
 
 ## Best Practices
 
@@ -180,20 +189,23 @@ Authorization: Bearer <admin-access>
 
 | Threat | Mitigation |
 | --- | --- |
-| **Brute force** | `strictLimiter` + persisted account lockout |
+| **Brute force** | Per-route limiters (`userAuthLimiters` / `adminAuthLimiters`: login per IP + account with a per-IP ceiling, separate refresh / password / verification / MFA buckets, Redis-backed when `REDIS_URL` is set) + persisted account lockout that restarts after the lockout window |
 | **Credential stuffing** | Argon2id (slow) + lockout + rate limit |
 | **User enumeration** | Generic error messages + constant-time compare |
 | **Token theft** | Short access TTL (15 min) + rotating refresh + family revocation |
 | **Replay** | Refresh-token rotation + family revocation |
 | **XSS / cookie theft** | `HttpOnly`, `Secure`, `SameSite=Lax` cookies; no JS access |
 | **CSRF** | SameSite=Lax on refresh cookie; access token in `Authorization` header |
-| **MFA bypass** | Required for `super_admin`; not yet for other admins (Phase 3) |
+| **MFA bypass** | Required for admins of the types in `ADMIN_MFA_REQUIRED_TYPES` (default super, platform) and after an admin-assisted reset: without MFA the session is restricted to enrolment (403 `MFA_ENROLLMENT_REQUIRED` elsewhere) |
+| **Lost authenticator** | Ten single-use recovery codes (digests only at rest); an active super admin can reset another admin's MFA (never their own), audited, forcing re-enrolment |
+| **Stolen access token used for sensitive actions** | Step-up (password + current code) bound to the session for `ADMIN_STEP_UP_TTL_MS` before granting super, credential resets, recovery-code regeneration or reading secret settings |
+| **Shared initial admin passwords** | Admins are invited by email (single-use link, `ADMIN_INVITATION_TTL_MS`); pending admins have no password and cannot sign in |
 
 ## Future Work
 
 | Item | Phase |
 | --- | --- |
-| **Backup codes for MFA** | Phase 3 |
+| ~~Backup codes for MFA~~ | Done (roadmap 2.2): recovery codes |
 | **WebAuthn / passkey** | Phase 3 |
 | **OAuth / OIDC / SAML SSO** | Phase 3 |
 | **SCIM 2.0 provisioning** | Phase 3 |

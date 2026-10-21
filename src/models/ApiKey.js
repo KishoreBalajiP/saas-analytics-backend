@@ -47,7 +47,17 @@ export const API_KEY_SCOPES = Object.freeze([
   'datasets:read',
   'connectors:read',
   'dashboards:read',
+  // embedding: mint signed embed tokens from the host application's backend.
+  'embed:create',
 ]);
+
+/** devapi: human descriptions of the fixed scope catalogue (docs + UI). */
+export const API_KEY_SCOPE_CATALOGUE = Object.freeze({
+  'analytics:query': 'Run analytics queries and read rows of a dataset',
+  'datasets:read': 'List and read datasets',
+  'connectors:read': 'Reserved: read connectors',
+  'dashboards:read': 'Read published dashboards',
+});
 
 export const API_KEY_STATUSES = Object.freeze(['active', 'revoked']);
 
@@ -83,6 +93,14 @@ const apiKeySchema = new mongoose.Schema(
     revokedAt: { type: Date, default: null },
     revokedReason: { type: String, default: '', maxlength: API_KEY_LIMITS.REVOKE_REASON_MAX },
     revokedBy: { type: String, default: null },
+    // devapi: lifecycle (roadmap 3.3).
+    // Optional client IP allow-list (exact IPv4/IPv6 or IPv4 CIDR). Empty = any.
+    ipAllowList: { type: [String], default: [] },
+    lastUsedIp: { type: String, default: null },
+    // Set on the OLD key by a rotation: the replacement's id and when the
+    // overlap window started (its expiresAt is cut to the window end).
+    rotatedTo: { type: mongoose.Schema.Types.ObjectId, default: null },
+    rotatedAt: { type: Date, default: null },
     createdBy: { type: String, default: null },
     updatedBy: { type: String, default: null },
   },

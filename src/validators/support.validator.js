@@ -22,6 +22,8 @@ export const impersonateSchema = {
   body: {
     targetUserId: { type: 'string', required: true, minLength: 1, maxLength: 64 },
     reason: { type: 'string', required: true, minLength: 3, maxLength: 500 },
+    // support: optional ticket reference recorded with the session.
+    ticket: { type: 'string', maxLength: 120 },
   },
   params: {},
   query: {},
@@ -79,6 +81,68 @@ export const broadcastSchema = {
   query: {},
 };
 
+/* ---------------- support: access redesign (roadmap 2.3) ----------------- */
+
+const PAGE_RULES = {
+  page: { type: 'integer', min: 1, max: 10000 },
+  limit: { type: 'integer', min: 1, max: 100 },
+};
+
+/** Params for the sanitised tenant diagnostics endpoint. */
+export const diagnosticsSchema = {
+  body: {},
+  params: {
+    id: { type: 'string', required: true, minLength: 1, maxLength: 64 },
+  },
+  query: {},
+};
+
+/** Query for the support access grant listing. */
+export const listGrantsSchema = {
+  body: {},
+  params: {},
+  query: {
+    tenantId: { type: 'string', minLength: 1, maxLength: 64 },
+    status: { type: 'string', oneOf: ['pending', 'active', 'denied', 'revoked'] },
+    kind: { type: 'string', oneOf: ['consent', 'break_glass'] },
+    ...PAGE_RULES,
+  },
+};
+
+/** Body for a break-glass request (incident access without consent). */
+export const breakGlassRequestSchema = {
+  body: {
+    tenantId: { type: 'string', required: true, minLength: 1, maxLength: 64 },
+    reason: { type: 'string', required: true, minLength: 10, maxLength: 500 },
+    ticket: { type: 'string', maxLength: 120 },
+  },
+  params: {},
+  query: {},
+};
+
+/** Approve / deny / revoke a grant: `:id` plus a reason. */
+export const grantDecisionSchema = {
+  body: {
+    reason: { type: 'string', required: true, minLength: 3, maxLength: 500 },
+  },
+  params: {
+    id: { type: 'string', required: true, minLength: 1, maxLength: 64 },
+  },
+  query: {},
+};
+
+/** Query for the support session listing. */
+export const listImpersonationsSchema = {
+  body: {},
+  params: {},
+  query: {
+    tenantId: { type: 'string', minLength: 1, maxLength: 64 },
+    status: { type: 'string', oneOf: ['active', 'ended'] },
+    mine: { type: 'boolean' },
+    ...PAGE_RULES,
+  },
+};
+
 export default {
   impersonateSchema,
   stopImpersonationSchema,
@@ -86,5 +150,11 @@ export default {
   revokeSessionsSchema,
   tenantLookupsSchema,
   broadcastSchema,
+  // support:
+  diagnosticsSchema,
+  listGrantsSchema,
+  breakGlassRequestSchema,
+  grantDecisionSchema,
+  listImpersonationsSchema,
   _meta: { phase: '8 - implemented' },
 };

@@ -13,6 +13,10 @@
  *   - createAdminSchema / updateAdminSchema      - `/admin/admins` CRUD
  *   - suspendSchema / restoreSchema              - lifecycle transitions
  *   - assignRoleSchema / revokeRoleSchema        - AdminRole grants
+ *   - adminauth (roadmap 2.2): stepUpSchema, mfaDisableSchema (code OR
+ *     recovery code), invitation preview/accept/resend/revoke/list schemas,
+ *     credentialResetSchema; `createAdminSchema` no longer takes a password
+ *     (admins are invited and choose their own).
  *
  * CODING GUIDELINES
  *   - `adminType` and statuses are validated against the model's canonical
@@ -27,12 +31,25 @@ import { ADMIN_TYPES } from '../models/Admin.js';
 /** Six-digit TOTP code. Optional on login (only required when MFA is on). */
 const mfaToken = { type: 'string', minLength: 6, maxLength: 6, pattern: '^\\d{6}$' };
 
+/**
+ * adminauth: a one-time recovery code as typed (16 symbols, case, spaces and
+ * dashes ignored by the service). Accepted wherever a TOTP code is.
+ */
+const recoveryCode = { type: 'string', minLength: 16, maxLength: 40, pattern: '^[A-Za-z0-9 -]+$' };
+
+/** adminauth: new password chosen by the admin (invitation, reset). */
+const newPassword = { type: 'string', required: true, minLength: 8, maxLength: 256 };
+
+/** adminauth: opaque emailed token (invitation). */
+const emailedToken = { type: 'string', required: true, minLength: 20, maxLength: 200 };
+
 /** @type {import('../index.js').Schema} */
 export const loginSchema = {
   body: {
     email: 'email|required',
     password: 'string|required',
     mfaToken,
+    recoveryCode,
   },
   params: {},
   query: {},
@@ -40,18 +57,17 @@ export const loginSchema = {
 
 /** @type {import('../index.js').Schema} */
 export const refreshSchema = {
-  body: {
-    refreshToken: { type: 'string', minLength: 1 },
-  },
+  // The refresh token is accepted from the HttpOnly cookie only; any body
+  // field is dropped by the validator and never read.
+  body: {},
   params: {},
   query: {},
 };
 
 /** @type {import('../index.js').Schema} */
 export const logoutSchema = {
-  body: {
-    refreshToken: { type: 'string', minLength: 1 },
-  },
+  // Logout reads the HttpOnly cookie and/or the bearer access token.
+  body: {},
   params: {},
   query: {},
 };
@@ -91,17 +107,106 @@ export const mfaVerifySchema = {
   query: {},
 };
 
-/** @type {import('../index.js').Schema} */
+/**
+ * POST /admin-auth/mfa/disable - step-up: the current password AND a
+ * current TOTP code (or an unused recovery code) are required to turn MFA
+ * off. The service refuses a request that carries neither code.
+ * @type {import('../index.js').Schema}
+ */
+export const mfaDisableSchema = {
+  body: {
+    password: 'string|required',
+    code: { type: 'string', pattern: '^\\d{6}$' },
+    recoveryCode,
+  },
+  params: {},
+  query: {},
+};
+
+/**
+ * adminauth: POST /admin-auth/step-up - re-authenticate (password plus a
+ * current TOTP code or an unused recovery code) to open a short step-up
+ * window on the current session.
+ * @type {import('../index.js').Schema}
+ */
+export const stepUpSchema = {
+  body: {
+    password: 'string|required',
+    code: { type: 'string', pattern: '^\\d{6}$' },
+    recoveryCode,
+  },
+  params: {},
+  query: {},
+};
+
+/**
+ * POST /admin/admins - invite a platform admin (adminauth). No password:
+ * the invitee chooses one when accepting the emailed invitation.
+ * @type {import('../index.js').Schema}
+ */
 export const createAdminSchema = {
   body: {
     email: 'email|required',
-    password: { type: 'string', required: true, minLength: 8 },
     name: { type: 'string', maxLength: 80 },
     adminType: { type: 'string', oneOf: [...ADMIN_TYPES] },
     tenantScope: { type: 'string', minLength: 1 },
-    status: { type: 'string', oneOf: ['pending', 'active'] },
   },
   params: {},
+  query: {},
+};
+
+/** adminauth: POST /admin-auth/invitations/preview. @type {import('../index.js').Schema} */
+export const invitationPreviewSchema = {
+  body: { token: emailedToken },
+  params: {},
+  query: {},
+};
+
+/** adminauth: POST /admin-auth/invitations/accept. @type {import('../index.js').Schema} */
+export const invitationAcceptSchema = {
+  body: {
+    token: emailedToken,
+    password: newPassword,
+    name: { type: 'string', maxLength: 80 },
+  },
+  params: {},
+  query: {},
+};
+
+/** adminauth: resend / revoke a pending invitation. @type {import('../index.js').Schema} */
+export const invitationActionSchema = {
+  body: {
+    reason: { type: 'string', maxLength: 500 },
+  },
+  params: {
+    id: 'objectId|required',
+  },
+  query: {},
+};
+
+/** adminauth: GET /admin/admins/invitations. @type {import('../index.js').Schema} */
+export const invitationListSchema = {
+  body: {},
+  params: {},
+  query: {
+    status: { type: 'string', oneOf: ['pending', 'accepted', 'revoked', 'expired'] },
+    page: { type: 'integer', min: 1 },
+    limit: { type: 'integer', min: 1, max: 100 },
+  },
+};
+
+/**
+ * adminauth: POST /admin/admins/:id/mfa/reset and /password/reset - an
+ * admin-assisted credential reset. A reason is required for the audit trail.
+ * @type {import('../index.js').Schema}
+ */
+export const credentialResetSchema = {
+  body: {
+    reason: { type: 'string', required: true, minLength: 3, maxLength: 500 },
+  },
+  params: {
+    id: 'objectId|required',
+  },
   query: {},
 };
 
@@ -159,11 +264,13 @@ export const assignRoleSchema = {
 /** @type {import('../index.js').Schema} */
 export const revokeRoleSchema = {
   body: {},
+  query: {
+    tenantId: { type: 'string', minLength: 1 },
+  },
   params: {
     id: 'objectId|required',
     roleId: 'objectId|required',
   },
-  query: {},
 };
 
 /** @type {import('../index.js').Schema} */
@@ -186,7 +293,14 @@ export default {
   resetPasswordSchema,
   mfaEnrollSchema,
   mfaVerifySchema,
+  mfaDisableSchema,
+  stepUpSchema,
   createAdminSchema,
+  invitationPreviewSchema,
+  invitationAcceptSchema,
+  invitationActionSchema,
+  invitationListSchema,
+  credentialResetSchema,
   updateAdminSchema,
   suspendSchema,
   restoreSchema,

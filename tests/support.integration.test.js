@@ -12,6 +12,11 @@
  *   - RBAC seeding mirrors `tests/compliance.integration.test.js`.
  *   - The impersonation budget cap is raised for the happy path and set to
  *     1 for the budget test so the whole suite fits under the default cap.
+ *   - Roadmap 2.3: impersonation now needs the workspace's consent, so the
+ *     impersonation tests grant it first (`grantConsent`). The budget test
+ *     no longer flushes the access log: the cap is an atomic counter.
+ *     Consent, break-glass, read-only enforcement and attribution are
+ *     covered in `support-access.integration.test.js`.
  */
 
 import test, { describe, before, after, beforeEach } from 'node:test';
@@ -24,7 +29,8 @@ import adminService from '../src/services/admin.service.js';
 import roleService from '../src/services/role.service.js';
 import permissionService from '../src/services/permission.service.js';
 import sessionRepository from '../src/repositories/session.repository.js';
-import * as accessLogService from '../src/services/accessLog.service.js';
+import * as supportAccessService from '../src/services/supportAccess.service.js';
+import { SupportImpersonation } from '../src/models/SupportImpersonation.js';
 import { AuditLog } from '../src/models/AuditLog.js';
 import rbacCache from '../src/services/rbac.cache.service.js';
 import env from '../src/config/env.js';
@@ -64,8 +70,8 @@ async function seedAdminWithPermission({ moduleKey, action }) {
   });
   const role = await roleService.create({ tenantId: null, name: `role_${shortToken(8)}` });
   await ensurePermission(`${moduleKey}.${action}`);
-  await roleService.addPermission({ roleId: role._id, permissionKey: `${moduleKey}.${action}`, by: admin._id });
-  await adminService.assignRole({ adminId: admin._id, roleId: role._id, tenantId: null, by: admin._id });
+  await roleService.addPermission({ roleId: role._id, permissionKey: `${moduleKey}.${action}`, by: null /* fixture seeding */ });
+  await adminService.assignRole({ adminId: admin._id, roleId: role._id, tenantId: null, by: null /* fixture seeding */ });
   const login = await api('/api/v1/admin-auth/login', {
     method: 'POST',
     body: { email: admin.email, password: PASSWORD },
@@ -83,6 +89,15 @@ async function createTenantUser() {
 
 function bearer(token) {
   return { authorization: `Bearer ${token}` };
+}
+
+/** The workspace grants support access (roadmap 2.3 consent). */
+async function grantConsent(tenantId) {
+  return supportAccessService.grantConsent({
+    tenantId: String(tenantId),
+    user: { id: 'usr_owner', email: 'owner@example.com' },
+    durationHours: 2,
+  });
 }
 
 describe('support surface', () => {
@@ -120,7 +135,8 @@ describe('support surface', () => {
     env.support.impersonationBudgetDailyCap = 1000;
     try {
       const { token, admin } = await seedAdminWithPermission({ moduleKey: supportModule, action: 'configure' });
-      const { user } = await createTenantUser();
+      const { tenant, user } = await createTenantUser();
+      await grantConsent(tenant._id);
 
       const res = await api('/api/v1/support/impersonate', {
         method: 'POST',
@@ -130,6 +146,8 @@ describe('support surface', () => {
 
       assert.equal(res.status, 200);
       assert.equal(res.json.data.impersonation, true);
+      assert.equal(res.json.data.readOnly, true);
+      assert.equal(res.json.data.breakGlass, false);
       assert.equal(typeof res.json.data.token, 'string');
       assert.equal(res.json.data.sessionId.slice(0, 4), 'ses_');
       assert.equal(res.json.data.user.id, String(user._id));
@@ -170,7 +188,8 @@ describe('support surface', () => {
     env.support.impersonationBudgetDailyCap = 1;
     try {
       const { token } = await seedAdminWithPermission({ moduleKey: supportModule, action: 'configure' });
-      const { user } = await createTenantUser();
+      const { tenant, user } = await createTenantUser();
+      await grantConsent(tenant._id);
 
       const first = await api('/api/v1/support/impersonate', {
         method: 'POST',
@@ -178,7 +197,7 @@ describe('support surface', () => {
         body: { targetUserId: user._id, reason: 'first use' },
       });
       assert.equal(first.status, 200);
-      await accessLogService.flush();
+      // No access-log flush: the cap is enforced by an atomic counter.
 
       const second = await api('/api/v1/support/impersonate', {
         method: 'POST',
@@ -186,6 +205,7 @@ describe('support surface', () => {
         body: { targetUserId: user._id, reason: 'over budget' },
       });
       assert.equal(second.status, 429);
+      assert.equal(second.json.code, 'SUPPORT_IMPERSONATION_CAP_EXCEEDED');
     } finally {
       env.support.impersonationBudgetDailyCap = originalCap;
     }
@@ -193,7 +213,8 @@ describe('support surface', () => {
 
   test('stopping impersonation revokes the tagged session', async () => {
     const { token, admin } = await seedAdminWithPermission({ moduleKey: supportModule, action: 'configure' });
-    const { user } = await createTenantUser();
+    const { tenant, user } = await createTenantUser();
+    await grantConsent(tenant._id);
 
     const start = await api('/api/v1/support/impersonate', {
       method: 'POST',
@@ -212,6 +233,8 @@ describe('support surface', () => {
 
     const session = await sessionRepository.findById(start.json.data.sessionId);
     assert.notEqual(session.status, 'active');
+    const record = await SupportImpersonation.findOne({ sessionId: start.json.data.sessionId }).lean();
+    assert.equal(record.status, 'ended', 'the workspace-visible record is closed too');
 
     const audit = await AuditLog.findOne({ module: 'support.impersonation', action: 'impersonate.stop' }).lean();
     assert.ok(audit, 'stop must be audited');
@@ -221,7 +244,8 @@ describe('support surface', () => {
   test('an admin cannot stop another admin session', async () => {
     const { token: tokenA } = await seedAdminWithPermission({ moduleKey: supportModule, action: 'configure' });
     const { token: tokenB } = await seedAdminWithPermission({ moduleKey: supportModule, action: 'configure' });
-    const { user } = await createTenantUser();
+    const { tenant, user } = await createTenantUser();
+    await grantConsent(tenant._id);
 
     const start = await api('/api/v1/support/impersonate', {
       method: 'POST',
@@ -242,7 +266,7 @@ describe('support surface', () => {
   });
 
   test('account recovery requests a password reset by email', async () => {
-    const { token } = await seedAdminWithPermission({ moduleKey: supportModule, action: 'configure' });
+    const { token } = await seedAdminWithPermission({ moduleKey: supportModule, action: 'update' });
     const { user } = await createTenantUser();
 
     const res = await api('/api/v1/support/account/recover', {
@@ -261,7 +285,7 @@ describe('support surface', () => {
   });
 
   test('revoke-all-sessions completes for a user', async () => {
-    const { token } = await seedAdminWithPermission({ moduleKey: supportModule, action: 'configure' });
+    const { token } = await seedAdminWithPermission({ moduleKey: supportModule, action: 'update' });
     const { user } = await createTenantUser();
 
     const res = await api('/api/v1/support/account/revoke-sessions', {
@@ -275,7 +299,7 @@ describe('support surface', () => {
   });
 
   test('tenant lookups return the tenant plus live statistics', async () => {
-    const { token } = await seedAdminWithPermission({ moduleKey: supportModule, action: 'configure' });
+    const { token } = await seedAdminWithPermission({ moduleKey: supportModule, action: 'view' });
     const { tenant } = await createTenantUser();
 
     const res = await api(`/api/v1/support/tenants/${tenant._id}/lookups`, { headers: bearer(token) });
@@ -285,7 +309,7 @@ describe('support surface', () => {
   });
 
   test('tenant-scoped broadcast notifies active users and is audited', async () => {
-    const { token } = await seedAdminWithPermission({ moduleKey: supportModule, action: 'configure' });
+    const { token } = await seedAdminWithPermission({ moduleKey: supportModule, action: 'update' });
     const { tenant } = await createTenantUser();
 
     const res = await api('/api/v1/support/notifications/broadcast', {

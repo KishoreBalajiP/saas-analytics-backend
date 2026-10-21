@@ -27,6 +27,12 @@ import ApiError from '../utils/ApiError.js';
 
 const { ObjectId } = mongoose.Types;
 const CATALOGUE_RE = /^[a-z0-9_]+$/;
+const MAX_SEARCH_LENGTH = 64;
+
+/** Escape regex metacharacters so a search term matches literally. */
+function escapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
 
 function normaliseCatalogue(catalogue) {
   const value = String(catalogue ?? '').trim().toLowerCase();
@@ -50,7 +56,9 @@ export async function list(catalogue, { page = 1, limit = 50, locale = 'en', sea
   const filter = { catalogue: normaliseCatalogue(catalogue) };
   if (locale) filter.locale = locale;
   if (search) {
-    filter.$or = [{ name: new RegExp(String(search), 'i') }, { code: new RegExp(String(search), 'i') }];
+    // Never a raw user pattern: escape and cap the term (ReDoS / 500s).
+    const term = escapeRegExp(String(search).slice(0, MAX_SEARCH_LENGTH));
+    filter.$or = [{ name: { $regex: term, $options: 'i' } }, { code: { $regex: term, $options: 'i' } }];
   }
   const result = await MasterData.paginate(filter, {
     page,
@@ -65,6 +73,19 @@ export async function list(catalogue, { page = 1, limit = 50, locale = 'en', sea
     limit: result.limit,
     pages: result.totalPages,
   };
+}
+
+/**
+ * billing (finding bil.10): exact lookup by code within a catalogue and
+ * locale. Never a pattern: `pro` must not resolve `enterprise_pro`, and
+ * a code such as `.` matches nothing. Soft-deleted rows are excluded by
+ * the softDelete plugin's query filter.
+ */
+export async function findByCode(catalogue, code, { locale = 'en' } = {}) {
+  if (typeof code !== 'string' || !code.trim()) return null;
+  const filter = { catalogue: normaliseCatalogue(catalogue), code: code.trim() };
+  if (locale) filter.locale = locale;
+  return MasterData.findOne(filter).lean();
 }
 
 /** Fetch a single entry by id (catalogue partition enforced). */
@@ -115,4 +136,4 @@ export async function softDelete(catalogue, id, by) {
   return null;
 }
 
-export default { list, findById, create, update, softDelete };
+export default { list, findById, findByCode, create, update, softDelete };

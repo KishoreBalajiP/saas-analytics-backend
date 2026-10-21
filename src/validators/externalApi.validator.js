@@ -7,6 +7,11 @@
  *   bookmarkable.
  */
 
+/**
+ * Legacy JSON-shape check for the dataset query string. The query route now
+ * uses `analytics.validator.parseQueryString` + the engine contract, which
+ * also rejects unknown parameters; this stays for callers of the old API.
+ */
 export function validateQueryDataset(query) {
   const errors = [];
   if (query.filters !== undefined) {
@@ -21,10 +26,7 @@ export function validateQueryDataset(query) {
   }
   if (query.dateRange !== undefined) {
     try {
-      const dr = JSON.parse(query.dateRange);
-      if (!dr?.from || !dr?.to) {
-        errors.push({ field: 'dateRange', message: 'dateRange must have from and to' });
-      }
+      JSON.parse(query.dateRange);
     } catch {
       errors.push({ field: 'dateRange', message: 'dateRange must be valid JSON' });
     }

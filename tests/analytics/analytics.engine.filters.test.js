@@ -4,6 +4,7 @@ import mongoose from 'mongoose';
 import { useMongo, resetMongo } from '../helpers/index.js';
 import { ConnectorRow } from '../../src/models/ConnectorRow.js';
 import { queryRows } from '../../src/services/analytics.engine.js';
+import env from '../../src/config/env.js';
 
 useMongo();
 const { ObjectId } = mongoose.Types;
@@ -49,7 +50,7 @@ test('filter in', async () => {
 });
 
 test('dateRange window', async () => {
-  const r = await Q({ dateRange: { from: '2024-01-03', to: '2024-01-04' } });
+  const r = await Q({ dateRange: { field: 'ingestedAt', from: '2024-01-03', to: '2024-01-04' } });
   assert.equal(r.total, 1);
 });
 
@@ -75,7 +76,55 @@ test('impossible filter returns empty', async () => {
   assert.equal(r.pages, 0);
 });
 
-test('unknown filter operator is ignored (not a crash)', async () => {
-  const r = await Q({ filters: [{ field: 'region', op: 'bogus', value: 'EU' }] });
-  assert.equal(r.total, 3); // no-op filter
+test('unknown filter operator is rejected with 400, not silently dropped', async () => {
+  // Dropping an unknown operator used to return unfiltered data with 200.
+  await assert.rejects(
+    () => Q({ filters: [{ field: 'region', op: 'bogus', value: 'EU' }] }),
+    (err) => err.statusCode === 400 && err.errors?.some((e) => e.field === 'filters[0].op'),
+  );
+});
+
+test('filter values cannot smuggle aggregation expressions or field paths', async () => {
+  await assert.rejects(
+    () => Q({ filters: [{ field: 'region', op: 'eq', value: { $range: [0, 1000000] } }] }),
+    (err) => err.statusCode === 400,
+  );
+  await assert.rejects(() => Q({ filters: [{ field: '$where', op: 'eq', value: 1 }] }), (err) => err.statusCode === 400);
+  await assert.rejects(() => Q({ groupBy: [{ field: 'a.b' }] }), (err) => err.statusCode === 400);
+  // A "$"-prefixed string value is compared literally, not as a field path.
+  const r = await Q({ filters: [{ field: 'region', op: 'eq', value: '$data.region' }] });
+  assert.equal(r.total, 0);
+});
+
+test('UI shorthand groupBy strings and orderBy.dir are normalised', async () => {
+  const r = await Q({ groupBy: ['region'], metrics: [{ op: 'count' }], orderBy: [{ field: 'region', dir: 'desc' }] });
+  assert.ok(r.groupMode);
+  assert.ok(r.rows.length >= 1);
+  assert.ok(r.rows.every((row) => 'region' in row));
+});
+
+test('every aggregation runs under maxTimeMS, and a timeout is a typed 408', async () => {
+  const realAggregate = ConnectorRow.aggregate;
+  const seen = [];
+  try {
+    ConnectorRow.aggregate = function capture(pipeline) {
+      const agg = realAggregate.call(this, pipeline);
+      const option = agg.option.bind(agg);
+      agg.option = (opts) => { seen.push(opts); return option(opts); };
+      return agg;
+    };
+    const ok = await Q({ metrics: [{ op: 'count' }] });
+    assert.deepEqual(ok.rows, [{ count: 3 }]);
+    assert.equal(seen.length, 1);
+    assert.equal(seen[0].maxTimeMS, env.analytics.queryTimeoutMs);
+    assert.ok(seen[0].maxTimeMS > 0);
+
+    // The server aborting the aggregation (MaxTimeMSExpired, code 50) maps to 408 QUERY_TIMEOUT.
+    ConnectorRow.aggregate = () => ({
+      option: () => Promise.reject(Object.assign(new Error('operation exceeded time limit'), { code: 50, codeName: 'MaxTimeMSExpired' })),
+    });
+    await assert.rejects(Q({}), (err) => err.statusCode === 408 && err.code === 'QUERY_TIMEOUT');
+  } finally {
+    ConnectorRow.aggregate = realAggregate;
+  }
 });

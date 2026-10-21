@@ -19,11 +19,19 @@
 import asyncHandler from '../utils/asyncHandler.js';
 import ApiResponse from '../utils/ApiResponse.js';
 import userService from '../services/user.service.js';
+// mfa-tenant: MFA status of the caller (never a secret).
+import tenantMfaService from '../modules/iam/auth/tenantMfa.service.js';
 
 /** GET /users/me - the caller's own profile. */
 export const me = asyncHandler(async (req, res) => {
   const user = await userService.getProfile({ userId: req.user.id });
-  return ApiResponse.ok(res, user, 'Profile fetched');
+  // mfa-tenant: MFA state, policy and the enrolment-only / step-up session state.
+  const mfa = await tenantMfaService.profileStatus({
+    userId: req.user.id,
+    tenantId: req.user.tenantId,
+    session: { restriction: req.user.restriction ?? null, stepUpAt: req.user.stepUpAt ?? null },
+  });
+  return ApiResponse.ok(res, { ...user, mfa }, 'Profile fetched');
 });
 
 /** PATCH /users/me - edit own profile fields. */

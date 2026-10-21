@@ -39,7 +39,19 @@ export const listSchema = {
   },
 };
 
+// onboarding: self-service password change.
+/** @type {import('../index.js').Schema} */
+export const changePasswordSchema = {
+  body: {
+    currentPassword: { type: 'string', required: true, minLength: 1, maxLength: 512 },
+    newPassword: { type: 'string', required: true, minLength: 8, maxLength: 512 },
+  },
+  params: {},
+  query: {},
+};
+
 export default {
+  changePasswordSchema,
   updateMeSchema,
   listSchema,
   _meta: { phase: '2 - implemented', tenancy: 'token-derived' },

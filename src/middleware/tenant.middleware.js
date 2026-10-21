@@ -16,10 +16,14 @@
  *
  * SECURITY RULE
  *   Fail closed: tenant-scoped data is NEVER reachable without a resolved
- *   tenant, so a request that resolves no tenant is rejected.
+ *   tenant, so a request that resolves no tenant is rejected. A request
+ *   whose `X-Tenant-Id` names a different tenant than the session is refused
+ *   (403) and recorded as a `request.denied` security event (reason
+ *   `cross_tenant`, rate-limited).
  */
 
 import ApiError from '../utils/ApiError.js';
+import { auditDenied } from './audit.middleware.js';
 
 /**
  * Resolve the tenant for the current request. Fails closed when no tenant
@@ -39,7 +43,7 @@ export function resolveTenant(req, _res, next) {
   // is authoritative; accepting a different header would let callers steer
   // tenant-scoped controllers at another tenant.
   if (claim && requested && claim !== '*' && requested !== claim) {
-    return next(ApiError.forbidden('Your tenant context does not match your session'));
+    return next(auditDenied(req, ApiError.forbidden('Your tenant context does not match your session'), 'cross_tenant'));
   }
 
   if (requested) {

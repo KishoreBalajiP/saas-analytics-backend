@@ -69,6 +69,36 @@ export function isDeliveryConfigured() {
 }
 
 /**
+ * Build the SMTP transport options from a mail config. Exported so the
+ * timeout settings can be asserted without opening a connection.
+ *
+ * Timeouts (finding ops2.12): nodemailer's defaults are minutes, so a
+ * blocked or slow SMTP egress would hang the caller. Bounded timeouts make
+ * a send fail fast; the email outbox then retries it with backoff.
+ *
+ * @param {Object} [mail=env.mail]
+ * @returns {Object} nodemailer SMTP transport options.
+ */
+export function buildSmtpOptions(mail = env.mail) {
+  return {
+    host: mail.host,
+    port: mail.port,
+    secure: mail.secure,
+    auth: mail.user || mail.password
+      ? { user: mail.user, pass: mail.password }
+      : undefined,
+    pool: true,
+    maxConnections: 5,
+    // Time to establish the TCP connection.
+    connectionTimeout: mail.connectionTimeoutMs ?? 10000,
+    // Time to wait for the server greeting once connected.
+    greetingTimeout: mail.greetingTimeoutMs ?? 10000,
+    // Idle time allowed on the socket during a send.
+    socketTimeout: mail.socketTimeoutMs ?? 20000,
+  };
+}
+
+/**
  * Create a `nodemailer` transport for the configured provider.
  *
  * @returns {object} nodemailer transport.
@@ -78,16 +108,7 @@ export function createMailer() {
   if (type === TRANSPORT_TYPES.NOOP) {
     return nodemailer.createTransport({ jsonTransport: true });
   }
-  return nodemailer.createTransport({
-    host: env.mail.host,
-    port: env.mail.port,
-    secure: env.mail.secure,
-    auth: env.mail.user || env.mail.password
-      ? { user: env.mail.user, pass: env.mail.password }
-      : undefined,
-    pool: true,
-    maxConnections: 5,
-  });
+  return nodemailer.createTransport(buildSmtpOptions(env.mail));
 }
 
 /**
@@ -108,6 +129,7 @@ export function createNoopMailer() {
 }
 
 export default {
+  buildSmtpOptions,
   createMailer,
   createNoopMailer,
   getTransportType,

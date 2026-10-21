@@ -24,24 +24,34 @@ import cookieParser from 'cookie-parser';
 import morgan from 'morgan';
 import env from './config/env.js';
 import corsConfig from './config/cors.js';
+// embedding:
+import { embedCors } from './middleware/embedCors.middleware.js';
 import { httpLoggerStream } from './config/logger.js';
 import { requestIdMiddleware } from './middleware/requestId.middleware.js';
 import { accessLog as accessLogMiddleware } from './middleware/accessLog.middleware.js';
+// observability: request metrics + token-free access log URLs (roadmap 2.8).
+import { httpMetricsMiddleware } from './middleware/httpMetrics.middleware.js';
+import { redactUrl } from './utils/redact.js';
+// detection: request signals for the security detection rules (roadmap 2.6).
+import { securitySignals } from './middleware/securitySignals.middleware.js';
 import { apiLimiter } from './middleware/rateLimiter.middleware.js';
 import { notFoundHandler } from './middleware/notFound.middleware.js';
 import { errorHandler } from './middleware/error.middleware.js';
 import apiRoutes from './routes/index.js';
+import { webhookRawBody } from './modules/connectors/webhook/webhook.body.js';
 import { registerAnalyticsWorker } from './jobs/analytics.worker.js';
 import { registerExportWorker } from './jobs/export.worker.js';
 import { initAuditConsumer } from './services/auditConsumer.service.js';
+import { runsBackgroundWork } from './jobs/runtime.js';
 
 // Register the analytics queue consumer (report generation + alert
-// evaluation) once per process so enqueued jobs are actually processed.
-registerAnalyticsWorker();
-
-// Register the export queue consumer (audit-trail artifact materialisation)
-// once per process so requested exports actually complete.
-registerExportWorker();
+// evaluation) and the export queue consumer (audit-trail artifact
+// materialisation) once per process so enqueued jobs are actually processed.
+// A PROCESS_ROLE=web process only enqueues; the worker process consumes.
+if (runsBackgroundWork()) {
+  registerAnalyticsWorker();
+  registerExportWorker();
+}
 
 // Wire model-change events (audit plugin) to the audit trail. Runs after
 // routes are imported so every audit-enabled model is already compiled.
@@ -59,6 +69,10 @@ app.set('env', env.app.env);
 app.use(requestIdMiddleware);
 // 1b. Per-request access trace (authenticated requests only; buffered writes).
 app.use(accessLogMiddleware());
+// observability: request rate / latency by route template.
+app.use(httpMetricsMiddleware);
+// detection: per-minute request signals (API keys, 429s, volume, webhook refusals).
+app.use(securitySignals());
 
 // 2. Security + transport headers.
 app.use(helmet());
@@ -107,8 +121,12 @@ app.use(
   }),
 );
 
+// embedding: the public embed surface has its own per-origin CORS policy
+// (no credentials, origins bound to embed tokens / tenant config).
+app.use(`${env.app.apiPrefix}/embed/public`, embedCors());
 // 3. Cross-origin policy (allow-list driven, see config/cors.js).
-app.use(cors(corsConfig));
+const globalCors = cors(corsConfig);
+app.use((req, res, next) => (req.embedCorsHandled ? next() : globalCors(req, res, next)));
 
 // 4. Cookie + body parsing. Body size is bounded via env (`REQUEST_BODY_LIMIT`).
 app.use(cookieParser());
@@ -117,13 +135,15 @@ app.use(cookieParser());
 // middleware runs first for webhook paths, sets `req.body` to a Buffer and
 // marks the request as parsed, which makes `express.json` below skip it
 // (exact bytes preserved for signing).
-app.use(`${env.app.apiPrefix}/webhooks`, express.raw({ type: '*/*' }));
+app.use(`${env.app.apiPrefix}/webhooks`, webhookRawBody);
 app.use(`${env.app.apiPrefix}/billing/webhook`, express.raw({ type: '*/*' }));
 app.use(express.json({ limit: env.app.bodyLimit, strict: true }));
 app.use(express.urlencoded({ extended: true, limit: env.app.bodyLimit }));
 
 // 5. HTTP access logging (every request, through Pino).
 morgan.token('requestId', (req) => req.id || '-');
+// observability: `:url` never carries embed/webhook path tokens or `?token=`.
+morgan.token('url', (req) => redactUrl(req.originalUrl || req.url));
 app.use(
   morgan(
     ':requestId :method :url :status :res[content-length] :response-time ms - :remote-addr',

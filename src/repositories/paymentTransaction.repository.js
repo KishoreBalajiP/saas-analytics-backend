@@ -9,7 +9,7 @@
  *   checkout anchor.
  */
 
-import { PaymentTransaction } from '../models/PaymentTransaction.js';
+import { PaymentTransaction, OPEN_STATUSES } from '../models/PaymentTransaction.js';
 
 function safeId(id) {
   try {
@@ -66,6 +66,84 @@ export const listPending = async ({ limit = 50, olderThanMs = 0 } = {}) => {
   return PaymentTransaction.find(filter).sort({ createdAt: 1 }).limit(Math.min(limit, 100)).lean();
 };
 
+/**
+ * billing (finding bil.11): open checkouts due for a provider check, in
+ * order of their next check (each row backs off on its own), so stale rows
+ * can never block newer ones at the head of the queue.
+ */
+export const listOpenDue = async ({ now = new Date(), limit = 25 } = {}) => {
+  return PaymentTransaction.find({
+    status: { $in: [...OPEN_STATUSES] },
+    $or: [{ nextReconcileAt: { $lte: now } }, { nextReconcileAt: null }],
+  })
+    .sort({ nextReconcileAt: 1, createdAt: 1 })
+    .limit(Math.min(Math.max(1, limit), 100))
+    .lean();
+};
+
+/** billing: captured rows whose lifecycle change is not applied yet. */
+export const listCapturedUnapplied = async ({ now = new Date(), limit = 25 } = {}) => {
+  return PaymentTransaction.find({
+    status: 'captured',
+    appliedAt: null,
+    $or: [{ applyingUntil: null }, { applyingUntil: { $lte: now } }],
+  })
+    .sort({ capturedAt: 1 })
+    .limit(Math.min(Math.max(1, limit), 100))
+    .lean();
+};
+
+/** billing: record a provider check and when the row is due next. */
+export const scheduleNextCheck = async (id, { nextReconcileAt, by = null, incrementAttempts = true } = {}) => {
+  if (!id) return null;
+  return PaymentTransaction.findOneAndUpdate(
+    { _id: safeId(id) },
+    {
+      $set: { lastReconciledAt: new Date(), nextReconcileAt, updatedBy: by },
+      ...(incrementAttempts ? { $inc: { reconcileAttempts: 1 } } : {}),
+    },
+    { new: true, lean: true },
+  );
+};
+
+/**
+ * billing: take the short claim to apply a captured row's term. Only one
+ * processor holds it; the claim lapses on its own after `leaseMs`.
+ */
+export const claimForApply = async (id, { now = new Date(), leaseMs = 60000 } = {}) => {
+  if (!id) return null;
+  return PaymentTransaction.findOneAndUpdate(
+    {
+      _id: safeId(id),
+      status: 'captured',
+      appliedAt: null,
+      $or: [{ applyingUntil: null }, { applyingUntil: { $lte: now } }],
+    },
+    { $set: { applyingUntil: new Date(now.getTime() + leaseMs) } },
+    { new: true, lean: true },
+  );
+};
+
+/** billing: the term is applied; the row is done. */
+export const markApplied = async (id, { at = new Date() } = {}) => {
+  if (!id) return null;
+  return PaymentTransaction.findOneAndUpdate(
+    { _id: safeId(id), status: 'captured' },
+    { $set: { appliedAt: at, applyingUntil: null, applyError: null } },
+    { new: true, lean: true },
+  );
+};
+
+/** billing: release a failed apply so a retry can take it. */
+export const releaseApply = async (id, { error = null } = {}) => {
+  if (!id) return null;
+  return PaymentTransaction.findOneAndUpdate(
+    { _id: safeId(id), appliedAt: null },
+    { $set: { applyingUntil: null, applyError: error ? String(error).slice(0, 300) : null } },
+    { new: true, lean: true },
+  );
+};
+
 export const listForTenant = async (tenantId, { page = 1, limit = 20 } = {}) => {
   if (!tenantId) return { docs: [], total: 0, page, limit, pages: 0 };
   const filter = { tenantId: safeId(tenantId) };
@@ -111,6 +189,12 @@ export default {
   findById,
   findPendingForTenantPlan,
   listPending,
+  listOpenDue,
+  listCapturedUnapplied,
+  scheduleNextCheck,
+  claimForApply,
+  markApplied,
+  releaseApply,
   listForTenant,
   transitionStatus,
   touchReconciled,

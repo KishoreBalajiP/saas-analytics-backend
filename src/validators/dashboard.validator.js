@@ -41,6 +41,8 @@ export const dashboardUpdateSchema = {
     layout: { type: 'object' },
     filters: { type: 'object' },
     refresh: { type: 'object' },
+    // vizbuilder: who can see the dashboard (owner / dashboards.assign only).
+    visibility: { type: 'string', oneOf: ['workspace', 'restricted'] },
   },
   params: {},
   query: {},
@@ -100,19 +102,25 @@ export const widgetListSchema = {
 export const widgetExecuteSchema = {
   body: {},
   params: {},
+  // JSON-encoded on the query string; parsed and checked against the
+  // analytics query contract in the controller/service (400 INVALID_QUERY).
   query: {
-    dateRange: { type: 'object' },
-    filters: { type: 'array' },
+    dateRange: { type: 'string' },
+    filters: { type: 'string' },
     filtersOp: { type: 'string', oneOf: ['and', 'or'] },
+    // vizbuilder: table paging.
+    page: { type: 'integer', min: 1 },
+    limit: { type: 'integer', min: 1, max: 200 },
   },
 };
 
 /** @type {import('../index.js').Schema} */
 export const shareSchema = {
+  // vizbuilder: share with a tenant user or role at view or edit level.
   body: {
-    email: { type: 'email', required: true },
-    role: { type: 'string', oneOf: ['viewer'] },
-    expiresAt: { type: 'date' },
+    principalType: { type: 'string', required: true, oneOf: ['user', 'role'] },
+    principalId: { type: 'objectId', required: true },
+    level: { type: 'string', oneOf: ['view', 'edit'] },
   },
   params: {},
   query: {},

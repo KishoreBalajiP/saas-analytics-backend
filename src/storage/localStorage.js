@@ -16,7 +16,9 @@
  *   - delete(key)                    -> Promise<void>
  *   - exists(key)                    -> Promise<boolean>
  *   - list(prefix, options)          -> Promise<string[]>
- *   - createWriteStream(key)         -> Promise<NodeJS.WritableStream>
+ *   - createWriteStream(key, options) -> Promise<NodeJS.WritableStream & { completed: Promise<{ key, size }> }>
+ *   - createReadStream(key)          -> Promise<NodeJS.ReadableStream>
+ *   - putFile(key, filePath)         -> Promise<{ key, size }> (streamed copy)
  *   - presignedUrl(key, options)     -> Promise<string>
  *   - close()                        -> Promise<void>
  *
@@ -29,7 +31,7 @@
  */
 
 import fs from 'node:fs/promises';
-import { createWriteStream } from 'node:fs';
+import { createReadStream, createWriteStream } from 'node:fs';
 import path from 'node:path';
 import { Writable } from 'node:stream';
 
@@ -161,6 +163,11 @@ export function createLocalStorage(config = {}) {
       return out;
     },
 
+    /**
+     * Writable stream for a key. `stream.completed` resolves with
+     * `{ key, size }` once the file is fully written and closed (after
+     * `end()`), and rejects when the write fails.
+     */
     async createWriteStream(key) {
       const fullPath = resolvePath(baseDir, key);
       await ensureDir(fullPath);
@@ -171,7 +178,30 @@ export function createLocalStorage(config = {}) {
         stream.once('open', resolve);
         stream.once('error', reject);
       });
+      stream.completed = new Promise((resolve, reject) => {
+        stream.once('close', () => (stream.errored ? reject(stream.errored) : resolve({ key, size: stream.bytesWritten })));
+        stream.once('error', reject);
+      });
+      // A failed write is reported through `completed`; never unhandled.
+      stream.completed.catch(() => {});
       return stream;
+    },
+
+    // backups: streamed copy of a local file (tenant export archives).
+    async putFile(key, filePath, options = {}) {
+      void options;
+      const fullPath = resolvePath(baseDir, key);
+      await ensureDir(fullPath);
+      await fs.copyFile(filePath, fullPath);
+      const { size } = await fs.stat(fullPath);
+      return { key, size };
+    },
+
+    /** Readable stream of a stored object (rejects when it does not exist). */
+    async createReadStream(key) {
+      const fullPath = resolvePath(baseDir, key);
+      await fs.access(fullPath);
+      return createReadStream(fullPath);
     },
 
     async presignedUrl(key, options = {}) {

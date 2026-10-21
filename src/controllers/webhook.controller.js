@@ -9,7 +9,9 @@
  *
  * RESPONSIBILITY
  *   Forward the raw body + headers to `connectorService.handleWebhook` and
- *   acknowledge with 202 (accepted for processing).
+ *   acknowledge with 202 (accepted for processing). The service runs every
+ *   cheap pre-check (content type, size, connector / tenant state, header
+ *   format, timestamp window) before the signing key is touched.
  *
  * SECURITY NOTES
  *   - The router mounts `express.raw({ type: '*\\/*' })` (in `app.js`, before
@@ -23,13 +25,18 @@ import connectorService from '../services/connector.service.js';
 
 /**
  * POST /api/v1/webhooks/:webhookToken - receive a provider event.
+ *
+ * A delivery accepted with the legacy body-only signature is flagged with a
+ * `Deprecation: true` header so senders notice before the legacy scheme is
+ * switched off.
  */
 export const receive = asyncHandler(async (req, res) => {
   const result = await connectorService.handleWebhook({
     webhookToken: req.params.webhookToken,
-    rawBody: req.body,
+    rawBody: Buffer.isBuffer(req.body) ? req.body : undefined,
     headers: req.headers,
   });
+  if (result.signatureVersion === 1) res.set('Deprecation', 'true');
   return ApiResponse.accepted(res, result, 'Webhook accepted');
 });
 

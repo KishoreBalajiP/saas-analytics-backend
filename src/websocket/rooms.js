@@ -16,6 +16,12 @@
  *   - `tenant:<id>`            -> everything for one tenant
  *   - `dashboard:<id>`         -> a specific dashboard's viewers
  *   - `embed:<embedTokenHash>` -> a specific embedded widget
+ *   - `user:<id>` / `admin:<id>` -> one signed-in identity
+ *
+ * SECURITY
+ *   Clients never pick rooms freely. The server joins each socket to its
+ *   own personal and tenant rooms at connect time, and client join requests
+ *   go through `websocket/auth.js#authorizeRoomJoin`.
  */
 
 import logger from '../utils/logger.js';
@@ -38,6 +44,15 @@ export function getClient(socketId) {
 
 export function getClientCount() {
   return clientRegistry.size;
+}
+
+/** Open sockets on this instance that belong to one verified identity. */
+export function countClientsFor({ actorType, actorId }) {
+  let count = 0;
+  for (const meta of clientRegistry.values()) {
+    if (meta.actorType === actorType && meta.actorId === actorId) count += 1;
+  }
+  return count;
 }
 
 export function joinRoom(socket, room) {
@@ -79,5 +94,7 @@ export function broadcast(io, room, event, data, senderSocketId = null) {
 export const roomNames = {
   tenant: (tenantId) => `${SOCKET.ROOMS.TENANT_PREFIX}${tenantId}`,
   dashboard: (dashboardId) => `${SOCKET.ROOMS.DASHBOARD_PREFIX}${dashboardId}`,
+  user: (userId) => `user:${userId}`,
+  admin: (adminId) => `admin:${adminId}`,
   all: () => SOCKET.ROOMS.ALL,
 };

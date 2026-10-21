@@ -12,6 +12,8 @@
  *   - listQueries      GET  /queries    (history)
  *   - getQuery         GET  /queries/:id
  *   - exportAsync      POST /export     (202 scheduled)
+ *   - getExport        GET  /exports/:id           (export status)
+ *   - downloadExport   GET  /exports/:id/download  (signed URL)
  *
  * CODING GUIDELINES
  *   - Reads `req.tenant.id` (set by resolveTenant before these run).
@@ -24,56 +26,19 @@ import ApiResponse from '../utils/ApiResponse.js';
 import ApiError from '../utils/ApiError.js';
 import { getTenantId } from '../middleware/tenant.middleware.js';
 import * as analyticsService from '../services/analytics.service.js';
-import { parsePagination } from '../validators/analytics.validator.js';
+import { parseQueryString } from '../validators/analytics.validator.js';
 
 const actorOf = (req) => req.user?.id ?? req.admin?.id ?? null;
-
-/** Parse a JSON-encoded query parameter, returning `undefined` when absent. */
-function parseJsonParam(value, field) {
-  if (value === undefined || value === null || value === '') return undefined;
-  if (typeof value !== 'string') return value;
-  try {
-    return JSON.parse(value);
-  } catch {
-    throw ApiError.badRequest(`${field} must be a valid JSON string`);
-  }
-}
-
-/** Parse a comma-separated id list, returning undefined when absent. */
-function parseConnectorIds(value) {
-  if (value === undefined || value === null || value === '') return undefined;
-  if (Array.isArray(value)) return value;
-  return String(value)
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean);
-}
 
 /** GET /api/v1/analytics - run (or serve a cached) analytics query. */
 export const queryRows = asyncHandler(async (req, res) => {
   const tenantId = getTenantId(req);
   if (!tenantId) throw ApiError.badRequest('Tenant id is required');
 
-  const { page, limit } = parsePagination(req.query);
-  const filters = parseJsonParam(req.query.filters, 'filters');
-  const dateRange = parseJsonParam(req.query.dateRange, 'dateRange');
-  const groupBy = parseJsonParam(req.query.groupBy, 'groupBy');
-  const metrics = parseJsonParam(req.query.metrics, 'metrics');
-  const orderBy = parseJsonParam(req.query.orderBy, 'orderBy');
-  const filtersOp = typeof req.query.filtersOp === 'string' ? String(req.query.filtersOp) : 'and';
-  const connectorIds = parseConnectorIds(req.query.connectorIds);
-
-  const result = await analyticsService.query({
-    tenantId,
-    connectorIds,
-    filters,
-    filtersOp,
-    dateRange,
-    metrics,
-    groupBy,
-    orderBy,
-    pagination: { page, limit },
-  });
+  // Strict: unknown parameters and malformed JSON are 400 INVALID_QUERY;
+  // the engine contract then validates every part of the query.
+  const query = parseQueryString(req.query);
+  const result = await analyticsService.query({ tenantId, actorId: actorOf(req), ...query });
 
   return ApiResponse.ok(
     res,
@@ -88,8 +53,12 @@ export const queryRows = asyncHandler(async (req, res) => {
       cached: result.cached,
       executedAt: result.executedAt,
       groupMode: result.groupMode,
+      timezone: result.timezone,
+      window: result.window,
       queryId: result.queryId,
       cacheKey: result.cacheKey,
+      // ai-catalogue: the comparison window of a compared query.
+      ...(result.compare ? { compare: result.compare } : {}),
     },
   );
 });
@@ -109,7 +78,8 @@ export const listQueries = asyncHandler(async (req, res) => {
   const page = Math.max(1, Number(req.query.page) || 1);
   const limit = Math.min(Math.max(1, Number(req.query.limit) || 20), 100);
   const status = req.query.status ? String(req.query.status) : undefined;
-  const result = await analyticsService.listQueries({ tenantId, page, limit, status });
+  const kind = req.validated?.query?.kind;
+  const result = await analyticsService.listQueries({ tenantId, page, limit, status, kind });
   return ApiResponse.ok(res, result.docs, 'Query history', {
     total: result.total,
     page: result.page,
@@ -118,13 +88,35 @@ export const listQueries = asyncHandler(async (req, res) => {
   });
 });
 
-/** POST /api/v1/analytics/export - schedule an async export (202). */
+/**
+ * POST /api/v1/analytics/export - schedule an async export of the whole
+ * result (202 { exportId, status: 'pending', format }). The raw body goes
+ * through the same strict contract as a live query (pagination excepted:
+ * an export always holds every row), so an export can never be scheduled
+ * for a query that would be rejected.
+ */
 export const exportAsync = asyncHandler(async (req, res) => {
   const tenantId = getTenantId(req);
   if (!tenantId) throw ApiError.badRequest('Tenant id is required');
-  const params = req.validated?.body ?? req.body ?? {};
-  const outcome = await analyticsService.scheduleExport({ tenantId, actorId: actorOf(req), params });
+  const body = req.body && typeof req.body === 'object' ? req.body : {};
+  const outcome = await analyticsService.scheduleExport({ tenantId, actorId: actorOf(req), body });
   return ApiResponse.accepted(res, outcome, 'Export scheduled');
+});
+
+/** GET /api/v1/analytics/exports/:id - status of one of the caller's exports. */
+export const getExport = asyncHandler(async (req, res) => {
+  const tenantId = getTenantId(req);
+  if (!tenantId) throw ApiError.badRequest('Tenant id is required');
+  const status = await analyticsService.getExport({ tenantId, actorId: actorOf(req), exportId: req.params.id });
+  return ApiResponse.ok(res, status, 'Export');
+});
+
+/** GET /api/v1/analytics/exports/:id/download - short-lived signed URL (409 until ready). */
+export const downloadExport = asyncHandler(async (req, res) => {
+  const tenantId = getTenantId(req);
+  if (!tenantId) throw ApiError.badRequest('Tenant id is required');
+  const descriptor = await analyticsService.downloadExport({ tenantId, actorId: actorOf(req), exportId: req.params.id });
+  return ApiResponse.ok(res, descriptor, 'Download');
 });
 
 export default {
@@ -132,4 +124,6 @@ export default {
   getQuery,
   listQueries,
   exportAsync,
+  getExport,
+  downloadExport,
 };

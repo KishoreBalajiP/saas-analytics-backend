@@ -15,6 +15,10 @@
  *   - appendHistory(tenantId, entry)  append a SubscriptionHistory row
  *   - listHistory(tenantId, opts)     paginated history (admin timeline)
  *   - listExpiring(state, before)     background-job helper
+ *   - listLifecycleDue({ now })       billing: rows whose term, trial or
+ *                                     grace ended (lifecycle job)
+ *   - listRenewalDue({ now, until })  billing: paid terms ending soon
+ *                                     (renewal reminders)
  *
  * CODING GUIDELINES
  *   - `tenantId` is the partition key; every method takes it explicitly
@@ -80,10 +84,13 @@ export const upsertForTenant = async (tenantId, doc, { by = null } = {}) => {
 };
 
 /** Patch an existing subscription by id. */
-export const update = async (id, patch, { by = null, expectedVersion = null } = {}) => {
+export const update = async (id, patch, { by = null, expectedVersion = null, expect = null } = {}) => {
   if (!id) return null;
   const filter = { _id: safeId(id) };
   if (expectedVersion !== null) filter.__v = expectedVersion;
+  // billing: compare-and-set on fields read by the caller (e.g. `updatedAt`
+  // or `lastTransactionId`); a null result means the row moved meanwhile.
+  if (expect && typeof expect === 'object') Object.assign(filter, expect);
   const updated = await Subscription.findOneAndUpdate(
     filter,
     { $set: { ...patch, updatedBy: by } },
@@ -126,7 +133,49 @@ export const listExpiring = async ({ state, before } = {}) => {
   return Subscription.find(filter).limit(500).lean();
 };
 
+/**
+ * billing: subscriptions the lifecycle job must look at - a paid term,
+ * trial or grace window that has ended, a due scheduled change, or a free
+ * plan period to roll forward. Bounded batch, oldest first.
+ */
+export const listLifecycleDue = async ({ now = new Date(), limit = 200 } = {}) => {
+  return Subscription.find({
+    $or: [
+      { state: { $in: ['active', 'trialing', 'canceled'] }, currentPeriodEnd: { $lte: now } },
+      { state: 'trialing', trialEndsAt: { $lte: now } },
+      { state: 'past_due', graceEndsAt: { $lte: now } },
+      { state: 'active', 'scheduledChange.effectiveAt': { $lte: now } },
+    ],
+  })
+    .sort({ currentPeriodEnd: 1 })
+    .limit(Math.min(Math.max(1, limit), 1000))
+    .lean();
+};
+
+/** billing: active or trialing subscriptions whose term ends in (now, until]. */
+export const listRenewalDue = async ({ now = new Date(), until, limit = 500 } = {}) => {
+  if (!until) return [];
+  return Subscription.find({
+    state: { $in: ['active', 'trialing'] },
+    cancelAtPeriodEnd: { $ne: true },
+    currentPeriodEnd: { $gt: now, $lte: until },
+  })
+    .sort({ currentPeriodEnd: 1 })
+    .limit(Math.min(Math.max(1, limit), 1000))
+    .lean();
+};
+
+/** billing: page through non-free subscriptions (migration helper). */
+export const listPaidPage = async ({ afterId = null, limit = 200 } = {}) => {
+  const filter = { planId: { $ne: 'free' } };
+  if (afterId) filter._id = { $gt: afterId };
+  return Subscription.find(filter).sort({ _id: 1 }).limit(Math.min(Math.max(1, limit), 1000)).lean();
+};
+
 export default {
+  listPaidPage,
+  listLifecycleDue,
+  listRenewalDue,
   findByTenantId,
   findById,
   list,

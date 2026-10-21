@@ -34,6 +34,8 @@ export const listSchema = {
   params: {},
   query: {
     tenantId: { type: 'string', minLength: 1 },
+    category: { type: 'string', oneOf: ['change', 'security'] },
+    severity: { type: 'string', oneOf: ['info', 'notice', 'warning', 'critical'] },
     module: { type: 'string', minLength: 1 },
     action: { type: 'string', minLength: 1 },
     actorId: { type: 'string', minLength: 1 },

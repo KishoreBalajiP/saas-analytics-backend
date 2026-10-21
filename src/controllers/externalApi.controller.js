@@ -7,9 +7,13 @@
  */
 
 import externalApiService from '../services/externalApi.service.js';
-import { validateQueryDataset, validateListDatasets, validateListDatasetRows } from '../validators/externalApi.validator.js';
+import { validateListDatasets, validateListDatasetRows } from '../validators/externalApi.validator.js';
+import { parseQueryString, EXTERNAL_QUERY_PARAMS } from '../validators/analytics.validator.js';
 import ApiResponse from '../utils/ApiResponse.js';
 import ApiError from '../utils/ApiError.js';
+// devapi:
+import apiKeyService from '../services/apiKey.service.js';
+import { buildExternalApiSpec } from '../openapi/externalApi.spec.js';
 
 /** GET /external/datasets */
 export async function listDatasets(req, res, next) {
@@ -22,7 +26,8 @@ export async function listDatasets(req, res, next) {
       page: Number(req.query.page) || 1,
       limit: Number(req.query.limit) || 50,
     });
-    return ApiResponse.ok(res, result);
+    // devapi: list envelope (array in data, pagination in meta).
+    return ApiResponse.ok(res, result.docs, 'Listed', { page: result.page, limit: result.limit, total: result.total, pages: result.pages });
   } catch (err) {
     next(err);
   }
@@ -46,21 +51,14 @@ export async function getDataset(req, res, next) {
 /** GET /external/datasets/:datasetId/query */
 export async function queryDataset(req, res, next) {
   try {
-    const { valid, errors } = validateQueryDataset(req.query);
-    if (!valid) return next(ApiError.badRequest('Validation failed', errors));
     externalApiService.requireScope(req.apiKey, 'analytics:query');
+    // Strict: unknown parameters and malformed JSON are 400 INVALID_QUERY;
+    // the engine contract then validates every part of the query.
+    const query = parseQueryString(req.query, EXTERNAL_QUERY_PARAMS);
     const result = await externalApiService.queryDataset({
       tenantId: req.tenant,
       datasetId: req.params.datasetId,
-      query: {
-        filters: req.query.filters ? JSON.parse(req.query.filters) : undefined,
-        filtersOp: req.query.filtersOp,
-        dateRange: req.query.dateRange ? JSON.parse(req.query.dateRange) : undefined,
-        metrics: req.query.metrics ? JSON.parse(req.query.metrics) : undefined,
-        groupBy: req.query.groupBy ? JSON.parse(req.query.groupBy) : undefined,
-        orderBy: req.query.orderBy ? JSON.parse(req.query.orderBy) : undefined,
-        pagination: req.query.pagination ? JSON.parse(req.query.pagination) : undefined,
-      },
+      query,
     });
     return ApiResponse.ok(res, result);
   } catch (err) {
@@ -80,7 +78,7 @@ export async function listDatasetRows(req, res, next) {
       page: Number(req.query.page) || 1,
       limit: Number(req.query.limit) || 100,
     });
-    return ApiResponse.ok(res, result);
+    return ApiResponse.ok(res, result.docs, 'Listed', { page: result.page, limit: result.limit, total: result.total, pages: result.pages });
   } catch (err) {
     next(err);
   }
@@ -101,4 +99,20 @@ export async function getDashboard(req, res, next) {
   }
 }
 
-export default { listDatasets, getDataset, queryDataset, listDatasetRows, getDashboard };
+/** devapi: DELETE /external/v1/keys/self - revoke the calling key. */
+export async function revokeSelf(req, res, next) {
+  try {
+    await apiKeyService.revokeSelf({ tenantId: String(req.apiKey.tenantId), keyId: String(req.apiKey.keyId) });
+    return ApiResponse.ok(res, { id: String(req.apiKey.keyId), revoked: true }, 'API key revoked');
+  } catch (err) {
+    next(err);
+  }
+}
+
+/** devapi: GET /external/openapi.json - public OpenAPI 3.1 reference. */
+export function openApiSpec(req, res) {
+  res.setHeader('Cache-Control', 'public, max-age=300');
+  return res.status(200).json(buildExternalApiSpec());
+}
+
+export default { listDatasets, getDataset, queryDataset, listDatasetRows, getDashboard, revokeSelf, openApiSpec };

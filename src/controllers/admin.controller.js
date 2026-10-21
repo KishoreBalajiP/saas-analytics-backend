@@ -11,6 +11,9 @@
  *     import paths documented in early phases keep working.
  *   - /admin handlers manage platform admins (list/create/detail/update),
  *     lifecycle transitions (suspend/restore) and AdminRole grants.
+ *   - adminauth (roadmap 2.2): `createAdmin` now INVITES (no password in the
+ *     body); invitation list/resend/revoke; admin-assisted MFA and password
+ *     resets (super only, never oneself, step-up enforced by the route).
  *
  * CODING GUIDELINES
  *   - All async handlers MUST be wrapped in `asyncHandler`.
@@ -22,6 +25,7 @@
 import asyncHandler from '../utils/asyncHandler.js';
 import ApiResponse from '../utils/ApiResponse.js';
 import adminService from '../services/admin.service.js';
+import adminCredentialsService from '../services/adminCredentials.service.js';
 import auditLogService from '../services/auditLog.service.js';
 import adminAuthController from '../modules/iam/auth/auth.controller.js';
 import adminPasswordController from '../modules/iam/auth/password.controller.js';
@@ -58,19 +62,77 @@ export const listAdmins = asyncHandler(async (req, res) => {
   });
 });
 
-/** POST /admin/admins - create + invite a platform admin. */
+/**
+ * POST /admin/admins - invite a platform admin (adminauth). The admin is
+ * created `pending` without a password and receives an acceptance link.
+ * Response: the admin (secrets stripped) plus `invitation` and `delivered`.
+ */
 export const createAdmin = asyncHandler(async (req, res) => {
-  const { email, password, name, adminType, tenantScope, status } = req.validated?.body ?? {};
-  const admin = await adminService.create({
+  const { email, name, adminType, tenantScope } = req.validated?.body ?? {};
+  const { admin, invitation, delivered } = await adminService.invite({
     email,
-    password,
     name,
     adminType,
     tenantScope,
-    status,
     by: actor(req),
   });
-  return ApiResponse.created(res, admin, 'Admin created');
+  return ApiResponse.created(
+    res,
+    { ...admin, invitation, delivered },
+    delivered ? 'Invitation sent' : 'Admin invited; the invitation email could not be delivered',
+  );
+});
+
+/** GET /admin/admins/invitations - invitation history (adminauth). */
+export const listAdminInvitations = asyncHandler(async (req, res) => {
+  const { status, page, limit } = req.validated?.query ?? {};
+  const result = await adminService.listInvitations({ status, page: page ?? 1, limit: limit ?? 20 });
+  return ApiResponse.ok(res, result.docs, 'Invitations fetched', {
+    page: result.page,
+    limit: result.limit,
+    total: result.total,
+    pages: result.pages,
+  });
+});
+
+/** POST /admin/admins/:id/invitation/resend - new link, old one stops working. */
+export const resendAdminInvitation = asyncHandler(async (req, res) => {
+  const result = await adminService.resendInvitation({ id: req.params.id, by: actor(req) });
+  return ApiResponse.ok(res, result, result.delivered ? 'Invitation sent' : 'Invitation renewed; the email could not be delivered');
+});
+
+/** POST /admin/admins/:id/invitation/revoke - revoke and remove the pending admin. */
+export const revokeAdminInvitation = asyncHandler(async (req, res) => {
+  const result = await adminService.revokeInvitation({
+    id: req.params.id,
+    by: actor(req),
+    reason: req.validated?.body?.reason ?? null,
+  });
+  return ApiResponse.ok(res, result, 'Invitation revoked');
+});
+
+/** POST /admin/admins/:id/mfa/reset - admin-assisted MFA reset (adminauth). */
+export const resetAdminMfa = asyncHandler(async (req, res) => {
+  const result = await adminCredentialsService.resetMfa({
+    adminId: req.params.id,
+    by: actor(req),
+    reason: req.validated.body.reason,
+  });
+  return ApiResponse.ok(res, result, 'MFA reset; the admin must enrol again at the next sign-in');
+});
+
+/** POST /admin/admins/:id/password/reset - admin-assisted password reset (adminauth). */
+export const resetAdminPassword = asyncHandler(async (req, res) => {
+  const result = await adminCredentialsService.resetPassword({
+    adminId: req.params.id,
+    by: actor(req),
+    reason: req.validated.body.reason,
+  });
+  return ApiResponse.ok(
+    res,
+    result,
+    result.delivered ? 'Password reset; a reset link was emailed to the admin' : 'Password reset; the reset email could not be delivered',
+  );
 });
 
 /** GET /admin/admins/:id - detail (secrets stripped by the service). */
@@ -81,9 +143,15 @@ export const getAdmin = asyncHandler(async (req, res) => {
 
 /** PATCH /admin/admins/:id - update profile / adminType / scope. */
 export const updateAdmin = asyncHandler(async (req, res) => {
+  const patch = { ...(req.validated?.body ?? {}) };
+  // roles: `tenantScope: null` (or "") clears the scope, making the admin
+  // platform-wide again; the validator drops empty values, so read it here.
+  if (req.body && Object.hasOwn(req.body, 'tenantScope') && (req.body.tenantScope === null || req.body.tenantScope === '')) {
+    patch.tenantScope = null;
+  }
   const admin = await adminService.update({
     id: req.params.id,
-    patch: req.validated?.body ?? {},
+    patch,
     by: actor(req),
   });
   return ApiResponse.ok(res, admin, 'Admin updated');
@@ -119,6 +187,9 @@ export const revokeAdminRole = asyncHandler(async (req, res) => {
   const result = await adminService.revokeRole({
     adminId: req.params.id,
     roleId: req.params.roleId,
+    // Tenant-scoped grants are revoked by passing their tenant id.
+    tenantId: req.validated?.query?.tenantId ?? null,
+    by: actor(req),
   });
   return ApiResponse.ok(res, result, 'Role revoked');
 });
@@ -144,4 +215,7 @@ export default {
   adminMfaEnroll, adminMfaVerify, adminMe,
   listAdmins, createAdmin, getAdmin, updateAdmin, suspendAdmin, restoreAdmin,
   assignAdminRole, revokeAdminRole, getAdminAudit,
+  // adminauth
+  listAdminInvitations, resendAdminInvitation, revokeAdminInvitation,
+  resetAdminMfa, resetAdminPassword,
 };

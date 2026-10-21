@@ -71,12 +71,16 @@ export const deleteReport = asyncHandler(async (req, res) => {
   return ApiResponse.noContent(res);
 });
 
-/** GET /api/v1/reports/:id/download - latest (or specific) artefact URL. */
+/**
+ * GET /api/v1/reports/:id/download - short-lived signed URL for the latest
+ * ready (or a specific) run's artefact, with its file name, format, row
+ * count and `truncated` flag.
+ */
 export const downloadReport = asyncHandler(async (req, res) => {
   const tenantId = getTenantId(req);
   const q = req.validated?.query ?? {};
   const descriptor = await reportService.download({
-    tenantId, reportId: req.validated.params.id, runId: q.runId,
+    tenantId, reportId: req.validated.params.id, runId: q.runId, actorId: actorOf(req),
   });
   return ApiResponse.ok(res, descriptor, 'Download');
 });

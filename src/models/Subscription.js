@@ -17,6 +17,16 @@
  * LIFECYCLE
  *   trialing | active | past_due | canceled | expired | restricted
  *
+ *   billing (roadmap 3.1): prepaid terms. A paid plan is held for the
+ *   term bought (`currentPeriodStart..currentPeriodEnd`); the lifecycle
+ *   job moves an unrenewed term to `past_due` (grace until `graceEndsAt`)
+ *   and then `restricted`; a canceled term becomes `expired`; a trial
+ *   ends on the free plan. Access is ALSO computed from state + period on
+ *   every check (`subscription.service.js#computeAccess`), so a late job
+ *   never extends access. `adminHold` marks an administrative restriction
+ *   that money events must not lift; `scheduledChange` is a downgrade (or
+ *   a prepaid lower-tier term) that takes effect at `effectiveAt`.
+ *
  *   Allowed transitions are encoded in `services/subscription.service.js`
  *   (`assertTransition`). The schema is permissive about field values; the
  *   service is the only authority for the state graph.
@@ -66,6 +76,28 @@ const subscriptionSchema = new mongoose.Schema(
     previousState: { type: String, default: null },
     stateChangedAt: { type: Date, default: null },
     lastReconciledAt: { type: Date, default: null },
+    // billing: prepaid-term bookkeeping (roadmap 3.1).
+    billingInterval: { type: String, enum: ['month', 'year', null], default: null },
+    lastTransactionId: { type: String, default: null },
+    adminHold: { type: Boolean, default: false },
+    scheduledChange: {
+      type: new mongoose.Schema(
+        {
+          planId: { type: String, required: true },
+          effectiveAt: { type: Date, required: true },
+          // A prepaid lower-tier term starts at `effectiveAt` and ends here;
+          // null for a move to the free plan.
+          termEnd: { type: Date, default: null },
+          interval: { type: String, default: null },
+          transactionId: { type: String, default: null },
+          source: { type: String, enum: ['workspace', 'payment', 'admin'], default: 'workspace' },
+          requestedBy: { type: String, default: null },
+          requestedAt: { type: Date, default: null },
+        },
+        { _id: false },
+      ),
+      default: null,
+    },
     createdBy: { type: String, default: null },
     updatedBy: { type: String, default: null },
   },

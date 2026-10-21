@@ -19,7 +19,9 @@
  */
 
 import BaseConnector from '../../../connectors/BaseConnector.js';
+import env from '../../../config/env.js';
 import { validateConfig } from '../shared/validators.js';
+import { RowLimitError } from '../shared/errors.js';
 import { createParser, previewCsv } from './csv.parser.js';
 
 export class CsvConnector extends BaseConnector {
@@ -58,13 +60,22 @@ export class CsvConnector extends BaseConnector {
    *
    * @param {Object} [options]
    * @param {Buffer} options.buffer - uploaded file bytes.
+   * @param {number} [options.maxRows] - row cap (defaults to CONNECTOR_MAX_ROWS_PER_SYNC).
    * @returns {AsyncIterable<Object|Array>}
+   * @throws {RowLimitError} when the file has more rows than one sync may ingest.
    */
-  async *ingest({ buffer } = {}) {
+  async *ingest({ buffer, maxRows = env.connectors.maxRowsPerSync } = {}) {
     if (!buffer) throw new Error('CsvConnector.ingest requires a file buffer');
     const parser = createParser(buffer, this.config);
-    for await (const record of parser) {
-      yield record;
+    let rows = 0;
+    try {
+      for await (const record of parser) {
+        rows += 1;
+        if (rows > maxRows) throw new RowLimitError(maxRows);
+        yield record;
+      }
+    } finally {
+      parser.destroy?.();
     }
   }
 

@@ -17,6 +17,7 @@ import assert from 'node:assert/strict';
 import { startMongo, stopMongo, resetMongo } from './helpers/mongo.js';
 import { startHttp, stopHttp, api, refreshCookieFrom } from './helpers/http.js';
 import { factories } from './helpers/factories.js';
+import { Session } from '../src/models/Session.js';
 
 before(async () => {
   await startMongo();
@@ -54,7 +55,7 @@ function loginAs(email, password, { tenantId, body = {} } = {}) {
 
 /* ------------------------------- login ---------------------------------- */
 
-test('login issues an access token, refresh token, session and cookie', async () => {
+test('login issues an access token and an HttpOnly refresh cookie (never a body refresh token)', async () => {
   const { tenant, user } = await seedUser();
   const res = await loginAs(user.email, PASSWORD, { tenantId: tenant._id.toString() });
 
@@ -62,13 +63,16 @@ test('login issues an access token, refresh token, session and cookie', async ()
   assert.equal(res.json.success, true);
   assert.equal(typeof res.json.data.accessToken, 'string');
   assert.ok(res.json.data.accessToken.length > 50, 'access token should be a compact JWT');
-  assert.equal(typeof res.json.data.refreshToken, 'string');
-  assert.ok(res.json.data.refreshToken.length >= 32, 'refresh token should be opaque');
-  assert.equal(typeof res.json.data.sessionId, 'string');
+  assert.equal('refreshToken' in res.json.data, false, 'refresh token is cookie-only');
+  assert.equal('sessionId' in res.json.data, false, 'session id is not exposed');
   assert.equal(res.json.data.expiresIn, 15 * 60);
   assert.equal(res.json.data.actor.email, user.email);
   assert.equal(res.json.data.actor.status, 'active');
-  assert.ok(res.setCookie.some((c) => c.startsWith('saas_session=')), 'sets the HttpOnly cookie');
+  const cookie = res.setCookie.find((c) => c.startsWith('saas_session='));
+  assert.ok(cookie, 'sets the refresh cookie');
+  assert.match(cookie, /HttpOnly/i);
+  assert.match(cookie, /Path=\/api\/v1\/auth(;|$)/);
+  assert.ok(refreshCookieFrom(res).split('=')[1].length >= 32, 'refresh token should be opaque');
 });
 
 test('login rejects a wrong password with a generic message', async () => {
@@ -160,7 +164,6 @@ test('refresh rotates the token; replaying the old token revokes the whole famil
   const login = await loginAs(user.email, PASSWORD, { tenantId: tenant._id.toString() });
   const oldCookie = refreshCookieFrom(login);
   const oldAccessToken = login.json.data.accessToken;
-  const oldRefreshToken = login.json.data.refreshToken;
 
   // Rotate: new session + new tokens.
   const refreshed = await api(`${BASE}/refresh`, { method: 'POST', cookies: [oldCookie] });
@@ -168,8 +171,9 @@ test('refresh rotates the token; replaying the old token revokes the whole famil
   const newCookie = refreshCookieFrom(refreshed);
   assert.ok(newCookie, 'refresh re-sets the cookie');
   assert.notEqual(newCookie, oldCookie, 'the cookie value must change');
-  assert.notEqual(refreshed.json.data.refreshToken, oldRefreshToken);
-  assert.notEqual(refreshed.json.data.sessionId, login.json.data.sessionId);
+  assert.equal('refreshToken' in refreshed.json.data, false, 'refresh token is cookie-only');
+  assert.equal('sessionId' in refreshed.json.data, false, 'session id is not exposed');
+  assert.notEqual(refreshed.json.data.accessToken, oldAccessToken);
 
   // The new access token works.
   const meOk = await api(`${BASE}/me`, {
@@ -177,7 +181,13 @@ test('refresh rotates the token; replaying the old token revokes the whole famil
   });
   assert.equal(meOk.status, 200);
 
-  // Replaying the OLD (rotated) token is an attack -> family revoked.
+  // Within AUTH_REFRESH_REUSE_GRACE_MS of the rotation the old token is a
+  // lagging duplicate (see auth-hardening tests). Once that grace has
+  // passed, replaying the OLD (rotated) token is an attack -> family revoked.
+  await Session.updateMany(
+    { revokedReason: 'rotated' },
+    { $set: { revokedAt: new Date(Date.now() - 60 * 1000) } },
+  );
   const replay = await api(`${BASE}/refresh`, { method: 'POST', cookies: [oldCookie] });
   assert.equal(replay.status, 401);
   assert.equal(replay.json.message, 'Session revoked');
@@ -194,10 +204,21 @@ test('refresh rotates the token; replaying the old token revokes the whole famil
 test('refresh with an unknown token is rejected as an expired session', async () => {
   const res = await api(`${BASE}/refresh`, {
     method: 'POST',
-    body: { refreshToken: 'not-a-real-token' },
+    cookies: ['saas_session=not-a-real-token'],
   });
   assert.equal(res.status, 401);
   assert.equal(res.json.message, 'Session expired');
+  assert.equal(res.json.code, 'SESSION_EXPIRED');
+});
+
+test('refresh ignores a refresh token sent in the body (cookie-only transport)', async () => {
+  const { tenant, user } = await seedUser();
+  const login = await loginAs(user.email, PASSWORD, { tenantId: tenant._id.toString() });
+  const token = refreshCookieFrom(login).split('=')[1];
+
+  const res = await api(`${BASE}/refresh`, { method: 'POST', body: { refreshToken: token } });
+  assert.equal(res.status, 401);
+  assert.equal(res.json.code, 'SESSION_COOKIE_MISSING');
 });
 
 /* ------------------------------- logout ---------------------------------- */
@@ -210,6 +231,7 @@ test('logout revokes the session and invalidates the refresh token', async () =>
   const logout = await api(`${BASE}/logout`, { method: 'POST', cookies: [cookie] });
   assert.equal(logout.status, 200);
   assert.equal(logout.json.data.ok, true);
+  assert.equal(logout.json.data.revoked, true);
 
   const refresh = await api(`${BASE}/refresh`, { method: 'POST', cookies: [cookie] });
   assert.equal(refresh.status, 401);

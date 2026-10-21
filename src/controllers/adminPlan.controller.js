@@ -98,7 +98,18 @@ export const enablePlan = asyncHandler(async (req, res) => {
 });
 
 export const ensureDefaults = asyncHandler(async (req, res) => {
-  const result = await planService.ensureDefaults(req.admin?.id ?? null);
+  // billing: edited prices are only replaced when explicitly asked.
+  const overwritePrices = req.body?.overwritePrices === true;
+  const result = await planService.ensureDefaults(req.admin?.id ?? null, { overwritePrices });
+  if (overwritePrices) {
+    await auditEmit({
+      actor: actorOf(req),
+      action: 'plan.prices_reseeded',
+      module: 'billing.plans',
+      resource: { type: 'plan_catalogue', id: 'plans' },
+      after: { updated: result.updated },
+    });
+  }
   return ApiResponse.ok(res, result, 'Default plans ensured');
 });
 

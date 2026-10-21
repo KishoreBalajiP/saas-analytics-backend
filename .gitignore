@@ -20,6 +20,11 @@ uploads/*
 coverage/
 dist/
 build/
+# Captured local test-run logs (never commit these)
+/final-results.txt
+/summary.txt
+/test-output.txt
+/test-all-output.txt
 
 # OS / editor noise
 .DS_Store

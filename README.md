@@ -90,6 +90,7 @@ docker compose up --build
 | Script                          | Purpose                                              |
 | ------------------------------- | ---------------------------------------------------- |
 | `npm start`                     | run in production (`node src/server.js`)             |
+| `npm run start:worker`          | background worker: queue consumers + scheduler, no HTTP (`src/worker.js`; pair with `PROCESS_ROLE=web` on the web service) |
 | `npm run dev`                   | run with nodemon (auto-restart on change)            |
 | `npm test`                      | run the `node --test` suite (scrypt KDF, portable)             |
 | `npm run test:argon2`           | run the suite against the real Argon2id KDF                    |

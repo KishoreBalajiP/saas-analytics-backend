@@ -65,8 +65,12 @@ test('notification inbox: list, unread-count, mark-read, delete, preferences', a
 
   const getPrefs = await api('/api/v1/notifications/preferences', { headers: auth });
   assert.equal(getPrefs.status, 200);
-  const setPrefs = await api('/api/v1/notifications/preferences', { method: 'POST', headers: auth, body: { preferences: { digest: true } } });
+  // onboarding: typed channel keys only (an unknown key is a 400).
+  const setPrefs = await api('/api/v1/notifications/preferences', { method: 'POST', headers: auth, body: { preferences: { email: false } } });
   assert.equal(setPrefs.status, 200);
+  assert.equal(setPrefs.json.data.preferences.email, false);
+  const unknown = await api('/api/v1/notifications/preferences', { method: 'POST', headers: auth, body: { preferences: { digest: true } } });
+  assert.equal(unknown.status, 400);
 });
 
 test('notification routes are 401 without a token and 403 without permission', async () => {

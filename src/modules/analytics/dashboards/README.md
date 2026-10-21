@@ -69,8 +69,9 @@ createdAt, updatedAt, createdBy, updatedBy
 ## Coding guidelines
 
 - Reads cache keyed by `{tenantId, dashboardId, widgetId, updatedAt, ...}`
-  — editing a widget/dashboard busts cached results immediately; data
-  changes honour the analytics TTL.
+  plus the prepared query (absolute window, workspace time zone) and the
+  dataset's `dataVersion` — editing a widget/dashboard or syncing its
+  dataset busts cached results immediately.
 - Running a widget requires `dashboards.view` + `analytics.view`.
 - Sharing uses audited email grants stored on the dashboard — do not
   reinvent RBAC.

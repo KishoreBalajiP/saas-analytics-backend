@@ -22,12 +22,24 @@
  */
 
 import { FeatureFlag } from '../models/FeatureFlag.js';
+import { Tenant } from '../models/Tenant.js';
 
-/** Paginated catalogue listing. `filter` may contain `enabled` / `key`. */
+/**
+ * Paginated catalogue listing. `filter` may contain `enabled` / `key`, and
+ * `search` (matched case-insensitively against key and name).
+ */
 export const list = async ({ filter = {}, page = 1, limit = 20 } = {}) => {
   const query = { ...filter };
   if (query.key) {
     query.key = { $regex: escapeRegExp(String(query.key)), $options: 'i' };
+  }
+  if (query.search !== undefined) {
+    const term = String(query.search);
+    delete query.search;
+    if (term) {
+      const re = { $regex: escapeRegExp(term), $options: 'i' };
+      query.$or = [{ key: re }, { name: re }];
+    }
   }
   const result = await FeatureFlag.paginate(query, {
     page,
@@ -64,6 +76,37 @@ export const create = async (data) => {
 export const update = (id, patch) =>
   FeatureFlag.findByIdAndUpdate(id, { $set: patch }, { new: true, runValidators: true, lean: true });
 
+/** Every non-deleted flag (admin evaluation preview). */
+export const findAll = () => FeatureFlag.find({}).sort({ key: 1 }).lean();
+
+/** Find a flag by key, including a soft-deleted one (it still holds the key). */
+export const findByKeyIncludingDeleted = (key) =>
+  FeatureFlag.findOne({ key }).setOptions({ includeDeleted: true }).lean();
+
+/**
+ * Versioned write: apply `set` only when the flag is still at
+ * `expectedVersion`; bumps `version`. Returns the updated lean doc or null.
+ * `includeDeleted` lets a rollback or re-create revive a soft-deleted flag.
+ */
+export const updateIfVersion = (id, expectedVersion, set, { includeDeleted = false } = {}) => {
+  const query = FeatureFlag.findOneAndUpdate(
+    { _id: id, version: expectedVersion === 0 ? { $in: [0, null] } : expectedVersion },
+    { $set: set, $inc: { version: 1 } },
+    { new: true, runValidators: true, lean: true },
+  );
+  return includeDeleted ? query.setOptions({ includeDeleted: true }) : query;
+};
+
+/**
+ * Which of `ids` are existing tenants. Used to validate rollout allow-lists
+ * (read-only lookup on the tenants collection; ids are pre-validated hex).
+ */
+export const findKnownTenantIds = async (ids) => {
+  if (!ids.length) return [];
+  const rows = await Tenant.find({ _id: { $in: ids } }).select('_id').lean();
+  return rows.map((row) => String(row._id));
+};
+
 /** Soft-delete a flag. Returns the plain doc or null. */
 export const softDelete = async (id, by) => {
   const doc = await FeatureFlag.softDeleteById(id, by);
@@ -80,6 +123,10 @@ export default {
   findById,
   findByKey,
   findEnabled,
+  findAll,
+  findByKeyIncludingDeleted,
+  updateIfVersion,
+  findKnownTenantIds,
   create,
   update,
   softDelete,

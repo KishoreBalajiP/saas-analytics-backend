@@ -5,6 +5,7 @@ import { useMongo, resetMongo } from '../helpers/index.js';
 import { ConnectorRow } from '../../src/models/ConnectorRow.js';
 import analyticsController from '../../src/controllers/analytics.controller.js';
 import * as cacheService from '../../src/services/cache.service.js';
+import connectorRepository from '../../src/repositories/connector.repository.js';
 
 useMongo();
 const { ObjectId } = mongoose.Types;
@@ -79,10 +80,25 @@ test('queryRows fails closed without a tenant (400)', async () => {
 });
 
 test('exportAsync schedules and returns 202', async () => {
-  const req = { tenant: { id: TA }, user: { id: 'u1' }, body: { connectorIds: [String(ca)] } };
+  // Exports only read datasets of the workspace (roadmap 1.5).
+  const connector = await connectorRepository.create({ tenantId: TA, type: 'csv', name: 'Orders', status: 'active' });
+  const req = { tenant: { id: TA }, user: { id: 'u1' }, body: { connectorIds: [String(connector._id)] } };
   const res = mockRes();
   await analyticsController.exportAsync(req, res, () => {});
   assert.equal(res.statusCode, 202);
   assert.equal(res.body.data.accepted, true);
-  assert.ok(res.body.data.jobId);
+  assert.equal(res.body.data.status, 'pending');
+  assert.equal(res.body.data.format, 'csv');
+  assert.ok(res.body.data.exportId);
+  assert.equal(res.body.data.jobId, res.body.data.exportId);
+});
+
+test('exportAsync refuses a dataset of another workspace with a field error', async () => {
+  const req = { tenant: { id: TA }, user: { id: 'u1' }, body: { connectorIds: [String(ca)] } };
+  const res = mockRes();
+  let captured = null;
+  await analyticsController.exportAsync(req, res, (err) => { captured = err; });
+  assert.equal(captured?.statusCode, 400);
+  assert.equal(captured.code, 'INVALID_QUERY');
+  assert.deepEqual(captured.errors, [{ field: 'connectorIds[0]', message: 'is not a dataset of this workspace' }]);
 });

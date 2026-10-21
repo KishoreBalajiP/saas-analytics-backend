@@ -8,7 +8,8 @@
  *
  * RESPONSIBILITY (database access ONLY - no business logic)
  *   - create, findById, findByRefreshTokenHash, findActiveByRefreshTokenHash
- *   - touchLastUsed, revoke, revokeAllForActor, revokeAllForTenant, markExpired
+ *   - touchLastUsed, revoke, markRotated, revokeAllForActor,
+ *     revokeAllForTenant, markExpired
  *
  * CODING GUIDELINES
  *   - Reads return PLAIN objects (`.lean()`).
@@ -56,6 +57,24 @@ export const revoke = (sessionId, reason) =>
     { new: true, lean: true },
   );
 
+/**
+ * Atomically end an active session because it was rotated, recording its
+ * successor. Exactly one concurrent caller can win: the others get null.
+ */
+export const markRotated = (sessionId, successorId) =>
+  Session.findOneAndUpdate(
+    { sessionId, status: 'active' },
+    {
+      $set: {
+        status: 'revoked',
+        revokedAt: new Date(),
+        revokedReason: 'rotated',
+        replacedBy: successorId,
+      },
+    },
+    { new: true, lean: true },
+  );
+
 /** Revoke every active session for an actor. Returns the modified count. */
 export const revokeAllForActor = async (actorId, reason) => {
   const res = await Session.updateMany(
@@ -91,6 +110,55 @@ export const markExpired = (sessionId) =>
     { new: true, lean: true },
   );
 
+/**
+ * adminauth: set (or clear with null) the restriction of a login: the given
+ * session and every live session of its family, so a rotation racing the
+ * change cannot keep the old state.
+ */
+export const setRestrictionForLogin = async (sessionId, restriction) => {
+  const session = await Session.findOne({ sessionId }).lean();
+  if (!session) return 0;
+  const familyId = session.familyId ?? session.sessionId;
+  const res = await Session.updateMany(
+    { $or: [{ sessionId }, { familyId }], status: 'active' },
+    { $set: { restriction: restriction ?? null } },
+  );
+  return res.modifiedCount;
+};
+
+/**
+ * adminauth: set a restriction on EVERY live session of an actor (e.g. a
+ * privileged admin turned MFA off: no device keeps full access).
+ */
+export const restrictAllForActor = async (actorId, restriction) => {
+  const res = await Session.updateMany(
+    { actorId: String(actorId), status: 'active' },
+    { $set: { restriction } },
+  );
+  return res.modifiedCount;
+};
+
+/**
+ * adminauth: revoke every live RESTRICTED session of an actor. Used after
+ * MFA enrolment: other enrolment-only sessions were opened with a password
+ * alone, so they end instead of inheriting the new second factor.
+ */
+export const revokeRestrictedForActor = async (actorId, reason) => {
+  const res = await Session.updateMany(
+    { actorId: String(actorId), status: 'active', restriction: { $ne: null } },
+    { $set: { status: 'revoked', revokedAt: new Date(), revokedReason: reason ?? null } },
+  );
+  return res.modifiedCount;
+};
+
+/** adminauth: record a successful step-up on a live session. */
+export const markSteppedUp = (sessionId, at = new Date()) =>
+  Session.findOneAndUpdate(
+    { sessionId, status: 'active' },
+    { $set: { stepUpAt: at } },
+    { new: true, lean: true },
+  );
+
 export default {
   create,
   findById,
@@ -98,9 +166,14 @@ export default {
   findActiveByRefreshTokenHash,
   touchLastUsed,
   revoke,
+  markRotated,
   revokeAllForActor,
   revokeAllForTenant,
   markExpired,
   countActiveForTenant,
+  setRestrictionForLogin,
+  restrictAllForActor,
+  revokeRestrictedForActor,
+  markSteppedUp,
   _meta: { leanReturns: true, tenancy: 'hybrid', refreshTokens: 'hashed-at-rest' },
 };

@@ -178,6 +178,31 @@ export async function flushAll() {
   return safe(() => init().flushAll());
 }
 
+/**
+ * Atomically store `value` only when `key` does not exist yet (Redis
+ * `SET NX EX`). Returns `true` when this call stored it - the building block
+ * for one-time claims such as webhook replay protection.
+ *
+ * @param {string} key
+ * @param {*} value
+ * @param {number} [ttlSec]
+ * @returns {Promise<boolean>}
+ */
+export async function setIfAbsent(key, value, ttlSec) {
+  return safe(() => init().setIfAbsent(key, value, ttlSec));
+}
+
+/**
+ * Delete every key starting with `prefix` (SCAN-based on Redis). Returns
+ * the number of keys removed.
+ *
+ * @param {string} prefix
+ * @returns {Promise<number>}
+ */
+export async function delByPrefix(prefix) {
+  return safe(() => init().delByPrefix(prefix));
+}
+
 /* -------------------------------- helpers -------------------------------- */
 
 /**
@@ -207,6 +232,8 @@ export default {
   increment,
   getOrSet,
   flushAll,
+  setIfAbsent,
+  delByPrefix,
   CacheError,
   KEY_PREFIX,
 };

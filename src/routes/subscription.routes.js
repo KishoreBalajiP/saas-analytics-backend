@@ -14,8 +14,12 @@
  *   - GET    /subscription/timeline
  *   - POST   /subscription/cancel
  *   - POST   /subscription/change-plan
- *   - POST   /subscription/checkout        (Razorpay order, server-priced)
- *   - POST   /subscription/verify          (authoritative payment verify)
+ *   - POST   /subscription/checkout        (Razorpay order, server-priced,
+ *                                           one prepaid month/year term)
+ *   - POST   /subscription/verify          (browser callback: signature
+ *                                           check + status, never grants)
+ *   - GET    /subscription/checkout/:orderId  (billing: confirmation status)
+ *   - GET    /subscription/transactions    (billing: workspace history)
  *   - POST   /subscription/reactivate
  *   - GET    /entitlements
  *   - GET    /usage
@@ -101,9 +105,39 @@ router.post( // ci:routes-exempt: authenticate + tenantIsolation above
     ...idParamSchema,
     body: {
       planId: { type: 'string', required: true, maxLength: 60 },
+      // billing: the prepaid term to buy.
+      interval: { type: 'string', oneOf: ['month', 'year'] },
     },
   }),
   subscriptionController.createCheckoutSession,
+);
+
+// billing: the checkout UI polls this until the provider-confirmed capture
+// has been applied (`phase: confirmed`).
+router.get( // ci:routes-exempt: authenticate + tenantIsolation above
+  '/subscription/checkout/:orderId',
+  permission('iam.subscriptions', 'view'),
+  validate({
+    params: {
+      id: { type: 'objectId', required: true },
+      orderId: { type: 'string', required: true, maxLength: 100, pattern: /^[A-Za-z0-9_-]+$/ },
+    },
+  }),
+  subscriptionController.getCheckoutStatus,
+);
+
+// billing: workspace billing history (payment transactions, no secrets).
+router.get( // ci:routes-exempt: authenticate + tenantIsolation above
+  '/subscription/transactions',
+  permission('iam.subscriptions', 'view'),
+  validate({
+    ...idParamSchema,
+    query: {
+      page: { type: 'integer', min: 1, max: 1000 },
+      limit: { type: 'integer', min: 1, max: 100 },
+    },
+  }),
+  subscriptionController.listTransactions,
 );
 
 router.post( // ci:routes-exempt: authenticate + tenantIsolation above

@@ -8,8 +8,9 @@
  *
  * DESIGN CONSTRAINTS
  *   - APPEND-ONLY: rows are created, never updated or deleted (except by
- *     the retention purge path in Sprint 7+). The `softDelete` and
- *     `optimisticConcurrency` plugins are deliberately NOT applied.
+ *     the retention purge path, with `bypassAppendOnly`); enforced by
+ *     `plugins/appendOnly.js`. The `softDelete` and `optimisticConcurrency`
+ *     plugins are deliberately NOT applied.
  *   - The `audit` plugin is NOT applied: this collection is itself the
  *     attempt record; emitting an audit event per attempt would be noise.
  *   - `actorId` may be absent (e.g. unknown email) - the attempt is keyed
@@ -24,10 +25,12 @@
  *   - { actorId: 1, occurredAt: -1 }
  *   - { email: 1, occurredAt: -1 }
  *   - { ip: 1, occurredAt: -1 }
+ *   - { success: 1, occurredAt: -1 }   (security detection scans)
  */
 
 import mongoose from 'mongoose';
 import { tenantScope, paginate } from './plugins/index.js';
+import { appendOnly } from './plugins/appendOnly.js';
 
 export const MODEL_NAME = 'LoginAttempt';
 export const ATTEMPT_ACTOR_TYPES = Object.freeze(['user', 'admin']);
@@ -62,9 +65,12 @@ const loginAttemptSchema = new mongoose.Schema(
 loginAttemptSchema.index({ actorId: 1, occurredAt: -1 });
 loginAttemptSchema.index({ email: 1, occurredAt: -1 });
 loginAttemptSchema.index({ ip: 1, occurredAt: -1 });
+// detection: time-ordered scans of failures / successes (security detection rules).
+loginAttemptSchema.index({ success: 1, occurredAt: -1 });
 
 loginAttemptSchema.plugin(tenantScope, { optional: true });
 loginAttemptSchema.plugin(paginate);
+loginAttemptSchema.plugin(appendOnly, { name: 'LoginAttempt' });
 
 export const LoginAttemptSchema = loginAttemptSchema;
 export const LoginAttempt = mongoose.model(MODEL_NAME, loginAttemptSchema);

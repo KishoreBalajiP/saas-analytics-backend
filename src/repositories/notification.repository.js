@@ -11,6 +11,7 @@
  */
 
 import { Notification } from '../models/Notification.js';
+import { NotificationPreference, NOTIFICATION_CHANNELS, NOTIFICATION_CHANNEL_DEFAULTS } from '../models/NotificationPreference.js';
 
 /** Create a notification document. */
 export const create = async (data) => {
@@ -79,19 +80,36 @@ export const remove = async (id, { tenantId, recipientId, by } = {}) => {
 };
 
 /** Read notification preferences (defaults; persisted prefs land later). */
-export const getPreferences = async ({ tenantId, recipientId } = {}) => ({
-  tenantId,
-  recipientId,
-  channels: { in_app: true, email: true },
-});
+// onboarding: preferences are persisted per (tenantId, userId) with typed keys.
+const toPreferences = (doc) => ({ ...NOTIFICATION_CHANNEL_DEFAULTS, ...(doc?.channels ?? {}) });
 
-/** Write notification preferences (defaults echoed back for now). */
-export const setPreferences = async ({ tenantId, recipientId, preferences } = {}) => ({
-  tenantId,
-  recipientId,
-  channels: { in_app: true, email: true },
-  ...(preferences ? { saved: true } : {}),
-});
+/** Read a user's notification preferences (defaults when none are stored). */
+export const getPreferences = async ({ tenantId, recipientId } = {}) => {
+  const doc = await NotificationPreference.findOne({ tenantId, userId: String(recipientId) }).lean();
+  return { tenantId, recipientId, preferences: toPreferences(doc) };
+};
+
+/** Persist a user's notification preferences (only known channel keys). */
+export const setPreferences = async ({ tenantId, recipientId, preferences = {} } = {}) => {
+  const set = {};
+  for (const key of NOTIFICATION_CHANNELS) {
+    if (typeof preferences[key] === 'boolean') set[`channels.${key}`] = preferences[key];
+  }
+  const doc = await NotificationPreference.findOneAndUpdate(
+    { tenantId, userId: String(recipientId) },
+    { $set: { ...set, updatedBy: String(recipientId) }, $setOnInsert: { tenantId, userId: String(recipientId) } },
+    { new: true, upsert: true, lean: true },
+  );
+  return { tenantId, recipientId, preferences: toPreferences(doc) };
+};
+
+/** Preferences for several users at once: Map<userId, preferences>. */
+export const getPreferencesForUsers = async ({ tenantId, userIds = [] } = {}) => {
+  const ids = [...new Set(userIds.map(String))];
+  const docs = ids.length ? await NotificationPreference.find({ tenantId, userId: { $in: ids } }).lean() : [];
+  const byUser = new Map(docs.map((d) => [d.userId, toPreferences(d)]));
+  return new Map(ids.map((id) => [id, byUser.get(id) ?? { ...NOTIFICATION_CHANNEL_DEFAULTS }]));
+};
 
 export default {
   create,
@@ -104,5 +122,6 @@ export default {
   remove,
   getPreferences,
   setPreferences,
+  getPreferencesForUsers,
   _meta: { leanReturns: true, tenancy: 'tenant' },
 };

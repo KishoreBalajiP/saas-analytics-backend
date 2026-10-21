@@ -15,10 +15,12 @@
  */
 
 import ApiError from '../utils/ApiError.js';
+import { redactUrl } from '../utils/redact.js';
 
 export function notFoundHandler(req, _res, next) {
   if (req.log) {
-    req.log.warn({ method: req.method, url: req.originalUrl }, 'Route not found');
+    req.log.warn({ method: req.method, url: redactUrl(req.originalUrl) }, 'Route not found');
   }
-  next(ApiError.notFound(`Route not found: ${req.method} ${req.originalUrl}`));
+  // The path is echoed without its query string or any token segment.
+  next(ApiError.notFound(`Route not found: ${req.method} ${redactUrl(String(req.originalUrl ?? '').split('?')[0])}`));
 }

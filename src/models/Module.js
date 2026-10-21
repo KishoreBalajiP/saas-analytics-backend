@@ -21,7 +21,7 @@
  *   softDelete, paginate, optimisticConcurrency, audit (module `iam.modules`).
  *
  * INDEXES
- *   - unique(key)
+ *   - unique partial(key) over live rows (`deletedAt: null`)
  *   - { parentKey: 1 }
  *   - { isSystem: 1 }
  */
@@ -53,6 +53,14 @@ export const BUILTIN_MODULES = Object.freeze([
   'access_logs', 'compliance', 'support',
   'dashboards', 'reports', 'alerts',
   'api_keys', 'embed',
+  // backups: workspace data export (roadmap 2.9).
+  'data_exports',
+  // ai-catalogue: metric definitions (metrics.view / manage / approve).
+  'metrics',
+  // rls: dataset grants + row-level security (tenant data_access.view/configure).
+  'data_access',
+  // mfa-tenant: workspace security policy (tenant key security.view/configure).
+  'security',
 ]);
 
 /**
@@ -62,14 +70,40 @@ export const BUILTIN_MODULES = Object.freeze([
 export const IAM_MODULES = Object.freeze([
   'iam.admins', 'iam.tenants', 'iam.users',
   'iam.roles', 'iam.permissions', 'iam.sessions',
+  // Workspace billing self-service (subscription.routes.js).
+  'iam.subscriptions', 'iam.entitlements',
+  // roles: access-request review (roadmap 2.1): view + approve (approve/reject).
+  'iam.access_requests',
 ]);
+
+/**
+ * Platform billing administration modules (admin-plan / admin-subscription /
+ * admin-entitlement routes). Granted to platform bootstrap roles only.
+ */
+export const BILLING_MODULES = Object.freeze([
+  'billing.plans', 'billing.subscriptions', 'billing.entitlements',
+]);
+
+// config: platform configuration child modules (roadmap 2.4). Secret
+// platform/tenant settings have their own permission module so reading or
+// writing a secret never rides on the plain `settings.*` keys.
+export const CONFIG_MODULES = Object.freeze(['settings.secrets']);
+
+// members: tenant-only workspace module (roadmap 2.10). Its permissions
+// (`workspace.transfer`, `workspace.delete`) are Owner-only tenant powers;
+// it is not part of the platform catalogue.
+export const MEMBERS_MODULES = Object.freeze(['workspace']);
+
+// detection: platform security alert triage (roadmap 2.6). Platform-only;
+// permission keys `security.alerts.view` / `security.alerts.update`.
+export const SECURITY_MODULES = Object.freeze(['security.alerts']);
 
 const moduleSchema = new mongoose.Schema(
   {
+    // members (db.07): unique among live rows, see the partial index below.
     key: {
       type: String,
       required: true,
-      unique: true,
       trim: true,
       lowercase: true,
       immutable: true,
@@ -83,6 +117,10 @@ const moduleSchema = new mongoose.Schema(
   },
   { timestamps: true },
 );
+
+// members (db.07): a module key is unique among live modules only, so a
+// deleted module does not block re-seeding the same key.
+moduleSchema.index({ key: 1 }, { unique: true, partialFilterExpression: { deletedAt: null } });
 
 moduleSchema.plugin(softDelete);
 moduleSchema.plugin(paginate);

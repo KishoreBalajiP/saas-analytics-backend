@@ -21,9 +21,18 @@
 
 import { ApiKey } from '../models/ApiKey.js';
 
+/**
+ * Tenant-scoped reads must never run without a tenant id: an undefined
+ * tenant would otherwise drop the filter and match across tenants.
+ */
+function requireTenant(tenantId) {
+  if (!tenantId) throw new Error('tenantId is required for tenant-scoped ApiKey access');
+  return tenantId;
+}
+
 /** Paginated key list for a tenant, optionally filtered by status. */
 export const list = async ({ tenantId, filter = {}, page = 1, limit = 20 } = {}) => {
-  const query = { tenantId, ...filter };
+  const query = { tenantId: requireTenant(tenantId), ...filter };
   const result = await ApiKey.paginate(query, {
     page,
     limit,
@@ -41,7 +50,7 @@ export const list = async ({ tenantId, filter = {}, page = 1, limit = 20 } = {})
 
 /** Find a key by id within a tenant. */
 export const findById = (id, { tenantId } = {}) =>
-  ApiKey.findOne({ _id: id, ...(tenantId ? { tenantId } : {}) }).lean();
+  ApiKey.findOne({ _id: id, tenantId: requireTenant(tenantId) }).lean();
 
 /** Find a key by its public prefix (global, unique). */
 export const findByPrefix = (prefix) => ApiKey.findOne({ prefix }).lean();
@@ -65,7 +74,7 @@ export const remove = async (id, by) => {
 
 /** Count keys by status within a tenant (for per-tenant caps). */
 export const countByStatus = async ({ tenantId, status } = {}) =>
-  ApiKey.countDocuments({ tenantId, status });
+  ApiKey.countDocuments({ tenantId: requireTenant(tenantId), status });
 
 export default {
   list,

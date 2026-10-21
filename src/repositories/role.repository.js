@@ -27,6 +27,7 @@ import { RolePermission } from '../models/RolePermission.js';
 import { UserRole } from '../models/UserRole.js';
 import { AdminRole } from '../models/AdminRole.js';
 import { Permission } from '../models/Permission.js';
+import { adminGrantTenantFilter } from './roleGrant.repository.js';
 
 /** Find a role by id. Returns a lean object or null. */
 export const findById = (id) => Role.findById(id).lean();
@@ -117,6 +118,21 @@ export const countAssignments = async (roleId) => {
 };
 
 /**
+ * Number of permissions held by each role in `roleIds` (one aggregation).
+ *
+ * @param {Array<string>} roleIds
+ * @returns {Promise<Map<string, number>>} roleId -> permission count.
+ */
+export const countPermissionsForRoles = async (roleIds = []) => {
+  if (roleIds.length === 0) return new Map();
+  const rows = await RolePermission.aggregate([
+    { $match: { roleId: { $in: roleIds.map(String) } } },
+    { $group: { _id: '$roleId', count: { $sum: 1 } } },
+  ]);
+  return new Map(rows.map((r) => [String(r._id), r.count]));
+};
+
+/**
  * Resolve the role NAMES granted to an actor. Admin grants are scoped to
  * `tenantId` (null => platform grants); user grants are tenant-scoped.
  * Returns a Set of role names (empty when the actor has no grants).
@@ -128,10 +144,12 @@ export const countAssignments = async (roleId) => {
  * @returns {Promise<Set<string>>}
  */
 export const resolveRolesForActor = async ({ actorType, actorId, tenantId = null } = {}) => {
+  // Expired temporary grants never count (see permission.repository.js).
+  const live = { $or: [{ expiresAt: null }, { expiresAt: { $gt: new Date() } }] };
   const grants =
     actorType === 'admin'
-      ? await AdminRole.find({ adminId: actorId, tenantId }).select('roleId').lean()
-      : await UserRole.find({ tenantId, userId: actorId }).select('roleId').lean();
+      ? await AdminRole.find({ adminId: actorId, tenantId: adminGrantTenantFilter(tenantId), ...live }).select('roleId').lean()
+      : await UserRole.find({ tenantId, userId: actorId, ...live }).select('roleId').lean();
   if (grants.length === 0) return new Set();
 
   const ids = [...new Set(grants.map((g) => g.roleId))];
@@ -181,5 +199,6 @@ export default {
   countAssignments,
   resolveRolesForActor,
   resolveRolesForUsers,
+  countPermissionsForRoles,
   _meta: { leanReturns: true, systemRolesProtected: true, membership: 'RolePermission join rows' },
 };

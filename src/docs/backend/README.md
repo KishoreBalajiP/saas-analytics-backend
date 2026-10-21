@@ -46,6 +46,7 @@
 | --- | --- | --- |
 | [`authentication.md`](./authentication.md) | JWT, sessions, MFA, refresh-token rotation | Sprint 1 |
 | [`rbac.md`](./rbac.md) | Roles, permissions, modules, cache | Sprint 3 |
+| [`platform-roles.md`](./platform-roles.md) | Built-in platform roles, admin tenant scope, guardrails | Roadmap 2.1 |
 | [`multi-tenancy.md`](./multi-tenancy.md) | Tenant resolution, isolation, scoping | Sprints 1–2 |
 | [`connectors.md`](./connectors.md) | BaseConnector framework + concrete providers | Sprint 6 |
 | [`queues.md`](./queues.md) | BullMQ + in-memory transport | Sprint 0 (driver); consumers land across sprints |
@@ -54,6 +55,7 @@
 | [`database.md`](./database.md) | MongoDB + Mongoose conventions | Always |
 | [`security.md`](./security.md) | Threat model + controls | Always |
 | [`monitoring.md`](./monitoring.md) | Health probes + observability | Sprint 8 |
+| [`security-detection.md`](./security-detection.md) | Security detection rules, alerts, triage | Roadmap 2.6 |
 | [`websockets.md`](./websockets.md) | Socket.IO room model | Always |
 
 ---

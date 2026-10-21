@@ -40,9 +40,10 @@ test('missing subscription resolves to the safe-fallback plan (deny-by-default)'
   const tenant = await makeTenant('does-not-exist');
   const ent = await entitlementService.resolveEffective(tenant._id.toString());
   assert.equal(ent.source, 'fallback');
-  assert.equal(ent.plan.code, 'starter');
-  // The safe-fallback plan is starter; free is NOT a permissive grant.
+  // billing (finding bil.09): the fallback is the free plan, never a paid tier.
+  assert.equal(ent.plan.code, 'free');
   assert.equal(ent.features.dashboards, true);
+  assert.equal(ent.features.embedding, false);
   assert.ok(ent.limits.connectors);
   assert.equal(typeof ent.limits.connectors.max, 'number');
 });

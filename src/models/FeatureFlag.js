@@ -5,7 +5,8 @@
  *   Runtime gating of features. Decouples deployment from release. Flags
  *   resolve through the feature-flag service on the hot path; reads are
  *   cached. The platform catalogue is seeded (idempotently) during tenant
- *   onboarding; the full `/feature-flags` admin API lands in Sprint 5.
+ *   onboarding and managed over `/api/v1/feature-flags` (roadmap 2.4) with
+ *   versioned history and rollback.
  *
  * DESIGN CONSTRAINTS
  *   - Flags are PLATFORM-global (no `tenantId`); per-tenant reach is
@@ -13,15 +14,16 @@
  *     therefore intentionally not applied.
  *   - `enabled` is a master switch; `rollout.strategy` further narrows
  *     reach. A disabled flag resolves to its `defaultValue` everywhere.
- *   - `percentage` uses stable hashed bucketing on the tenant id so a
- *     tenant's assignment is deterministic across requests.
+ *   - `percentage` uses stable hashed bucketing on (flag key, tenant id) so
+ *     a tenant's assignment is deterministic across requests and independent
+ *     between flags.
  *
  * PLUGINS
  *   softDelete, paginate, optimisticConcurrency, audit
  *   (module `platform.feature_flags`).
  *
  * INDEXES
- *   - unique(key)
+ *   - unique partial(key) over live rows (`deletedAt: null`)
  *   - { 'rollout.tenantIds': 1 }
  */
 
@@ -36,7 +38,7 @@ export const VALUE_TYPES = Object.freeze(['boolean', 'string', 'number', 'json']
 
 const featureFlagSchema = new mongoose.Schema(
   {
-    key: { type: String, required: true, unique: true, trim: true, lowercase: true },
+    key: { type: String, required: true, trim: true, lowercase: true },
     name: { type: String, required: true, trim: true },
     description: { type: String, default: '' },
     type: { type: String, enum: [...VALUE_TYPES], default: 'boolean' },
@@ -49,10 +51,17 @@ const featureFlagSchema = new mongoose.Schema(
       attributeRules: { type: [mongoose.Schema.Types.Mixed], default: [] },
     },
     isReadonly: { type: Boolean, default: false },
+    // Resource version for optimistic concurrency and the revision history
+    // (`ConfigRevision`, kind `feature_flag`); bumped on every change.
+    version: { type: Number, default: 0 },
     updatedBy: { type: String, default: null },
   },
   { timestamps: true },
 );
+
+// members (db.07): the key is unique among live flags only, so a deleted
+// flag does not block re-creating (or re-seeding) the same key.
+featureFlagSchema.index({ key: 1 }, { unique: true, partialFilterExpression: { deletedAt: null } });
 
 featureFlagSchema.plugin(softDelete);
 featureFlagSchema.plugin(paginate);

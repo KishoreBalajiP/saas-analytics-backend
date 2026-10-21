@@ -20,6 +20,7 @@
  */
 
 import { spawn } from 'node:child_process';
+import os from 'node:os';
 
 const args = process.argv.slice(2);
 const kdfIndex = args.indexOf('--kdf');
@@ -60,6 +61,25 @@ process.env.RATE_LIMIT_MAX = '10000';
 process.env.RATE_LIMIT_STRICT_MAX = '10000';
 process.env.EXTERNAL_API_RATE_LIMIT_MAX = '10000';
 process.env.EMBED_RATE_LIMIT_MAX = '10000';
+// Per-route auth limiters (tests that exercise a real limit set their own
+// small values before importing the app).
+for (const key of [
+  'AUTH_RATE_LIMIT_LOGIN_MAX',
+  'AUTH_RATE_LIMIT_LOGIN_IP_MAX',
+  'AUTH_RATE_LIMIT_REFRESH_MAX',
+  'AUTH_RATE_LIMIT_PASSWORD_MAX',
+  'AUTH_RATE_LIMIT_INVITATION_MAX',
+  'AUTH_RATE_LIMIT_MFA_MAX',
+  'AUTH_RATE_LIMIT_VERIFICATION_MAX',
+  'AUTH_RATE_LIMIT_REGISTER_MAX',
+]) {
+  process.env[key] = '10000';
+}
+// adminauth: most suites sign platform admins in with a password only. The
+// privileged-admin MFA policy (ADMIN_MFA_REQUIRED_TYPES, default
+// super,platform) is therefore off for the general suite; the admin-auth
+// suites that exercise it set their own value before importing the app.
+process.env.ADMIN_MFA_REQUIRED_TYPES = 'none';
 // Never allow the test process to open the developer or production SMTP
 // connection loaded from .env. Email tests use the service capture sink and
 // the noop transport instead.
@@ -71,13 +91,28 @@ delete process.env.MAIL_PASSWORD;
 
 const testArgs =
   kdfIndex === -1 ? args : args.filter((_, i) => i !== kdfIndex && i !== kdfIndex + 1);
+// Test-file concurrency. TEST_CONCURRENCY wins when set. Otherwise, when the
+// machine is already overloaded (1-minute load above the CPU count, e.g.
+// several suites running side by side), run fewer files at once so
+// timing-sensitive tests are not starved. An explicit --test-concurrency
+// argument is passed through untouched.
+const cpuCount = os.availableParallelism?.() ?? os.cpus().length;
+const requestedConcurrency = Number(process.env.TEST_CONCURRENCY);
+const concurrencyArgs = testArgs.some((arg) => arg.startsWith('--test-concurrency'))
+  ? []
+  : Number.isInteger(requestedConcurrency) && requestedConcurrency > 0
+    ? [`--test-concurrency=${requestedConcurrency}`]
+    : os.loadavg()[0] > cpuCount
+      ? [`--test-concurrency=${Math.max(1, Math.floor(cpuCount / 4))}`]
+      : [];
+
 const child = spawn(
   process.execPath,
   // No explicit path: Node's test runner auto-discovers `*.test.js` files
   // recursively from the project root. Passing a directory (e.g. `tests/`)
   // is rejected by Node >= 22 (`Cannot find module '<dir>'`), so when no
   // explicit test files are requested we let the runner discover them.
-  ['--test', ...testArgs],
+  ['--test', ...concurrencyArgs, ...testArgs],
   { stdio: 'inherit', env: process.env, cwd: process.cwd() },
 );
 

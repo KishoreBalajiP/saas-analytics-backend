@@ -89,13 +89,13 @@ async function seedAdmin(keys, overrides = {}) {
   const role = await roleService.create({ tenantId: null, name: `root_${shortToken(8)}` });
   for (const key of keys) {
     await ensurePermission(key);
-    await roleService.addPermission({ roleId: role._id, permissionKey: key, by: admin._id });
+    await roleService.addPermission({ roleId: role._id, permissionKey: key, by: null /* fixture seeding */ });
   }
   await adminService.assignRole({
     adminId: admin._id,
     roleId: role._id,
     tenantId: admin.tenantScope ?? null,
-    by: admin._id,
+    by: null /* fixture seeding */,
   });
   return admin;
 }

@@ -126,11 +126,55 @@ registerConsumer('connector.sync', async ({ data }) => {
 | **Importing `bullmq` from feature code.** | Provider switching becomes a refactor. |
 | **Skipping the idempotency key.** | Retries double-charge, double-ingest. |
 
+## Durable jobs (roadmap 1.4)
+
+- **Process roles.** `PROCESS_ROLE=web` serves HTTP and only enqueues;
+  `npm run start:worker` (`src/worker.js`) runs every consumer and the
+  scheduler; `all` (default) does both. `web` requires `REDIS_URL`.
+- **Producers fail fast.** Every enqueue is bounded by
+  `QUEUE_PRODUCER_TIMEOUT_MS` and fails with a typed `QueueError`
+  (`QUEUE_TIMEOUT` / `QUEUE_UNAVAILABLE`, HTTP 503). BullMQ producers use a
+  fail-fast Redis connection separate from the worker's. `GET
+  /api/v1/health/ready` answers 503 when that connection does not return a
+  PING within 1 s (`data.queue`: `memory` | `ok`).
+- **Distributed cron.** Each tick takes a lease lock per job
+  (`src/jobs/lock.js`: Redis `SET NX PX`, or a `JobLock` document) and
+  writes a `JobRun`. Due reports/alerts are claimed with one atomic update
+  that advances `nextRunAt`/`nextEvaluationAt` and sets
+  `lockedBy`/`lockedUntil`, so two instances run each item once per tick.
+- **Sync runs and leases.** Every connector sync is a `SyncRun`; a queued
+  or running sync holds `syncLeaseUntil` (renewed by the worker). The
+  `stale-job-recovery` job resets connectors whose lease expired, marks
+  their run `abandoned`, re-queues pull syncs once, and closes stale
+  `JobRun`s. A webhook delivery carries its records in the message, so when
+  BullMQ redelivers one whose run was abandoned, the worker replays it under
+  a fresh run (rows stored, storedRows reservation settled). A tenant lookup
+  that fails on a message's last attempt closes its run `failed`, frees the
+  slot and gives the reservation back before the error is rethrown.
+- **Webhook storedRows reservations.** A delivery's request-time
+  reservation is a `UsageReservation` ledger entry keyed by its job id
+  (every delivery gets a unique job id). The worker draws the rows it really
+  adds from the entry; rows a failed attempt did not store go back to it, so
+  a retry or replay draws exactly what is still unstored. The entry is
+  settled (unused part given back) once the message is done. Usage
+  reconciliation counts open entries as in use, and voids entries older than
+  `USAGE_RESERVATION_TTL_HOURS` (message presumed lost) before correcting.
+- **Tenant status.** Scheduled reports, alert evaluations and syncs re-check
+  that the tenant is `active` when they execute.
+- **Graceful drain.** SIGTERM closes Socket.IO with the HTTP server, stops
+  the scheduler, lets in-flight jobs finish within
+  `SHUTDOWN_DRAIN_TIMEOUT_MS` (the in-memory transport refuses new enqueues
+  with a 503 once its drain starts, since they could not survive the exit;
+  BullMQ keeps accepting them into Redis), then closes queues, Redis, the
+  storage driver and MongoDB (`src/jobs/shutdown.js`).
+
 ## Failure Modes
 
 | Symptom | Cause | Fix |
 | --- | --- | --- |
-| Job stuck | Worker crashed | BullMQ retries; check `/monitoring/queue` (Phase 3) |
+| Job stuck | Worker crashed | BullMQ redelivers stalled jobs; the stale-job reaper recovers connectors past their lease; check `/monitoring/health/queue` and `/monitoring/jobs/runs` |
+| Sync API returns 503 `QUEUE_TIMEOUT` | Redis unreachable | Restore Redis; the request can be retried, nothing is left queued |
+| Sync API returns 409 `SYNC_IN_PROGRESS` | A live sync holds the connector | Wait for it, or for its lease to expire if the worker died |
 | Job fails repeatedly | Bad config / data | After `attempts` (default 5), the job is parked; inspect failed jobs |
 | Queue depth grows | Consumer too slow | Scale workers; check `concurrency` per queue |
 

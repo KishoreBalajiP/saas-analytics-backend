@@ -70,20 +70,30 @@ test('expired invitations cannot be previewed or accepted', async () => {
   await assert.rejects(() => invitationService.accept({ token: result.token, name: 'Expired', password: PASSWORD }), /invalid|expired|available/i);
 });
 
-test('invitation creation requires an inviter and resend invalidates the previous pending invitation', async () => {
+// Roadmap 2.10 (ten.12): resend re-issues the link of the SAME pending
+// invitation (the old link stops working, the seat is kept) instead of
+// revoking it and creating a new one.
+test('invitation creation requires an inviter and resend invalidates the previous link', async () => {
   const tenant = await factories.tenant.create();
   await tenantService.initialize({ tenantId: tenant._id, owner: { email: 'seed@example.com', name: 'Seed' }, by: 'platform-admin' });
   await assert.rejects(() => invitationService.create({ tenantId: tenant._id, email: 'x@example.com' }), /Inviter is required/);
   const firstSink = []; emailService.captureInto(firstSink);
   const first = await invitationService.create({ tenantId: tenant._id, email: 'x@example.com', invitedBy: 'platform-admin' });
   emailService.stopCapture();
+  const firstToken = new URL(firstSink[0].text.match(/https?:\/\/[^\s]+/u)[0]).searchParams.get('token');
   const secondSink = []; emailService.captureInto(secondSink);
   const second = await invitationService.resend({ tenantId: tenant._id, email: 'x@example.com', invitedBy: 'platform-admin' });
   emailService.stopCapture();
   assert.ok(firstSink.length && secondSink.length);
-  const old = await TenantInvitation.findById(first.invitation._id).lean();
-  assert.equal(old.status, 'revoked');
+  assert.equal(String(second.invitation._id), String(first.invitation._id));
   assert.equal(second.invitation.status, 'pending');
+  assert.equal(second.invitation.resendCount, 1);
+  const row = await TenantInvitation.findById(first.invitation._id).lean();
+  assert.equal(row.status, 'pending');
+  await assert.rejects(() => invitationService.preview(firstToken), /invalid|expired|available/i);
+  const secondToken = new URL(secondSink[0].text.match(/https?:\/\/[^\s]+/u)[0]).searchParams.get('token');
+  const preview = await invitationService.preview(secondToken);
+  assert.equal(preview.invitedEmail, 'x@example.com');
 });
 
 test('concurrent acceptance permits exactly one consumer', async () => {
@@ -113,6 +123,7 @@ test('tenant owner can invite once, retry idempotently, and cannot select anothe
       email: 'owner-onboarding@example.com',
       password: PASSWORD,
       workspaceName: 'Onboarding Invite Workspace',
+      acceptTerms: true, // onboarding: consent is required
       workspaceSlug: 'onboarding-invite-workspace',
     },
   });

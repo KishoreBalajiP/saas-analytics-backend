@@ -8,8 +8,12 @@
  *
  * RESPONSIBILITY
  *   - Map well-known error types to the right status/code.
- *   - Log 5xx with full context, 4xx as warnings.
- *   - Reply with the standard `{ success: false, ... }` envelope.
+ *   - Log 5xx with full context, 4xx as warnings. The logged URL has its
+ *     tokens masked (`redactUrl`): embed/webhook path tokens and `?token=`.
+ *   - Count every error response (`analivo_api_errors_total`, auth failures,
+ *     quota rejections) and hand 5xx to the error reporter (roadmap 2.8).
+ *   - Reply with the standard `{ success: false, ... }` envelope, including
+ *     `requestId` so a user can quote it and support can find the log line.
  *
  * HOW TO EXTEND
  *   Add new `if` branches for error types the team introduces (e.g. Redis,
@@ -20,6 +24,10 @@ import mongoose from 'mongoose';
 import env from '../config/env.js';
 import ApiError from '../utils/ApiError.js';
 import { ERROR_CODES } from '../config/constants.js';
+import { redactUrl } from '../utils/redact.js';
+import { observeApiError } from '../utils/metrics.js';
+import { reportError } from '../services/errorReporter.service.js';
+import { requestRouteLabel } from './httpMetrics.middleware.js';
 
 function toApiError(err) {
   // Already an operational API error.
@@ -84,7 +92,7 @@ export function errorHandler(err, req, res, _next) {
   const logContext = {
     err: { name: err.name, message: err.message, stack: err.stack },
     method: req.method,
-    url: req.originalUrl,
+    url: redactUrl(req.originalUrl),
     statusCode: error.statusCode,
     requestId: req.id,
   };
@@ -94,11 +102,23 @@ export function errorHandler(err, req, res, _next) {
     (req.log ?? console).warn(logContext, 'Request failed');
   }
 
+  // Metrics never break the response path.
+  try {
+    observeApiError(error);
+  } catch {
+    // ignore
+  }
+  // 501 is a deliberate "not built yet" answer, not a fault.
+  if (isServerError && error.statusCode !== 501) {
+    void reportError(err, { source: 'api', req, route: requestRouteLabel(req) });
+  }
+
   const payload = {
     success: false,
     statusCode: error.statusCode,
     message: error.message,
     code: error.code ?? ERROR_CODES.INTERNAL_ERROR,
+    ...(req.id ? { requestId: req.id } : {}),
     timestamp: new Date().toISOString(),
   };
 

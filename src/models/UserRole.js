@@ -20,7 +20,8 @@
  *   (module `iam.roles`).
  *
  * INDEXES
- *   - unique({ tenantId, userId, roleId, scope.resourceType, scope.resourceId })
+ *   - unique partial({ tenantId, userId, roleId, scope.resourceType,
+ *     scope.resourceId }) over live rows (`deletedAt: null`)
  *   - TTL on expiresAt (expireAfterSeconds: 0)
  */
 
@@ -53,7 +54,7 @@ userRoleSchema.index(
     'scope.resourceType': 1,
     'scope.resourceId': 1,
   },
-  { unique: true },
+  { unique: true, partialFilterExpression: { deletedAt: null } },
 );
 
 // Auto-remove temporary grants once they lapse.

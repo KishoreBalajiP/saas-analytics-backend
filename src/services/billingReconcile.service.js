@@ -1,38 +1,47 @@
 /**
- * Billing reconciliation service (Phase 6.1 - Razorpay one-time order flow).
+ * Billing reconciliation service (Phase 6.1; billing roadmap 3.1).
  *
  * PURPOSE
- *   Recovery for missed webhooks and stuck checkouts. Runs on a schedule
- *   (`billingReconcile.job.js`, disabled by default) and on operator
- *   demand (`POST /admin/subscriptions/reconcile`). Every action is
- *   idempotent: transaction conditional-updates + lifecycle guards mean a
+ *   Recovery for missed webhooks, stuck checkouts and half-applied
+ *   captures. Runs on a schedule (`billingReconcile.job.js`) and on
+ *   operator demand (`POST /admin/subscriptions/reconcile`). Every action is
+ *   idempotent: forward-only conditional updates + the apply claim mean a
  *   second run is always a no-op.
  *
- * RULES
- *   - Only `pending` transactions are swept, oldest-first, bounded batch.
- *   - Provider state is authoritative: fetch the order, then the payment
- *     when the order shows money moved. Never grant access on a guess.
- *   - Terminal states are applied through the same lifecycle service as
- *     verify/webhooks (single code path, single audit trail).
- *   - Unprocessable rows (provider 404/gone, attempts exhausted) are left
- *     pending with an incremented attempt counter - never failed on a
- *     guess. After MAX_ATTEMPTS they are reported as `stale` for an
- *     operator to inspect.
- *   - Structured counters `{ checked, captured, failed, stale, skipped,
- *     errors }` are returned and logged (sanitized: ids only, no
- *     amounts beyond minor-unit integers already stored locally).
+ * ONE SWEEP
+ *   1. Open checkouts (`pending` / `authorized`) are checked against the
+ *      provider in order of their NEXT CHECK (`nextReconcileAt`), each with
+ *      its own exponential backoff - so a pile of abandoned checkouts can
+ *      never block newer paid ones at the head of the queue (finding
+ *      bil.11).
+ *        - order paid: find the captured payment of the order and run the
+ *          safe capture (`billing.confirmAndApplyCapture`: server-side
+ *          payment fetch, amount/currency/order checks);
+ *        - not paid: back off; a `pending` row older than
+ *          `BILLING_PENDING_EXPIRE_HOURS`, or past `MAX_ATTEMPTS` checks,
+ *          is moved to `expired` (a later verified capture still wins).
+ *   2. Captured-but-unapplied rows are re-applied (findings bil.05/db.03).
+ *   3. Unfinished stored webhook events are retried (`billingWebhook`).
+ *   Structured counters are returned and logged (ids only).
  */
 
 import ApiError from '../utils/ApiError.js';
+import env from '../config/env.js';
+import clock from '../utils/clock.js';
 import { getProvider } from './paymentProvider.adapter.js';
 import paymentTransactionRepository from '../repositories/paymentTransaction.repository.js';
+import billingService from './billing.service.js';
 import billingLifecycle from './billingLifecycle.service.js';
+import billingWebhookService from './billingWebhook.service.js';
 import logger from '../utils/logger.js';
 import { emit as auditEmit } from './auditLog.service.js';
 
 export const DEFAULT_BATCH_LIMIT = 25;
 export const MAX_BATCH_LIMIT = 100;
+/** Provider checks after which an unpaid `pending` checkout is expired. */
 export const MAX_ATTEMPTS = 10;
+
+const ACTOR = Object.freeze({ type: 'system', id: 'billing-reconcile' });
 
 function requireProvider() {
   const provider = getProvider('razorpay');
@@ -48,37 +57,77 @@ function clampLimit(limit) {
   return Math.min(n, MAX_BATCH_LIMIT);
 }
 
+/** Next provider check after `attempts` checks (exponential, capped). */
+export function backoffMs(attempts) {
+  const base = env.billing.reconcileBackoffBaseMs;
+  const max = env.billing.reconcileBackoffMaxMs;
+  return Math.min(max, base * 2 ** Math.max(0, Number(attempts) || 0));
+}
+
+function emptyCounters() {
+  return {
+    checked: 0,
+    captured: 0,
+    failed: 0,
+    stale: 0,
+    skipped: 0,
+    expired: 0,
+    reapplied: 0,
+    errors: 0,
+    webhooksProcessed: 0,
+    webhooksRetried: 0,
+    webhooksFailed: 0,
+  };
+}
+
 /**
- * Sweep pending transactions against provider state.
- * Single-flight per process via a module flag (the cron runner is the
- * only scheduled caller; the admin endpoint awaits the same function).
+ * Sweep open transactions, re-apply captured ones, retry stored webhooks.
+ * Single-flight per process (the scheduler lock covers other processes).
  */
 let running = false;
 
-export async function reconcilePending({ limit = DEFAULT_BATCH_LIMIT, by = null } = {}) {
+export async function reconcilePending({ limit = DEFAULT_BATCH_LIMIT, by = null, now = clock.now() } = {}) {
   const provider = requireProvider();
   const batch = clampLimit(limit);
   if (running) {
-    return { ok: false, reason: 'already_running', checked: 0, captured: 0, failed: 0, stale: 0, skipped: 0, errors: 0 };
+    return { ok: false, reason: 'already_running', ...emptyCounters() };
   }
   running = true;
-  const counters = { checked: 0, captured: 0, failed: 0, stale: 0, skipped: 0, errors: 0 };
+  const counters = emptyCounters();
   try {
-    const pending = await paymentTransactionRepository.listPending({ limit: batch });
-    for (const txn of pending) {
+    const open = await paymentTransactionRepository.listOpenDue({ now, limit: batch });
+    for (const txn of open) {
       counters.checked += 1;
       try {
         // eslint-disable-next-line no-await-in-loop
-        const outcome = await reconcileOne({ provider, txn, by });
-        counters[outcome] += 1;
+        const outcome = await reconcileOne({ provider, txn, by, now });
+        counters[outcome] = (counters[outcome] ?? 0) + 1;
       } catch (err) {
         counters.errors += 1;
+        await paymentTransactionRepository
+          .scheduleNextCheck(txn._id, { nextReconcileAt: new Date(now.getTime() + backoffMs(txn.reconcileAttempts)), by })
+          .catch(() => {});
         logger.warn(
           { orderId: txn.providerOrderId, err: { message: err?.message } },
           'Billing reconcile: transaction error',
         );
       }
     }
+
+    const unapplied = await paymentTransactionRepository.listCapturedUnapplied({ now, limit: batch });
+    for (const txn of unapplied) {
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        const result = await billingLifecycle.applyCapture({ transaction: txn, actor: ACTOR, now });
+        if (result.applied && !result.idempotent) counters.reapplied += 1;
+      } catch (err) {
+        counters.errors += 1;
+        logger.warn({ orderId: txn.providerOrderId, err: { message: err?.message } }, 'Billing reconcile: re-apply failed');
+      }
+    }
+
+    const hooks = await billingWebhookService.drainDue({ now, limit: batch });
+    Object.assign(counters, hooks);
   } finally {
     running = false;
   }
@@ -86,15 +135,32 @@ export async function reconcilePending({ limit = DEFAULT_BATCH_LIMIT, by = null 
   return { ok: true, ...counters };
 }
 
-async function reconcileOne({ provider, txn, by }) {
-  if ((txn.reconcileAttempts ?? 0) >= MAX_ATTEMPTS) {
-    return 'stale';
-  }
+async function expireIfStale(txn, { by, now }) {
+  const ageMs = now.getTime() - new Date(txn.createdAt ?? now).getTime();
+  const tooOld = ageMs >= env.billing.pendingExpireHours * 3600 * 1000;
+  const tooMany = (txn.reconcileAttempts ?? 0) + 1 >= MAX_ATTEMPTS;
+  if (txn.status !== 'pending' || (!tooOld && !tooMany)) return false;
+  const moved = await paymentTransactionRepository.transitionStatus(txn._id, {
+    to: 'expired',
+    fromStatuses: ['pending'],
+    patch: { expiredAt: now, failureReason: tooOld ? 'checkout_abandoned' : 'reconcile_attempts_exhausted' },
+    by,
+  });
+  return Boolean(moved);
+}
+
+async function reconcileOne({ provider, txn, by, now }) {
+  const next = () => paymentTransactionRepository.scheduleNextCheck(txn._id, {
+    nextReconcileAt: new Date(now.getTime() + backoffMs((txn.reconcileAttempts ?? 0) + 1)),
+    by,
+  });
+
   let order;
   try {
     order = await provider.fetchOrder(txn.providerOrderId);
   } catch (err) {
-    await paymentTransactionRepository.touchReconciled(txn._id, { by });
+    if (await expireIfStale(txn, { by, now })) return 'expired';
+    await next();
     if (err instanceof ApiError && err.statusCode === 404) return 'stale';
     return 'skipped';
   }
@@ -104,19 +170,17 @@ async function reconcileOne({ provider, txn, by }) {
   const orderPaid = order.status === 'paid' || (paid > 0 && due === 0);
 
   if (!orderPaid) {
-    // Order exists but no money moved yet (customer never paid, or
-    // payment failed without a webhook). Leave pending; the customer can
-    // still complete it, or it ages into `stale` for operator review.
-    await paymentTransactionRepository.touchReconciled(txn._id, { by });
+    // No money moved yet. The customer may still pay (Checkout retries on
+    // the same order); an old or over-checked pending row is expired.
+    if (await expireIfStale(txn, { by, now })) return 'expired';
+    await next();
     return 'skipped';
   }
 
-  // Money moved: resolve the payment. The order receipt/notes are ours;
-  // still re-verify amount/currency against the stored transaction.
   if (Number(order.amount ?? 0) !== Number(txn.amountMinor)) {
-    await paymentTransactionRepository.touchReconciled(txn._id, { by });
+    await next();
     await auditEmit({
-      actor: { type: 'system', id: 'billing-reconcile' },
+      actor: ACTOR,
       action: 'billing.reconcile_amount_mismatch',
       module: 'billing.payments',
       resource: { type: 'payment_transaction', id: String(txn._id) },
@@ -126,48 +190,42 @@ async function reconcileOne({ provider, txn, by }) {
     return 'skipped';
   }
 
-  const moved = await paymentTransactionRepository.transitionStatus(txn._id, {
-    to: 'captured',
-    fromStatuses: ['pending'],
-    patch: { capturedAt: new Date() },
-    by,
-  });
-  if (!moved) return 'skipped';
-
-  await billingLifecycle.applyCapture({
-    tenantId: String(txn.tenantId),
-    planId: txn.planId,
-    providerRef: txn.providerOrderId,
-    paymentId: null,
-    actor: { type: 'system', id: 'billing-reconcile' },
-  });
-  await paymentTransactionRepository.touchReconciled(txn._id, { by, incrementAttempts: false });
-  return 'captured';
+  // Money moved: find the captured payment and run the safe capture, which
+  // re-fetches the payment and checks order, status, amount and currency.
+  let paymentId = txn.providerPaymentId ?? null;
+  if (typeof provider.fetchOrderPayments === 'function') {
+    const payments = await provider.fetchOrderPayments(txn.providerOrderId);
+    const captured = (payments ?? []).find((p) => p.status === 'captured');
+    if (captured) paymentId = captured.id;
+  }
+  if (!paymentId) {
+    await next();
+    return 'skipped';
+  }
+  const result = await billingService.confirmAndApplyCapture({ transaction: txn, paymentId, provider, actor: ACTOR, now });
+  if (result.outcome === 'captured' || result.outcome === 'already_captured') {
+    await paymentTransactionRepository.scheduleNextCheck(txn._id, { nextReconcileAt: null, by, incrementAttempts: false });
+    return 'captured';
+  }
+  if (result.outcome === 'amount_mismatch' || result.outcome === 'order_mismatch') return 'failed';
+  await next();
+  return 'skipped';
 }
 
 /**
- * Re-drive unprocessed webhook events (bounded). Events already marked
- * processed are skipped; unknown-order events are left for an operator
- * (they need a human decision, not a blind retry).
+ * Re-drive unprocessed stored webhook events (bounded). Kept for the admin
+ * surface; the reconcile sweep calls the same drain.
  */
-export async function reprocessWebhooks({ limit = DEFAULT_BATCH_LIMIT } = {}) {
+export async function reprocessWebhooks({ limit = DEFAULT_BATCH_LIMIT, now = clock.now() } = {}) {
   requireProvider();
-  const batch = clampLimit(limit);
-  const { default: WebhookEvent } = await import('../models/WebhookEvent.js');
-  const stale = await WebhookEvent.find({ provider: 'razorpay', processed: false })
-    .sort({ createdAt: 1 })
-    .limit(batch)
-    .lean();
-  return {
-    ok: true,
-    pending: stale.length,
-    note: 'Unprocessed webhook events require the original delivery context; inspect via GET /admin/subscriptions/:tenantId/webhooks and re-drive from the Razorpay dashboard.',
-  };
+  const result = await billingWebhookService.drainDue({ now, limit: clampLimit(limit) });
+  return { ok: true, ...result };
 }
 
 export default {
   reconcilePending,
   reprocessWebhooks,
+  backoffMs,
   DEFAULT_BATCH_LIMIT,
   MAX_BATCH_LIMIT,
   MAX_ATTEMPTS,
