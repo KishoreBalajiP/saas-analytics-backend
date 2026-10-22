@@ -625,7 +625,6 @@ function raceTimeout(promise, timeoutMs) {
     Promise.resolve(promise),
     new Promise((_, reject) => {
       timer = setTimeout(() => reject(new Error('timeout')), timeoutMs);
-      timer.unref?.();
     }),
   ]).finally(() => clearTimeout(timer));
 }
@@ -645,7 +644,6 @@ async function withTimeout(probe, timeoutMs) {
       Promise.resolve(probe),
       new Promise((_, reject) => {
         const t = setTimeout(() => reject(new Error('timeout')), timeoutMs);
-        t.unref?.();
       }),
     ]);
     return { ...(value ?? {}), latencyMs: Date.now() - started };

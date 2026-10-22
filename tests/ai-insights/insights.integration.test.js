@@ -7,6 +7,8 @@ import rbacCache from '../../src/services/rbac.cache.service.js';
 import connectorRepository from '../../src/repositories/connector.repository.js';
 import { ConnectorRow } from '../../src/models/ConnectorRow.js';
 import { onboardTenant, memberOf } from '../platform-config/helpers.js';
+import { entitleTenant } from '../helpers/billing.js';
+import * as datasetSchemaService from '../../src/services/datasetSchema.service.js';
 
 before(async () => { await startMongo(); await startHttp(); });
 beforeEach(async () => { await resetMongo(); await rbacCache.clearAll(); });
@@ -15,9 +17,12 @@ after(async () => { await stopHttp(); await stopMongo(); });
 test('generate, feed, dismiss, feedback; isolation and permission', async () => {
   const a = await onboardTenant();
   const b = await onboardTenant();
+  await entitleTenant(a.tenantId);
+  await entitleTenant(b.tenantId);
   const c = await connectorRepository.create({ tenantId: a.tenantId, type: 'csv', name: 'Orders', status: 'active', createdBy: 'u' });
   const rows = [['2024-01-10', 'EU', 100], ['2024-01-11', 'US', 110], ['2024-01-12', 'APAC', 50], ['2024-02-10', 'EU', 150], ['2024-02-11', 'US', 100], ['2024-02-12', 'APAC', 60]];
   await ConnectorRow.insertMany(rows.map(([d, r, amount], i) => ({ tenantId: a.tenantId, connectorId: c._id, sourceRowId: `r${i}`, data: { order_date: d, region: r, amount } })));
+  await datasetSchemaService.profileConnector({ tenantId: a.tenantId, connectorId: String(c._id) });
   const body = { connectorId: String(c._id), metric: { op: 'sum', field: 'amount' }, dateField: 'order_date', dimension: 'region', bucket: 'month' };
   const gen = await api('/api/v1/insights/generate', { method: 'POST', headers: a.headers, body });
   assert.equal(gen.status, 201, JSON.stringify(gen.json));

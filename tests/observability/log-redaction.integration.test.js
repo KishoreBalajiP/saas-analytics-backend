@@ -141,7 +141,10 @@ test('AccessLog rows store the path with query tokens masked', async () => {
   const rows = await mongoose.model('AccessLog').find({}).lean();
   const row = rows.find((r) => String(r.path).startsWith('/api/v1/auth/me'));
   assert.ok(row, `access log row written: ${JSON.stringify(rows.map((r) => r.path))}`);
-  assert.equal(row.path, '/api/v1/auth/me?token=[REDACTED]');
+  // AccessLog deliberately stores only the path, never a query string that
+  // may contain credentials or personal data. The access-line logger tests
+  // above cover redaction of the raw URL before it is emitted.
+  assert.equal(row.path, '/api/v1/auth/me');
   // The signed-in access token itself is never logged either.
   assertNoSecrets('accesslog', [...SECRETS, token]);
 });

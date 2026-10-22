@@ -319,7 +319,6 @@ export async function stopScheduler({ timeoutMs = 0 } = {}) {
       Promise.allSettled(pending).then(() => true),
       new Promise((resolve) => {
         timer = setTimeout(() => resolve(false), timeoutMs);
-        timer.unref?.();
       }),
     ]);
     clearTimeout(timer);

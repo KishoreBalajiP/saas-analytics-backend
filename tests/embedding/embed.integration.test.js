@@ -21,6 +21,7 @@ import { ConnectorRow } from '../../src/models/ConnectorRow.js';
 import { EmbedToken } from '../../src/models/EmbedToken.js';
 import { AccessLog } from '../../src/models/AccessLog.js';
 import env from '../../src/config/env.js';
+import { entitleTenant } from '../helpers/billing.js';
 
 const PASSWORD = 'EmbedPassword123!';
 const HOST = 'https://host.example.com';
@@ -51,6 +52,7 @@ async function workspace() {
     result = await tenantService.create({ tenant: { name: `Embed ${randomBytes(3).toString('hex')}` }, owner: { email, name: 'Owner' }, initialize: true, by: 'platform-admin' });
   });
   await invitationService.accept({ token, name: 'Owner', password: PASSWORD });
+  await entitleTenant(result.tenant._id);
   return { tenant: result.tenant, tenantId: String(result.tenant._id), slug: result.tenant.slug, email, auth: await login(result.tenant.slug, email) };
 }
 
@@ -114,7 +116,7 @@ test('minting needs embed.create (or an API key with embed:create) and a bound o
   const embedKey = await api('/api/v1/api-keys', { method: 'POST', headers: ws.auth, body: { name: 'e', scopes: ['embed:create'] } });
   assert.equal(embedKey.status, 201, JSON.stringify(embedKey.json));
   const viaRead = await api('/api/v1/embed/api/tokens', { method: 'POST', headers: { 'X-Api-Key': readKey.json.data.secret }, body: { dashboardId, allowedOrigins: [HOST] } });
-  assert.equal(viaRead.status, 401);
+  assert.equal(viaRead.status, 403);
   const viaKey = await api('/api/v1/embed/api/tokens', { method: 'POST', headers: { 'X-Api-Key': embedKey.json.data.secret }, body: { dashboardId, allowedOrigins: [HOST] } });
   assert.equal(viaKey.status, 201, JSON.stringify(viaKey.json));
 

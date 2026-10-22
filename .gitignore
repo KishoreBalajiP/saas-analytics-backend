@@ -25,6 +25,9 @@ build/
 /summary.txt
 /test-output.txt
 /test-all-output.txt
+# Generated test artifacts (local runs)
+/.test-tmp/
+/*.out
 
 # OS / editor noise
 .DS_Store

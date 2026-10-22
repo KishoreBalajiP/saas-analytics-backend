@@ -12,6 +12,8 @@ import * as dashboardService from '../../src/services/dashboard.service.js';
 import connectorRepository from '../../src/repositories/connector.repository.js';
 import { ConnectorRow } from '../../src/models/ConnectorRow.js';
 import * as engine from '../../src/services/analytics.engine.js';
+import * as datasetSchemaService from '../../src/services/datasetSchema.service.js';
+import { entitleTenant } from '../helpers/billing.js';
 
 useMongo();
 const TA = 'tenant-a';
@@ -32,6 +34,7 @@ async function seed(tenantId = TA) {
   const dashboard = await dashboardService.createDashboard({ tenantId, name: 'Viz' });
   const connector = await connectorRepository.create({ tenantId, type: 'csv', name: 'Orders', status: 'active', createdBy: 'u1' });
   await ConnectorRow.insertMany(ROWS.map((data, i) => ({ tenantId, connectorId: connector._id, sourceRowId: `r${i}`, data, ingestedAt: new Date() })));
+  await datasetSchemaService.profileConnector({ tenantId, connectorId: String(connector._id) });
   return { dashboardId: String(dashboard._id), datasetId: String(connector._id) };
 }
 
@@ -163,10 +166,12 @@ test('another tenant cannot execute or read the widget', async () => {
 test('public embeds get the visualization but not the provenance', async () => {
   const { executeEmbed } = await import('../../src/services/embed.service.js');
   const { dashboardId, datasetId } = await seed();
+  await entitleTenant(TA);
   const w = await dashboardService.createWidget({ tenantId: TA, dashboardId, data: { name: 'K', type: 'kpi', datasetId, query: { metrics: [{ op: 'count' }] } } });
+  await dashboardService.publishDashboard({ tenantId: TA, dashboardId });
   const one = await executeEmbed({ tenantId: TA, dashboardId, widgetId: String(w._id) });
-  assert.equal(one.result.provenance, undefined);
-  assert.equal(one.result.visualization.type, 'kpi');
+  assert.equal(one.widgets[0].result.provenance, undefined);
+  assert.equal(one.widgets[0].result.visualization.type, 'kpi');
   const all = await executeEmbed({ tenantId: TA, dashboardId });
   assert.equal(all.widgets[0].result.provenance, undefined);
 });

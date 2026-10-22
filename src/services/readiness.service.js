@@ -48,7 +48,6 @@ function bound(promise, timeoutMs) {
     Promise.resolve().then(() => promise),
     new Promise((resolve) => {
       timer = setTimeout(() => resolve({ status: 'down', timedOut: true }), timeoutMs);
-      timer.unref?.();
     }),
   ]).finally(() => clearTimeout(timer));
 }

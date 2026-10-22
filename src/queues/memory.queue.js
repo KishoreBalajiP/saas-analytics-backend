@@ -230,7 +230,6 @@ export function createInMemoryQueue(options = {}) {
             idleWaiters.delete(onIdle);
             resolve(false);
           }, drainTimeoutMs);
-          timer.unref?.();
           const onIdle = () => {
             clearTimeout(timer);
             resolve(true);

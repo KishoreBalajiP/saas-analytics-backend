@@ -14,6 +14,7 @@ import { ConnectorRow } from '../../src/models/ConnectorRow.js';
 import { AnalyticsQuery } from '../../src/models/AnalyticsQuery.js';
 import * as engine from '../../src/services/analytics.engine.js';
 import { onboardTenant, memberOf } from '../platform-config/helpers.js';
+import * as datasetSchemaService from '../../src/services/datasetSchema.service.js';
 
 before(async () => { await startMongo(); await startHttp(); });
 beforeEach(async () => { await resetMongo(); await rbacCache.clearAll(); await cacheService.flushAll(); });
@@ -28,6 +29,7 @@ async function seed(tenantId) {
   await ConnectorRow.insertMany(rows.map(([d, s, amount, cust], i) => ({
     tenantId, connectorId: c._id, sourceRowId: `r${i}`, data: { order_date: d, status: s, amount, customer: cust },
   })));
+  await datasetSchemaService.profileConnector({ tenantId, connectorId: String(c._id) });
   return String(c._id);
 }
 

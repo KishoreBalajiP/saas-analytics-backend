@@ -58,7 +58,6 @@ export async function guardProducer(op, { timeoutMs, queue = null } = {}) {
         { queue },
       ));
     }, timeoutMs);
-    timer.unref?.();
   });
   try {
     return await Promise.race([Promise.resolve().then(op), timeout]);

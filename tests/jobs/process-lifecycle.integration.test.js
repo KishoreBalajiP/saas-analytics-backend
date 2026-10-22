@@ -40,9 +40,19 @@ async function freePort() {
   return port;
 }
 
-/** Spawn an entry point and collect its output. */
+/**
+ * Spawn an entry point and collect its output. On Windows `child.kill()` uses
+ * TerminateProcess (POSIX signals are never delivered), so the child is
+ * started through a shim that emits SIGTERM in-process on request; elsewhere
+ * a real SIGTERM is sent.
+ */
+const signalViaIpc = process.platform === 'win32';
+
 function launch(entry, extraEnv = {}) {
-  const child = spawn(process.execPath, [path.join(root, entry)], {
+  const args = signalViaIpc
+    ? [path.join(root, 'tests/helpers/entry-self-signal.js'), path.join(root, entry)]
+    : [path.join(root, entry)];
+  const child = spawn(process.execPath, args, {
     cwd: root,
     env: {
       ...process.env,
@@ -55,7 +65,7 @@ function launch(entry, extraEnv = {}) {
       LOG_LEVEL: 'info',
       ...extraEnv,
     },
-    stdio: ['ignore', 'pipe', 'pipe'],
+    stdio: signalViaIpc ? ['ignore', 'pipe', 'pipe', 'ipc'] : ['ignore', 'pipe', 'pipe'],
   });
   let output = '';
   child.stdout.on('data', (d) => { output += d.toString(); });
@@ -65,6 +75,15 @@ function launch(entry, extraEnv = {}) {
     child,
     exited,
     output: () => output,
+    async terminate() {
+      if (signalViaIpc) {
+        await new Promise((resolve, reject) => {
+          child.send('shutdown', (err) => (err ? reject(err) : resolve()));
+        });
+        return;
+      }
+      child.kill('SIGTERM');
+    },
     async waitFor(pattern, timeoutMs = 15000) {
       const start = Date.now();
       while (Date.now() - start < timeoutMs) {
@@ -86,7 +105,7 @@ test('worker entry: starts consumers + scheduler without HTTP and drains on SIGT
     assert.doesNotMatch(proc.output(), /is running/, 'the worker serves no HTTP');
 
     const t0 = Date.now();
-    proc.child.kill('SIGTERM');
+    await proc.terminate();
     const { code } = await proc.exited;
     assert.equal(code, 0, proc.output());
     assert.ok(Date.now() - t0 < SHUTDOWN_TIMEOUT_MS, 'drained within the shutdown timeout');
@@ -150,7 +169,7 @@ test('web entry: SIGTERM with a live Socket.IO client exits 0 inside SHUTDOWN_TI
     assert.ok(accepted.startsWith('40'), `connected expected, got ${accepted}`);
 
     const t0 = Date.now();
-    proc.child.kill('SIGTERM');
+    await proc.terminate();
     const { code } = await proc.exited;
     const elapsed = Date.now() - t0;
     assert.equal(code, 0, proc.output());
@@ -174,7 +193,7 @@ test('web role: serves HTTP but starts no consumers or scheduler', async () => {
     assert.ok(await proc.waitFor(/Background work not started/), proc.output());
     assert.doesNotMatch(proc.output(), /Job scheduled/);
     assert.doesNotMatch(proc.output(), /Queue consumers registered/);
-    proc.child.kill('SIGTERM');
+    await proc.terminate();
     const { code } = await proc.exited;
     assert.equal(code, 0, proc.output());
   } finally {
@@ -201,3 +220,4 @@ test('PROCESS_ROLE is validated at startup', () => {
   const worker = load({ PROCESS_ROLE: 'worker', REDIS_URL: '' });
   assert.equal(worker.status, 0, worker.stderr);
 });
+

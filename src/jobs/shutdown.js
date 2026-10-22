@@ -72,7 +72,6 @@ export async function runShutdownSteps(steps, { timeoutMs = 10000, log = logger 
         Promise.resolve().then(() => step.run({ timeoutMs: budget })),
         new Promise((_, reject) => {
           timer = setTimeout(() => reject(new StepTimeoutError(step.name, budget)), budget);
-          timer.unref?.();
         }),
       ]);
       results.push({ name: step.name, status: 'ok', durationMs: Date.now() - t0 });
@@ -114,7 +113,6 @@ export function closeHttpServer({ server, io = null, timeoutMs = 5000 }) {
       server?.closeAllConnections?.();
       finish(true);
     }, Math.max(1, timeoutMs));
-    timer.unref?.();
 
     // Idle keep-alive connections would otherwise hold close() open.
     server?.closeIdleConnections?.();

@@ -36,6 +36,7 @@ import {
   steppedUpSuper,
 } from './helpers/adminAuthFlow.js';
 import env from '../src/config/env.js';
+import { describeDuration } from '../src/utils/humanDuration.js';
 import emailService from '../src/services/email.service.js';
 import cacheService from '../src/services/cache.service.js';
 import rbacCache from '../src/services/rbac.cache.service.js';
@@ -438,7 +439,7 @@ test('the admin forgot-password email links to the admin reset page and states t
   const forgot = await api(`${ADMIN_AUTH}/password/forgot`, { method: 'POST', body: { email: admin.email } });
   assert.equal(forgot.status, 200);
   const mail = lastMailTo(admin.email);
-  assert.match(mail.text, /expires in 1 hour/);
+  assert.match(mail.text, new RegExp(`expires in ${describeDuration(env.security.auth.passwordResetTokenTtlMs)}`));
   assert.ok(!mail.text.includes(`${env.cors.clientUrl}/reset-password`), 'old, non-existent route is gone');
   const token = tokenFromMail(mail, RESET_PREFIX);
   const done = await api(`${ADMIN_AUTH}/password/reset`, { method: 'POST', body: { token, newPassword: NEW_PASSWORD } });

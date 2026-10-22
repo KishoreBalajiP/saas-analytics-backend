@@ -168,7 +168,6 @@ async function settleWithin(promise, ms) {
   let timer;
   const timedOut = new Promise((resolve) => {
     timer = setTimeout(() => resolve('timeout'), Math.max(0, ms));
-    timer.unref?.();
   });
   try {
     return await Promise.race([Promise.resolve(promise).then(() => 'done', () => 'done'), timedOut]);
@@ -190,7 +189,6 @@ function whenReady(connection, ms) {
   return new Promise((resolve, reject) => {
     const onReady = () => { cleanup(); resolve(); };
     const timer = setTimeout(() => { cleanup(); reject(new Error('Redis connection is not ready')); }, Math.max(1, ms));
-    timer.unref?.();
     function cleanup() {
       clearTimeout(timer);
       connection.removeListener?.('ready', onReady);

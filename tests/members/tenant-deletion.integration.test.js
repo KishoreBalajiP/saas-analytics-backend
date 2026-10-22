@@ -76,7 +76,7 @@ async function seedPlatformAdmin() {
 const rand = () => randomBytes(6).toString('hex');
 
 /** Unique-ish fields so raw seed rows never collide on a unique index. */
-function uniques() {
+function uniques(tenantId = 'seed') {
   return {
     sessionId: `ses_${rand()}`,
     refreshTokenHash: rand(),
@@ -85,6 +85,10 @@ function uniques() {
     reference: `REQ-${rand()}`,
     exportId: `exp_${rand()}`,
     dedupeKey: `dk_${rand()}`,
+    grantId: `grant_${rand()}`,
+    kind: `tenant.request.${rand()}`,
+    subject: `tenant:${tenantId}`,
+    bucket: new Date(Date.now() + randomBytes(2).readUInt16BE(0)),
     connectorId: rand(),
     sourceRowId: rand(),
     metric: `m_${rand()}`,
@@ -131,9 +135,15 @@ async function seedEverything(tenantId) {
         await col.insertOne({ subjectId: tenantId, subjectType: 'tenant', requestId: `cmp_${rand()}`, type: 'export' });
         break;
       default:
-        await col.insertOne({ tenantId, seed: true, ...uniques() });
+        await col.insertOne({ tenantId, seed: true, ...uniques(tenantId) });
         // A soft-deleted row must be purged too.
-        await col.insertOne({ tenantId, seed: true, deletedAt: new Date(), ...uniques() });
+        try {
+          await col.insertOne({ tenantId, seed: true, deletedAt: new Date(), ...uniques(tenantId) });
+        } catch (err) {
+          // Some tenant collections intentionally have one-row-per-tenant
+          // unique indexes; one raw fixture row is sufficient for coverage.
+          if (err?.code !== 11000) throw err;
+        }
     }
   }
   await storageService.put(`reports/${tenantId}/r1/run1.csv`, 'a,b\n1,2\n', { contentType: 'text/csv' });

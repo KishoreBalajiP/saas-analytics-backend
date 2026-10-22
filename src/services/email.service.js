@@ -282,7 +282,6 @@ export async function verify({ timeoutMs = env.mail.verifyTimeoutMs ?? 5000 } = 
       transport.verify(),
       new Promise((_, reject) => {
         timer = setTimeout(() => reject(new EmailError('VERIFY_TIMEOUT', 'Transport verification timed out')), timeoutMs);
-        timer.unref?.();
       }),
     ]);
     return true;

@@ -141,7 +141,6 @@ function getRedisClient() {
       cleanup();
       reject(new Error('Job lock Redis is not ready'));
     }, REDIS_READY_TIMEOUT_MS);
-    timer.unref?.();
     const onReady = () => { cleanup(); resolve(redisClient); };
     const cleanup = () => { clearTimeout(timer); redisClient.removeListener('ready', onReady); };
     redisClient.once('ready', onReady);

@@ -408,7 +408,6 @@ export async function flushErrorReports({ timeoutMs = 2000 } = {}) {
   let timer;
   const timedOut = new Promise((resolve) => {
     timer = setTimeout(() => resolve(false), Math.max(0, timeoutMs));
-    timer.unref?.();
   });
   try {
     return await Promise.race([Promise.allSettled(Array.from(pending)).then(() => true), timedOut]);

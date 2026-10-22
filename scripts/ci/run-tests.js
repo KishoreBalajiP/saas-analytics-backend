@@ -84,6 +84,11 @@ process.env.ADMIN_MFA_REQUIRED_TYPES = 'none';
 // connection loaded from .env. Email tests use the service capture sink and
 // the noop transport instead.
 process.env.MAIL_PROVIDER = 'none';
+// The email outbox contract enables its drain job by default.  A developer's
+// `.env` may disable it for a running deployment, but must not change the
+// behavior asserted by the isolated test suite.
+process.env.JOB_EMAIL_ENABLED = 'true';
+process.env.JOB_EMAIL_CRON = '* * * * *';
 delete process.env.SMTP_HOST;
 delete process.env.SMTP_PORT;
 delete process.env.MAIL_USER;

@@ -20,6 +20,8 @@ import { AiQuestion } from '../../src/models/AiQuestion.js';
 import { setSdkFactory, _forceProvider } from '../../src/services/aiProvider.adapter.js';
 import { onboardTenant, memberOf, captureLogs } from '../platform-config/helpers.js';
 import { runEval } from '../../scripts/ci/ai-eval.js';
+import { entitleTenant } from '../helpers/billing.js';
+import * as datasetSchemaService from '../../src/services/datasetSchema.service.js';
 
 let replies = [];
 let calls = [];
@@ -43,11 +45,13 @@ after(async () => { _forceProvider(null); setSdkFactory(null); await stopHttp();
 
 async function setup() {
   const t = await onboardTenant();
+  await entitleTenant(t.tenantId);
   const c = await connectorRepository.create({ tenantId: t.tenantId, type: 'csv', name: 'Orders', status: 'active', createdBy: 'u' });
   await ConnectorRow.insertMany([
     { tenantId: t.tenantId, connectorId: c._id, sourceRowId: '1', data: { region: 'EU', amount: 10, email: 'a@x.io' } },
     { tenantId: t.tenantId, connectorId: c._id, sourceRowId: '2', data: { region: 'US', amount: 5, email: 'b@x.io' } },
   ]);
+  await datasetSchemaService.profileConnector({ tenantId: t.tenantId, connectorId: String(c._id) });
   await featureFlagService.ensureDefaults();
   await featureFlagService.updateFlag({ key: 'ai.assistant', patch: { rollout: { strategy: 'tenantId', tenantIds: [t.tenantId] } }, actor: { type: 'admin', id: 'a' } });
   await api('/api/v1/ai/consent', { method: 'PUT', headers: t.headers, body: { granted: true } });
@@ -116,6 +120,7 @@ test('gating: flag, kill switch, consent, permission, noop 501, quota; tenant is
   assert.equal((await ask(none.headers)).status, 403);
 
   const fresh = await onboardTenant();
+  await entitleTenant(fresh.tenantId);
   assert.equal((await ask(fresh.headers)).json.code, 'AI_NOT_ENABLED');
   await featureFlagService.updateFlag({ key: 'ai.assistant', patch: { rollout: { strategy: 'tenantId', tenantIds: [t.tenantId, fresh.tenantId] } }, actor: { type: 'admin', id: 'a' } });
   assert.equal((await ask(fresh.headers)).json.code, 'AI_CONSENT_REQUIRED');

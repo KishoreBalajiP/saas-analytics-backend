@@ -29,8 +29,10 @@ import { ConnectorRow } from '../../src/models/ConnectorRow.js';
 import { UserRole } from '../../src/models/UserRole.js';
 import * as alertService from '../../src/services/alert.service.js';
 import dataAccess from '../../src/services/dataAccess.service.js';
+import { entitleTenant } from '../helpers/billing.js';
 
 const PASSWORD = 'Password123!';
+const EMBED_ORIGIN = 'https://embed.example.com';
 
 before(async () => { await startMongo(); await startHttp(); });
 beforeEach(async () => { await resetMongo(); await rbacCache.clearAll(); await cacheService.flushAll(); });
@@ -64,6 +66,7 @@ async function workspace({ analystRegion = 'EU' } = {}) {
   const owner = { email: `owner-${shortToken(8).toLowerCase()}@example.com`, name: 'Owner', password: PASSWORD };
   const { tenant } = await tenantService.create({ tenant: { name: `RLS ${shortToken(8)}` }, owner, initialize: true, by: 'root' });
   const tenantId = String(tenant._id);
+  await entitleTenant(tenantId);
   const ownerAuth = await login(tenantId, owner.email);
   const orders = await seed(tenantId, 'Orders', [
     { region: 'EU', amount: 100 }, { region: 'US', amount: 200 }, { region: 'APAC', amount: 300 },
@@ -213,9 +216,17 @@ test('dashboards and embeds apply the viewer / token creator scope', async () =>
   await api(`/api/v1/data-access/datasets/${ws.orders}`, { method: 'PUT', headers: ws.ownerAuth, body: { restricted: false, grants: [] } });
 
   assert.equal((await api(`/api/v1/dashboards/${dashId}/publish`, { method: 'POST', headers: ws.analyst.auth })).status, 200);
-  const minted = await api('/api/v1/embed/tokens', { method: 'POST', headers: ws.analyst.auth, body: { dashboardId: dashId, ttlSec: 600 } });
+  const minted = await api('/api/v1/embed/tokens', { method: 'POST', headers: ws.analyst.auth, body: { dashboardId: dashId, ttlSec: 600, allowedOrigins: [EMBED_ORIGIN] } });
   assert.equal(minted.status, 201, JSON.stringify(minted.json));
-  const embed = await api(`/api/v1/embed/${minted.json.data.secret}`);
+  const session = await api('/api/v1/embed/public/session', {
+    method: 'POST', headers: { Origin: EMBED_ORIGIN }, body: { token: minted.json.data.secret },
+  });
+  assert.equal(session.status, 200, JSON.stringify(session.json));
+  const embed = await api('/api/v1/embed/public/view', {
+    method: 'POST',
+    headers: { Origin: EMBED_ORIGIN, Authorization: `Bearer ${session.json.data.sessionToken}` },
+    body: {},
+  });
   assert.equal(embed.status, 200, JSON.stringify(embed.json));
   const embedWidget = embed.json.data.widgets[0];
   assert.deepEqual(regions(embedWidget.result.rows), ['EU'], 'embed shows the creator scope');
@@ -230,7 +241,7 @@ test('external API keys query with their creator scope', async () => {
   const headers = { 'X-Api-Key': created.json.data.secret };
 
   const list = await api('/api/v1/external/datasets', { headers });
-  assert.deepEqual(list.json.data.docs.map((d) => d.name), ['Orders']);
+  assert.deepEqual(list.json.data.map((d) => d.name), ['Orders']);
   assert.equal((await api(`/api/v1/external/datasets/${ws.secret}`, { headers })).status, 404);
   assert.equal((await api(`/api/v1/external/datasets/${ws.secret}/query`, { headers })).status, 404);
   assert.equal((await api(`/api/v1/external/datasets/${ws.secret}/rows`, { headers })).status, 404);
@@ -239,7 +250,7 @@ test('external API keys query with their creator scope', async () => {
   assert.equal(query.status, 200, JSON.stringify(query.json));
   assert.equal(query.json.data.rows.length, 0);
   const rows = await api(`/api/v1/external/datasets/${ws.orders}/rows`, { headers });
-  assert.deepEqual(regions(rows.json.data.docs), ['EU']);
+  assert.deepEqual(regions(rows.json.data), ['EU']);
 });
 
 /* ------------------------- exports, reports, alerts ------------------------- */

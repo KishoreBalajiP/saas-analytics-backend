@@ -55,7 +55,7 @@ function typed(status, message, code) {
   return new ApiError(status, message, { code });
 }
 
-const sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms).unref?.(); });
+const sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
 
 /** A user by id, or null for a malformed id. */
 async function findUser(userId) {

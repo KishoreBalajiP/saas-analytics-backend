@@ -82,7 +82,6 @@ export class TenantConcurrencyLimiter {
         if (index !== -1) entry.queue.splice(index, 1);
         reject(limitError());
       }, this.queueTimeoutMs);
-      waiter.timer.unref?.();
       entry.queue.push(waiter);
     });
   }
