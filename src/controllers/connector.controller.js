@@ -65,10 +65,31 @@ export const syncMongoDB = asyncHandler(async (req, res) => {
 
 // datasets: GET /api/v1/connectors/:connectorId/schema - typed dataset schema.
 export const getSchema = asyncHandler(async (req, res) => {
-  const schema = await connectorService.getConnectorSchema({ tenantId: getTenantId(req), connectorId: req.params.connectorId });
+  const schema = await connectorService.getConnectorSchema({
+    tenantId: getTenantId(req),
+    connectorId: req.params.connectorId,
+  });
   return ApiResponse.ok(res, schema, 'Dataset schema');
 });
 
+// datasets: POST /api/v1/connectors/:connectorId/schema/refresh - re-profile.
+export const refreshSchema = asyncHandler(async (req, res) => {
+  const schema = await connectorService.refreshConnectorSchema({
+    tenantId: getTenantId(req),
+    connectorId: req.params.connectorId,
+  });
+  return ApiResponse.ok(res, schema, 'Dataset schema refreshed');
+});
+
+// datasets: GET /api/v1/connectors/:connectorId/discover?database= - MongoDB source discovery.
+export const discover = asyncHandler(async (req, res) => {
+  const result = await connectorService.discoverMongoSources({
+    tenantId: getTenantId(req),
+    connectorId: req.params.connectorId,
+    database: typeof req.query.database === 'string' ? req.query.database : undefined,
+  });
+  return ApiResponse.ok(res, result, 'Source discovery');
+});
 /** GET /api/v1/connectors/types - registered connector catalogue. */
 export const listTypes = asyncHandler(async (_req, res) => {
   return ApiResponse.ok(res, connectorService.listConnectorTypes(), 'Connector types');
@@ -147,7 +168,16 @@ export const validate = asyncHandler(async (req, res) => {
     connectorId: req.params.connectorId,
   });
   const status = outcome.valid ? 200 : 422;
-  return ApiResponse.send(res, status, { valid: outcome.valid, errors: outcome.errors, connector: outcome.connector }, 'Connector validation');
+  return ApiResponse.send(
+    res,
+    status,
+    {
+      valid: outcome.valid,
+      errors: outcome.errors,
+      connector: outcome.connector,
+    },
+    'Connector validation',
+  );
 });
 
 /** GET /api/v1/connectors/:connectorId/rows - ingested rows (paged). */
@@ -219,6 +249,8 @@ export default {
   listRows,
   listSyncRuns,
   getSchema,
+  refreshSchema,
+  discover,
   previewCsv,
   syncCsv,
   previewFile,

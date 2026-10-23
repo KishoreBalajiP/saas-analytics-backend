@@ -79,10 +79,10 @@ test('update whitelists known fields and ignores unknown keys', async () => {
     tenantId: TA,
     dashboardId: String(d._id),
     actorId: 'u2',
-    patch: { name: 'Revenue v2', status: 'published', malicious: 'x', layout: { columns: 99, rowHeight: -5 } },
+    patch: { name: 'Revenue v2', status: 'archived', malicious: 'x', layout: { columns: 99, rowHeight: -5 } },
   });
   assert.equal(updated.name, 'Revenue v2');
-  assert.equal(updated.status, 'published');
+  assert.equal(updated.status, 'archived');
   assert.equal('malicious' in updated, false);
   // Layout is clamped into bounds.
   assert.equal(updated.layout.columns, 24);
@@ -91,6 +91,8 @@ test('update whitelists known fields and ignores unknown keys', async () => {
 
 test('publish transitions draft -> published; archived rejects; published is idempotent', async () => {
   const d = await dashboardService.createDashboard({ tenantId: TA, name: 'Revenue' });
+  const connector = await createConnector(TA);
+  await dashboardService.createWidget({ tenantId: TA, dashboardId: String(d._id), data: { name: 'Rows', type: 'table', datasetId: String(connector._id) } });
   const published = await dashboardService.publishDashboard({ tenantId: TA, dashboardId: String(d._id), actorId: 'u1' });
   assert.equal(published.status, 'published');
 
@@ -181,3 +183,40 @@ async function createConnector(tenantId) {
   const connectorRepository = (await import('../../src/repositories/connector.repository.js')).default;
   return connectorRepository.create({ tenantId, type: 'csv', name: 'Orders', status: 'active', createdBy: 'u1' });
 }
+
+test('publish rejects an empty dashboard (also via a status patch)', async () => {
+  const d = await dashboardService.createDashboard({ tenantId: TA, name: 'Empty' });
+  const isInvalid = (e) => e.statusCode === 400 && e.code === 'DASHBOARD_PUBLISH_INVALID';
+  await assert.rejects(() => dashboardService.publishDashboard({ tenantId: TA, dashboardId: String(d._id) }), isInvalid);
+  await assert.rejects(() => dashboardService.updateDashboard({ tenantId: TA, dashboardId: String(d._id), patch: { status: 'published' } }), isInvalid);
+  const { dashboard } = await dashboardService.getDashboard({ tenantId: TA, dashboardId: String(d._id) });
+  assert.equal(dashboard.status, 'draft');
+});
+
+test('publish returns per-widget errors for a missing dataset and a non-active metric', async () => {
+  const d = await dashboardService.createDashboard({ tenantId: TA, name: 'Broken' });
+  const connector = await createConnector(TA);
+  const ok = await dashboardService.createWidget({ tenantId: TA, dashboardId: String(d._id), data: { name: 'Rows', type: 'table', datasetId: String(connector._id) } });
+  // Simulate drift after save: dataset deleted on one widget, a draft metric ref on another.
+  const gone = await widgetRepository.create({ tenantId: TA, dashboardId: d._id, name: 'Gone', type: 'table', datasetId: new ObjectId() });
+  const draft = await widgetRepository.create({
+    tenantId: TA, dashboardId: d._id, name: 'Draft metric', type: 'kpi', datasetId: connector._id,
+    query: { metrics: [{ ref: 'metric:not_active' }] },
+  });
+  const err = await dashboardService.publishDashboard({ tenantId: TA, dashboardId: String(d._id) }).catch((e) => e);
+  assert.equal(err.code, 'DASHBOARD_PUBLISH_INVALID');
+  const ids = new Set(err.errors.map((e) => e.widgetId));
+  assert.ok(ids.has(String(gone._id)));
+  assert.ok(ids.has(String(draft._id)));
+  assert.ok(!ids.has(String(ok._id)));
+  assert.match(err.errors.find((e) => e.widgetId === String(draft._id)).message, /not an active metric/);
+});
+
+test('a widget cannot be saved with a draft/unknown metric reference', async () => {
+  const d = await dashboardService.createDashboard({ tenantId: TA, name: 'M' });
+  const connector = await createConnector(TA);
+  await assert.rejects(
+    () => dashboardService.createWidget({ tenantId: TA, dashboardId: String(d._id), data: { name: 'K', type: 'kpi', datasetId: String(connector._id), query: { metrics: [{ ref: 'metric:not_active' }] } } }),
+    (e) => e.statusCode === 400 && /not an active metric/.test(JSON.stringify(e.errors)),
+  );
+});

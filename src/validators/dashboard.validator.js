@@ -64,7 +64,7 @@ export const dashboardListSchema = {
 export const widgetCreateSchema = {
   body: {
     name: { type: 'string', required: true, maxLength: 120 },
-    type: { type: 'string', required: true, oneOf: ['kpi', 'table', 'bar', 'line', 'area', 'pie'] },
+    type: { type: 'string', required: true, oneOf: ['kpi', 'table', 'bar', 'line', 'area', 'pie', 'doughnut', 'scatter'] },
     datasetId: { type: 'objectId', required: true },
     query: { type: 'object' },
     visualization: { type: 'object' },
@@ -78,7 +78,7 @@ export const widgetCreateSchema = {
 export const widgetUpdateSchema = {
   body: {
     name: { type: 'string', minLength: 1, maxLength: 120 },
-    type: { type: 'string', oneOf: ['kpi', 'table', 'bar', 'line', 'area', 'pie'] },
+    type: { type: 'string', oneOf: ['kpi', 'table', 'bar', 'line', 'area', 'pie', 'doughnut', 'scatter'] },
     datasetId: { type: 'objectId' },
     query: { type: 'object' },
     visualization: { type: 'object' },

@@ -459,6 +459,29 @@ export async function suggest({ tenantId, connectorId, actorId = null } = {}) {
   return { created, skipped };
 }
 
+/**
+ * Field errors for every `metric:<key>` reference in an engine query that is
+ * not an approved (active) metric: drafts, archived and deleted metrics are
+ * rejected, like dashboards do (see dashboard.service metricRefErrors).
+ */
+export async function metricRefErrors({ tenantId, query, prefix = 'query.' } = {}) {
+  const errors = [];
+  const metrics = Array.isArray(query?.metrics) ? query.metrics : [];
+  for (let i = 0; i < metrics.length; i += 1) {
+    const ref = metrics[i]?.ref;
+    if (typeof ref !== 'string') continue;
+    const def = await resolveMetricRef({ tenantId, ref });
+    if (!def) errors.push({ field: `${prefix}metrics[${i}].ref`, message: `"${ref}" is not an active metric (it may be a draft, archived or deleted)` });
+  }
+  return errors;
+}
+
+/** Throw 400 INVALID_QUERY unless every metric reference is approved. */
+export async function assertMetricRefsActive({ tenantId, query, prefix = 'query.' } = {}) {
+  const errors = await metricRefErrors({ tenantId, query, prefix });
+  if (errors.length) throw new ApiError(400, 'Invalid analytics query', { code: engine.QUERY_ERROR_CODES.INVALID_QUERY, errors });
+}
+
 export default {
   list,
   get,

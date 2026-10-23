@@ -111,6 +111,8 @@ test('alert re-triggers after cooldown expires (persisted state)', async () => {
     tenantId, actorId: ownerId, name: 'Cooldown Re-trigger', source: 'query',
     query: { datasetId }, metric: 'count', condition: 'gt', threshold: 1,
     cooldownMinutes: 60, schedule: { cron: '*/5 * * * *' }, enabled: true,
+    // Repeat reminders while the value is unchanged are opt-in.
+    repeatMode: 'after_cooldown',
   });
 
   const first = await alertService.evaluate({ tenantId, alertId: String(rule._id) });

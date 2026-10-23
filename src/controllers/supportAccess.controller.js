@@ -30,7 +30,12 @@ function tenantOf(req) {
 
 /** GET /workspace/support-access - usable grant, grants and support sessions. */
 export const getWorkspaceSupportAccess = asyncHandler(async (req, res) => {
-  const data = await supportAccessService.getWorkspaceSupportAccess({ tenantId: tenantOf(req) });
+  const { page, limit } = req.validated?.query ?? {};
+  const data = await supportAccessService.getWorkspaceSupportAccess({
+    tenantId: tenantOf(req),
+    page,
+    limit,
+  });
   return ApiResponse.ok(res, data, 'Support access');
 });
 

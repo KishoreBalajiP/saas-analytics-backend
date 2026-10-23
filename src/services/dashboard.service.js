@@ -395,6 +395,83 @@ async function assertDatasetOwned(tenantId, datasetId) {
   return connector;
 }
 
+/**
+ * Every `metric:<key>` reference in a widget query must resolve to an
+ * approved (active) metric definition: drafts and archived metrics are not
+ * usable in dashboards. Returns field errors (empty when all resolve).
+ */
+async function metricRefErrors(tenantId, query) {
+  const errors = [];
+  const metrics = Array.isArray(query?.metrics) ? query.metrics : [];
+  for (let i = 0; i < metrics.length; i += 1) {
+    const ref = metrics[i]?.ref;
+    if (typeof ref !== 'string') continue;
+    const { resolveMetricRef } = await import('./metricDefinition.service.js');
+    const def = await resolveMetricRef({ tenantId, ref });
+    if (!def) errors.push({ field: `query.metrics[${i}].ref`, message: `"${ref}" is not an active metric (it may be a draft, archived or deleted)` });
+  }
+  return errors;
+}
+
+async function assertMetricRefsActive(tenantId, query) {
+  const errors = await metricRefErrors(tenantId, query);
+  if (errors.length) throw new ApiError(400, 'Invalid analytics query', { code: engine.QUERY_ERROR_CODES.INVALID_QUERY, errors });
+}
+
+/**
+ * Validate one widget for publishing. Never throws: returns
+ * `{ widgetId, name, errors: [{ field, message }] }`.
+ */
+async function validateWidgetForPublish(tenantId, widget) {
+  const errors = [];
+  const push = (e) => {
+    const list = Array.isArray(e?.errors) ? e.errors : null;
+    if (list?.length) errors.push(...list.map((x) => ({ field: x.field ?? null, message: x.message ?? String(x) })));
+    else errors.push({ field: null, message: e?.message ?? 'Invalid widget' });
+  };
+  if (!widget.datasetId) {
+    errors.push({ field: 'datasetId', message: 'Widget has no dataset selected' });
+  } else {
+    try { await assertDatasetOwned(tenantId, widget.datasetId); } catch {
+      errors.push({ field: 'datasetId', message: 'Widget dataset is missing or you do not have access to it' });
+    }
+  }
+  if (!errors.length) {
+    try {
+      const query = sanitizeWidgetQuery(widget.query ?? null);
+      await assertQueryMatchesSchema(tenantId, widget.datasetId, query);
+      errors.push(...await metricRefErrors(tenantId, query));
+      validateVisualization({ type: widget.type, query, visualization: widget.visualization });
+    } catch (e) { push(e); }
+  }
+  return { widgetId: String(widget._id), name: widget.name, errors };
+}
+
+/** Throw 400 DASHBOARD_PUBLISH_INVALID with per-widget errors unless publishable. */
+export async function assertPublishable(tenantId, dashboardId) {
+  // Validate the dashboard and every widget before it goes live.
+  const { docs: widgets } = await widgetRepository.list({ tenantId, dashboardId, page: 1, limit: MAX_WIDGETS_PER_DASHBOARD });
+  if (!widgets.length) {
+    throw new ApiError(400, 'Add at least one widget before publishing', {
+      code: 'DASHBOARD_PUBLISH_INVALID', errors: [{ field: 'widgets', message: 'Dashboard has no widgets' }],
+    });
+  }
+  const checks = [];
+  for (const w of widgets) checks.push(await validateWidgetForPublish(tenantId, w));
+  const failing = checks.filter((c) => c.errors.length);
+  if (failing.length) {
+    throw new ApiError(400, `${failing.length} widget(s) must be fixed before publishing`, {
+      code: 'DASHBOARD_PUBLISH_INVALID',
+      errors: failing.flatMap((w) => w.errors.map((e) => ({
+        field: `widgets.${w.widgetId}${e.field ? `.${e.field}` : ''}`,
+        message: `${w.name}: ${e.message}`,
+        widgetId: w.widgetId,
+        widgetName: w.name,
+      }))),
+    });
+  }
+}
+
 /* ------------------------------ dashboards -------------------------------- */
 
 /** Paginated, tenant-scoped dashboard list (optional status/search filter). */
@@ -451,6 +528,11 @@ export async function updateDashboard({ tenantId, dashboardId, actorId = null, a
   // Updating a dashboard does not create one: no `dashboards` quota use.
   const updates = sanitizeDashboardPatch(patch);
   if (updates.visibility !== undefined) requireAccess(dashboard, access, 'manage');
+  // Publishing through a status patch gets the same validation as /publish.
+  if (updates.status === 'published' && dashboard.status !== 'published') {
+    if (dashboard.status !== 'draft') throw ApiError.badRequest(`only draft dashboards can be published (current: ${dashboard.status})`);
+    await assertPublishable(tenantId, dashboardId);
+  }
   if (Object.keys(updates).length === 0) return dashboard;
   updates.updatedBy = actorId;
   const updated = await dashboardRepository.update(dashboardId, updates);
@@ -470,6 +552,7 @@ export async function publishDashboard({ tenantId, dashboardId, actorId = null, 
   if (dashboard.status !== 'draft') {
     throw ApiError.badRequest(`only draft dashboards can be published (current: ${dashboard.status})`);
   }
+  await assertPublishable(tenantId, dashboardId);
   const updated = await dashboardRepository.update(dashboardId, { status: 'published', updatedBy: actorId });
   if (!updated) throw ApiError.notFound('Dashboard not found');
   await audit({
@@ -616,6 +699,7 @@ export async function createWidget({ tenantId, dashboardId, actorId = null, data
   // vizbuilder: reject invalid queries / visualization specs at save time.
   const query = sanitizeWidgetQuery(data.query);
   await assertQueryMatchesSchema(tenantId, data.datasetId, query);
+  await assertMetricRefsActive(tenantId, query);
   const visualization = validateVisualization({ type: data.type, query, visualization: data.visualization });
   // Enforce per-dashboard widget limit (separate from overall dashboard quota).
   const count = await widgetRepository.countByDashboard(dashboardId);
@@ -663,6 +747,7 @@ export async function updateWidget({ tenantId, dashboardId, widgetId, actorId = 
     const query = updates.query !== undefined ? updates.query : widget.query;
     if (updates.query !== undefined || updates.datasetId !== undefined) {
       await assertQueryMatchesSchema(tenantId, updates.datasetId ?? widget.datasetId, query);
+      await assertMetricRefsActive(tenantId, query);
     }
     updates.visualization = validateVisualization({
       type, query, visualization: updates.visualization !== undefined ? updates.visualization : widget.visualization,
@@ -776,7 +861,7 @@ const ADDITIVE_OPS = new Set(['count', 'sum', 'count_non_null']);
 
 /** For bar/pie specs with `limit`: order by the first measure and fetch the top N. */
 function applyTopN(params, viz) {
-  if (!viz.limit || !['bar', 'pie'].includes(viz.type) || !viz.xField || !viz.measures.length) return null;
+  if (!viz.limit || !['bar', 'pie', 'doughnut'].includes(viz.type) || !viz.xField || !viz.measures.length) return null;
   const direction = viz.sort?.by === 'measure' && viz.sort.direction === 'asc' ? 'asc' : 'desc';
   params.orderBy = [{ field: viz.measures[0], direction }];
   params.pagination = { page: 1, limit: viz.limit };

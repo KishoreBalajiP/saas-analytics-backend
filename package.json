@@ -31,7 +31,8 @@
     "ai:eval": "node scripts/ci/ai-eval.js",
     "insights:eval": "node scripts/ci/insights-eval.js",
     "db:restore-drill": "node scripts/ci/restore-drill.js",
-    "db:billing-terms": "node scripts/ci/migrate-billing-terms.js"
+    "db:billing-terms": "node scripts/ci/migrate-billing-terms.js",
+    "db:report-sensitive-rows": "node scripts/ci/report-sensitive-rows.js"
   },
   "keywords": [
     "saas",

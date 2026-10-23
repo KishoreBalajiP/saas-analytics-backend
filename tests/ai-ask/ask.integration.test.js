@@ -121,7 +121,8 @@ test('gating: flag, kill switch, consent, permission, noop 501, quota; tenant is
 
   const fresh = await onboardTenant();
   await entitleTenant(fresh.tenantId);
-  assert.equal((await ask(fresh.headers)).json.code, 'AI_NOT_ENABLED');
+  // The plan entitlement is authoritative: no allow-listing needed, consent is the next gate.
+  assert.equal((await ask(fresh.headers)).json.code, 'AI_CONSENT_REQUIRED');
   await featureFlagService.updateFlag({ key: 'ai.assistant', patch: { rollout: { strategy: 'tenantId', tenantIds: [t.tenantId, fresh.tenantId] } }, actor: { type: 'admin', id: 'a' } });
   assert.equal((await ask(fresh.headers)).json.code, 'AI_CONSENT_REQUIRED');
 

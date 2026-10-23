@@ -16,6 +16,7 @@ import { startHttp, stopHttp, api, refreshCookieFrom } from '../helpers/http.js'
 import { totpCode } from '../helpers/totp.js';
 import { shortToken } from '../../src/utils/id.js';
 import env from '../../src/config/env.js';
+import { Dashboard } from '../../src/models/Dashboard.js';
 import * as emailService from '../../src/services/email.service.js';
 import * as tenantService from '../../src/services/tenant.service.js';
 import adminService from '../../src/services/admin.service.js';
@@ -423,7 +424,9 @@ test('embed token create and revoke are recorded without the token', async () =>
   const dash = await api('/api/v1/dashboards', { method: 'POST', headers: ws.auth, body: { name: 'Public KPIs' } });
   assert.equal(dash.status, 201, JSON.stringify(dash.json));
   const dashboardId = dash.json.data._id;
-  assert.equal((await api(`/api/v1/dashboards/${dashboardId}/publish`, { method: 'POST', headers: ws.auth })).status, 200);
+  // Publishing validates widgets (an empty dashboard is refused); this test is
+  // about embed audit rows, so mark the dashboard published directly.
+  await Dashboard.updateOne({ _id: dashboardId }, { $set: { status: 'published', publishedAt: new Date() } });
 
   const minted = await api('/api/v1/embed/tokens', { method: 'POST', headers: ws.auth, body: { dashboardId, ttlSec: 600, allowedOrigins: ['https://host.example.com'] } });
   assert.equal(minted.status, 201, JSON.stringify(minted.json));

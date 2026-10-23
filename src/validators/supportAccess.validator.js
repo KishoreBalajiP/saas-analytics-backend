@@ -55,6 +55,13 @@ export const activitySchema = {
   query: { ...PAGE_RULES },
 };
 
+/** Paginated workspace support-access history. */
+export const workspaceSchema = {
+  body: {},
+  params: {},
+  query: { ...PAGE_RULES },
+};
+
 /** A support session ends itself. */
 export const endCurrentSchema = {
   body: {
@@ -69,5 +76,6 @@ export default {
   revokeConsentSchema,
   endSessionSchema,
   activitySchema,
+  workspaceSchema,
   endCurrentSchema,
 };

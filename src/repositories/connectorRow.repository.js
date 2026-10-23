@@ -16,20 +16,29 @@
  */
 
 import mongoose from 'mongoose';
+import { stripSensitiveFields } from '../utils/sensitiveFields.js';
 import { ConnectorRow } from '../models/ConnectorRow.js';
 import { bumpDataVersion } from './connector.repository.js';
 
 const { ObjectId } = mongoose.Types;
 
 /** Paginated rows for a connector (tenant-scoped). */
+/** Query-cost cap for raw row listings (UI rows view, external API). */
+export const MAX_ROW_LIST_LIMIT = 200;
+
 export const list = async ({ connectorId, tenantId, page = 1, limit = 50, match = null } = {}) => {
+  // cost: clamp pagination so a caller can never pull an unbounded page.
+  const lim = Math.min(MAX_ROW_LIST_LIMIT, Math.max(1, Math.trunc(Number(limit)) || 50));
+  const pg = Math.max(1, Math.trunc(Number(page)) || 1);
+  page = pg; limit = lim;
   const result = await ConnectorRow.paginate(
     // rls: `match` carries row-level security rules (dataAccess.rowListMatch).
     { ...(match ?? {}), connectorId: new ObjectId(connectorId), tenantId },
     { page, limit, lean: true, sort: { ingestedAt: -1 } },
   );
   return {
-    docs: result.docs,
+    // security: strip credential-like keys (covers rows ingested before the sanitizer).
+    docs: result.docs.map((doc) => (doc && doc.data && typeof doc.data === 'object' ? { ...doc, data: stripSensitiveFields(doc.data) } : doc)),
     total: result.totalDocs,
     page: result.page,
     limit: result.limit,
@@ -60,7 +69,8 @@ export const upsertRows = async (connectorId, tenantId, rows) => {
       // from both `$set` and `$setOnInsert`, and `data` is refreshed on
       // every match anyway.
       update: {
-        $set: { data: row.data, ingestedAt: new Date() },
+        // security: credential-like keys never reach storage.
+        $set: { data: stripSensitiveFields(row.data), ingestedAt: new Date() },
         $setOnInsert: { tenantId },
       },
       upsert: true,

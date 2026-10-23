@@ -43,6 +43,8 @@ const ALLOWED_KEYS = Object.freeze({
   kpi: [...COMMON, 'series'],
   bar: [...COMMON, 'xField', 'series', 'sort', 'limit', 'showOther', 'nullHandling'],
   pie: [...COMMON, 'xField', 'series', 'sort', 'limit', 'showOther', 'nullHandling'],
+  doughnut: [...COMMON, 'xField', 'series', 'sort', 'limit', 'showOther', 'nullHandling'],
+  scatter: [...COMMON, 'xField', 'series', 'nullHandling'],
   line: [...COMMON, 'xField', 'series', 'sort', 'nullHandling'],
   area: [...COMMON, 'xField', 'series', 'sort', 'nullHandling'],
   table: [...COMMON, 'columns', 'pageSize', 'sort'],
@@ -141,12 +143,16 @@ export function validateVisualization({ type, query, visualization }) {
     if (!hasMetrics) fail('query.metrics', 'a KPI widget needs at least one aggregate metric');
     if (dimensions.length) fail('query.groupBy', 'a KPI widget shows one aggregate value: remove groupBy');
   }
-  if (['bar', 'line', 'area', 'pie'].includes(type) && !dimensions.length) {
+  if (['bar', 'line', 'area', 'pie', 'doughnut', 'scatter'].includes(type) && !dimensions.length) {
     fail('query.groupBy', `a ${type} widget needs at least one groupBy field`);
   }
-  if (type === 'pie') {
+  if (type === 'scatter') {
     const n = out.series ? out.series.length : measures.length;
-    if (n !== 1) fail(out.series ? 'visualization.series' : 'query.metrics', 'a pie widget plots exactly one measure');
+    if (n < 2) fail(out.series ? 'visualization.series' : 'query.metrics', 'a scatter widget needs two measures (x and y)');
+  }
+  if (type === 'pie' || type === 'doughnut') {
+    const n = out.series ? out.series.length : measures.length;
+    if (n !== 1) fail(out.series ? 'visualization.series' : 'query.metrics', `a ${type} widget plots exactly one measure`);
   }
   if (out.showOther && out.limit === undefined) fail('visualization.limit', 'is required with showOther');
 

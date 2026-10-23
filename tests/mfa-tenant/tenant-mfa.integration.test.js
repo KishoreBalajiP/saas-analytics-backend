@@ -96,6 +96,40 @@ test('MFA endpoints require a tenant bearer token (admin tokens are refused)', a
   assert.equal(stepUp.status, 401);
 });
 
+test('pending enrolments expire and can be safely replaced', async () => {
+  const { tenantId } = await onboard();
+  const member = await addMember(tenantId, 'Viewer');
+  const { auth } = await signIn(tenantId, member.email);
+
+  const first = await api('/api/v1/auth/mfa/enroll', { method: 'POST', headers: auth });
+  const second = await api('/api/v1/auth/mfa/enroll', { method: 'POST', headers: auth });
+  assert.equal(first.status, 200);
+  assert.equal(second.status, 200);
+  assert.notEqual(first.json.data.secret, second.json.data.secret);
+
+  const stale = await api('/api/v1/auth/mfa/verify', {
+    method: 'POST',
+    headers: auth,
+    body: { code: nextCode(first.json.data.secret) },
+  });
+  assert.equal(stale.status, 400);
+
+  await User.updateOne(
+    { _id: member.id },
+    { $set: { mfaEnrollmentExpiresAt: new Date(Date.now() - 1000) } },
+  );
+  const expired = await api('/api/v1/auth/mfa/verify', {
+    method: 'POST',
+    headers: auth,
+    body: { code: nextCode(second.json.data.secret) },
+  });
+  assert.equal(expired.status, 410);
+  const stored = await User.findById(member.id).select('+mfaSecret').lean();
+  assert.equal(stored.mfaEnabled, false);
+  assert.equal(stored.mfaSecret, null);
+  assert.equal(stored.mfaEnrollmentExpiresAt, null);
+});
+
 /* ---------------------------- login challenge ---------------------------- */
 
 test('login requires the second factor once MFA is on, and a code works only once', async () => {

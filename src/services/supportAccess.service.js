@@ -314,17 +314,18 @@ export async function revokeConsent({ tenantId, grantId, user, reason = null, ip
 }
 
 /** Workspace view: the usable grant, recent grants and recent support sessions. */
-export async function getWorkspaceSupportAccess({ tenantId, limit = 20 }) {
+export async function getWorkspaceSupportAccess({ tenantId, page = 1, limit = 10 }) {
   if (!tenantId) throw ApiError.badRequest('Tenant id is required');
   const now = new Date();
   const [active, grants, sessions] = await Promise.all([
     supportAccessRepository.findActiveGrant({ tenantId, now }),
-    supportAccessRepository.listGrants({ tenantId, page: 1, limit }),
+    supportAccessRepository.listGrants({ tenantId, page, limit }),
     supportAccessRepository.listImpersonations({ tenantId, page: 1, limit }),
   ]);
   return {
     active: grantView(active, now),
     grants: grants.docs.map((g) => grantView(g, now)),
+    grantsMeta: { page: grants.page, limit: grants.limit, total: grants.total, pages: grants.pages },
     sessions: await impersonationViews(sessions.docs, now),
     maxHours: env.support.consentMaxHours,
   };

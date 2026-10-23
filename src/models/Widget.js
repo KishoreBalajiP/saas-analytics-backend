@@ -33,7 +33,7 @@ import { tenantScope, softDelete, paginate, optimisticConcurrency, audit } from 
 import { dependencyHealth } from './plugins/dependencyHealth.js';
 
 export const MODEL_NAME = 'Widget';
-export const WIDGET_TYPES = Object.freeze(['kpi', 'table', 'bar', 'line', 'area', 'pie']);
+export const WIDGET_TYPES = Object.freeze(['kpi', 'table', 'bar', 'line', 'area', 'pie', 'doughnut', 'scatter']);
 
 /** Whitelist of query keys a widget may carry (safe query contract). */
 export const QUERY_FIELDS = Object.freeze([

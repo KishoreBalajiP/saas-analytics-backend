@@ -42,9 +42,11 @@ export const TRANSACTION_STATUSES = Object.freeze([
   'pending', 'authorized', 'captured', 'failed', 'refunded',
   // billing: an abandoned checkout aged out by reconciliation.
   'expired',
+  // billing: explicitly abandoned by the workspace after provider check.
+  'cancelled',
 ]);
 
-export const TERMINAL_TRANSACTION_STATUSES = Object.freeze(['captured', 'failed', 'refunded', 'expired']);
+export const TERMINAL_TRANSACTION_STATUSES = Object.freeze(['captured', 'failed', 'refunded', 'expired', 'cancelled']);
 
 /** billing: statuses a verified capture may still move from. */
 export const CAPTURABLE_STATUSES = Object.freeze(['pending', 'authorized', 'failed', 'expired']);
@@ -74,6 +76,7 @@ const paymentTransactionSchema = new mongoose.Schema(
     termMonths: { type: Number, default: 1, min: 1 },
     authorizedAt: { type: Date, default: null },
     expiredAt: { type: Date, default: null },
+    cancelledAt: { type: Date, default: null },
     clientVerifiedAt: { type: Date, default: null },
     appliedAt: { type: Date, default: null },
     applyingUntil: { type: Date, default: null },

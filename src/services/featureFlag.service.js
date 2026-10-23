@@ -633,6 +633,24 @@ export const resolveForTenant = async (tenantId) => {
   return out;
 };
 
+/**
+ * Workspace settings view: expose the server's evaluated value and the
+ * reason without exposing rollout allow-lists or other platform details.
+ */
+export async function explainForTenant(tenantId) {
+  const flags = await featureFlagRepository.findAll();
+  return flags.map((flag) => {
+    const outcome = explainFlag(flag, tenantId);
+    return {
+      key: flag.key,
+      name: flag.name,
+      description: flag.description ?? '',
+      value: outcome.value,
+      reason: outcome.reason,
+    };
+  });
+}
+
 /** Whether one flag is on for a tenant (missing / disabled -> false). */
 export async function isEnabled(key, { tenantId } = {}) {
   const flags = await resolveForTenant(tenantId);
@@ -658,6 +676,7 @@ export default {
   resolveForTenant,
   isEnabled,
   evaluateFlag,
+  explainForTenant,
   explainFlag,
   _meta: { cachedReads: true, cacheKeyPattern: 'feature-flag:enabled' },
 };

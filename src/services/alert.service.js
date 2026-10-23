@@ -59,6 +59,7 @@
  */
 
 // rls: background runs query as their owner.
+import * as metricDefinitionService from './metricDefinition.service.js';
 import dataAccess from './dataAccess.service.js';
 import ApiError from '../utils/ApiError.js';
 import entitlementService from './entitlement.service.js';
@@ -442,6 +443,14 @@ export async function listRules({ tenantId, page = 1, limit = 20, enabled } = {}
   return alertRepository.listRules({ tenantId, filter, page, limit });
 }
 
+export const ALERT_REPEAT_MODES = ['once_per_incident', 'after_cooldown'];
+function validateRepeatMode(mode) {
+  if (!ALERT_REPEAT_MODES.includes(mode)) {
+    throw ApiError.badRequest('Invalid repeatMode', [{ field: 'repeatMode', message: `must be one of ${ALERT_REPEAT_MODES.join(', ')}` }]);
+  }
+  return mode;
+}
+
 /** Create an alert rule. */
 export async function createRule({
   tenantId,
@@ -459,6 +468,7 @@ export async function createRule({
   thresholdHigh = null,
   schedule = null,
   cooldownMinutes = 60,
+  repeatMode = 'once_per_incident',
   notification = null,
   enabled = true,
 } = {}) {
@@ -468,6 +478,7 @@ export async function createRule({
     throw ApiError.badRequest('alert threshold is required and must be a number');
   }
   if (!ALERT_SOURCES.includes(source)) throw ApiError.badRequest('invalid alert source');
+  const resolvedRepeatMode = validateRepeatMode(repeatMode ?? 'once_per_incident');
 
   // Validate the definition BEFORE consuming quota, so a rejected rule never
   // uses up an alert slot.
@@ -477,6 +488,7 @@ export async function createRule({
   } else {
     if (!query || !query.datasetId) throw ApiError.badRequest('query source requires query.datasetId');
     resolvedQuery = sanitizeAlertQuery(query);
+    await metricDefinitionService.assertMetricRefsActive({ tenantId, query: resolvedQuery });
   }
   const high = validateBetween(condition, threshold, thresholdHigh);
   const grouping = validateGroupEvaluation(groupEvaluation ?? 'total');
@@ -517,6 +529,7 @@ export async function createRule({
     thresholdHigh: high,
     schedule: { cron: scheduleCron, timezone: scheduleZone },
     cooldownMinutes: Math.max(0, Number(cooldownMinutes) || 0),
+    repeatMode: resolvedRepeatMode,
     notification: notificationObj,
     nextEvaluationAt: clock.now(),
     createdBy: actorId,
@@ -570,6 +583,7 @@ export async function updateRule({ tenantId, alertId, actorId = null, patch = {}
     const high = patch.thresholdHigh !== undefined ? patch.thresholdHigh : existing.thresholdHigh;
     updates.thresholdHigh = validateBetween(condition, updates.threshold ?? existing.threshold, high);
   }
+  if (patch.repeatMode !== undefined) updates.repeatMode = validateRepeatMode(patch.repeatMode);
   if (patch.cooldownMinutes !== undefined) {
     updates.cooldownMinutes = Math.max(0, Number(patch.cooldownMinutes) || 0);
   }
@@ -598,6 +612,7 @@ export async function updateRule({ tenantId, alertId, actorId = null, patch = {}
   if (patch.query !== undefined) {
     if (!patch.query || !patch.query.datasetId) throw ApiError.badRequest('query source requires query.datasetId');
     updates.query = sanitizeAlertQuery(patch.query);
+    await metricDefinitionService.assertMetricRefsActive({ tenantId, query: updates.query });
   }
   if (patch.notification !== undefined) {
     updates.notification = {
@@ -732,6 +747,24 @@ export async function evaluate({ tenantId, alertId, triggeredBy = 'manual', runB
     const outcome = noData ? 'no_data' : 'not_met';
     await alertRepository.markEvaluated(alert._id, { lastEvaluatedAt: now, nextEvaluationAt, lastEvaluation: record(outcome) });
     return { triggered: false, suppressed: false, value, conditionMet: false, noData, outcome, event: null, ...groups };
+  }
+
+  // Dedupe: a rule that was already firing (last outcome triggered or
+  // suppressed) with the same value is unchanged, so it does not notify
+  // again even after the cooldown elapsed; it re-arms once the condition
+  // clears (not_met / no_data) or the value changes.
+  const prev = alert.lastEvaluation;
+  const cooldownMs = Math.max(0, Number(alert.cooldownMinutes) || 0) * 60000;
+  // Within the cooldown the cooldown itself is the (reported) reason.
+  const cooldownElapsed = !alert.lastTriggeredAt || new Date(alert.lastTriggeredAt).getTime() <= now.getTime() - cooldownMs;
+  const repeatAfterCooldown = alert.repeatMode === 'after_cooldown';
+  if (!repeatAfterCooldown && cooldownMs > 0 && cooldownElapsed && prev && (prev.outcome === 'triggered' || prev.outcome === 'suppressed') && prev.value === value) {
+    await alertRepository.markEvaluated(alert._id, { lastEvaluatedAt: now, nextEvaluationAt, lastEvaluation: record('suppressed') });
+    const event = await alertRepository.createEvent(eventData(
+      'suppressed',
+      `Alert "${alert.name}" still firing with an unchanged value; not notifying again: ${describe()}`,
+    ));
+    return { triggered: false, suppressed: true, value, conditionMet: true, noData: false, outcome: 'suppressed', event, ...groups };
   }
 
   // Claim the trigger first (atomic, cooldown-aware) so a concurrent

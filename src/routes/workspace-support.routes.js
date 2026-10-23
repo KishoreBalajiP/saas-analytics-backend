@@ -37,6 +37,7 @@ router.get(
   authenticate,
   resolveTenant,
   permission('settings', 'view'),
+  validate(supportAccessValidator.workspaceSchema),
   supportAccessController.getWorkspaceSupportAccess,
 );
 router.get(

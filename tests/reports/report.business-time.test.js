@@ -294,3 +294,19 @@ test('alert schedules follow the workspace zone and are re-projected when it cha
   const moved = await alertService.getById({ tenantId, alertId: String(alert._id) });
   assert.equal(new Date(moved.nextEvaluationAt).toISOString(), '2026-03-02T09:00:00.000Z');
 });
+
+test('a scheduled run re-checks at run time that the report owner is still an active member', async () => {
+  const owner = await factories.user.create({ tenantId, status: 'active' });
+  const report = await reportService.create({ tenantId, actorId: String(owner._id), name: 'owned', source: 'query', query: { datasetId } });
+  const runOnce = async () => {
+    const { runId } = await reportService.run({ tenantId, reportId: String(report._id), triggeredBy: 'schedule' });
+    await reportService.processRun({ tenantId, reportId: String(report._id), runId, triggeredBy: 'schedule' });
+    return (await reportService.getById({ tenantId, reportId: String(report._id) })).runs.find((r) => String(r._id) === runId);
+  };
+  assert.equal((await runOnce()).status, 'ready');
+  const { User } = await import('../../src/models/User.js');
+  await User.updateOne({ _id: owner._id }, { $set: { status: 'disabled' } });
+  const blocked = await runOnce();
+  assert.equal(blocked.status, 'failed');
+  assert.match(blocked.error, /owner is no longer an active member/);
+});

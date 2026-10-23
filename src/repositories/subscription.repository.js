@@ -115,7 +115,7 @@ export const listHistory = async (tenantId, { page = 1, limit = 20 } = {}) => {
   const filter = { tenantId: safeId(tenantId) };
   const total = await SubscriptionHistory.countDocuments(filter);
   const docs = await SubscriptionHistory.find(filter)
-    .sort({ occurredAt: -1 })
+    .sort({ occurredAt: -1, _id: -1 })
     .skip((page - 1) * limit)
     .limit(limit)
     .lean();

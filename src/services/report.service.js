@@ -42,6 +42,7 @@
  */
 
 // rls: background runs query as their owner.
+import * as metricDefinitionService from './metricDefinition.service.js';
 import dataAccess from './dataAccess.service.js';
 import mongoose from 'mongoose';
 import ApiError from '../utils/ApiError.js';
@@ -347,6 +348,7 @@ export async function create({
   } else {
     if (!query || !query.datasetId) throw ApiError.badRequest('query source requires query.datasetId');
     resolvedQuery = sanitizeReportQuery(query);
+    await metricDefinitionService.assertMetricRefsActive({ tenantId, query: resolvedQuery });
   }
 
   const scheduleObj = schedule ? sanitizeSchedule(schedule, format) : { enabled: false, format, cron: DEFAULT_REPORT_CRON, timezone: null, recipients: [] };
@@ -419,6 +421,7 @@ export async function update({ tenantId, reportId, actorId = null, patch = {} } 
   if (patch.query !== undefined) {
     if (!patch.query || !patch.query.datasetId) throw ApiError.badRequest('query source requires query.datasetId');
     updates.query = sanitizeReportQuery(patch.query);
+    await metricDefinitionService.assertMetricRefsActive({ tenantId, query: updates.query });
   }
   if (patch.format !== undefined) {
     if (!REPORT_FORMATS.includes(patch.format)) throw ApiError.badRequest('invalid report format');
@@ -526,6 +529,21 @@ export async function processRun({ tenantId, reportId, runId, format, filters, t
         status: 'failed', finishedAt: new Date(), error: 'Report not found',
       });
       return;
+    }
+    // Run-time permission check: a run without a requester (scheduled) acts
+    // as the report owner, who must still be an active workspace member.
+    const scheduled = ((report.runs || []).find((r) => String(r._id) === String(runId))?.triggeredBy ?? triggeredBy) === 'schedule';
+    // Reports without a recorded user owner (system-created) skip this check.
+    const ownerId = report.ownerId ?? report.createdBy ?? null;
+    if (scheduled && !runBy && ownerId && mongoose.isValidObjectId(String(ownerId))) {
+      const owner = await User.findOne({ _id: ownerId, tenantId: String(tenantId), status: 'active' }).select('_id').lean();
+      if (!owner) {
+        await reportRepository.completeRun(reportId, runId, {
+          status: 'failed', finishedAt: new Date(),
+          error: 'Report owner is no longer an active member of this workspace; reassign or recreate the report to resume scheduled runs',
+        });
+        return;
+      }
     }
     await reportRepository.completeRun(reportId, runId, { status: 'running', startedAt: new Date() });
     // The run record is the source of truth for its overrides (validated

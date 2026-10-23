@@ -82,7 +82,7 @@ export const listGrants = async ({ tenantId, status, kind, page = 1, limit = 20 
   const safeLimit = clampLimit(limit);
   const [docs, total] = await Promise.all([
     SupportAccessGrant.find(filter)
-      .sort({ createdAt: -1 })
+      .sort({ createdAt: -1, _id: -1 })
       .skip((safePage - 1) * safeLimit)
       .limit(safeLimit)
       .lean(),
@@ -141,7 +141,7 @@ export const listImpersonations = async ({ tenantId, adminId, status, activeAt, 
   const safeLimit = clampLimit(limit);
   const [docs, total] = await Promise.all([
     SupportImpersonation.find(filter)
-      .sort({ startedAt: -1 })
+      .sort({ startedAt: -1, _id: -1 })
       .skip((safePage - 1) * safeLimit)
       .limit(safeLimit)
       .lean(),
@@ -185,7 +185,7 @@ export const listSupportAuditRows = async ({ tenantId, page = 1, limit = 20 } = 
   const safeLimit = clampLimit(limit);
   const [docs, total] = await Promise.all([
     AuditLog.find(filter)
-      .sort({ occurredAt: -1 })
+      .sort({ occurredAt: -1, _id: -1 })
       .skip((safePage - 1) * safeLimit)
       .limit(safeLimit)
       .lean(),

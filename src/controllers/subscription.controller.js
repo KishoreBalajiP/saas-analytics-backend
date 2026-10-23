@@ -131,6 +131,12 @@ export const changePlan = asyncHandler(async (req, res) => {
     throw ApiError.badRequest(`Plan "${planId}" is not available`);
   }
   const current = await ensure(req, tenantId, 'Lazy provisioning on plan change');
+  await billingService.reconcileBeforePlanSwitch({
+    tenantId,
+    targetPlanCode: plan.code,
+    actor: actorOf(req),
+    by: attribution(req),
+  });
   // Workspace users may only move to the free plan (or withdraw a queued
   // move by choosing their current plan). Any paid plan must go through a
   // provider-confirmed checkout; writing it here would grant it unpaid.
@@ -188,6 +194,18 @@ export const getCheckoutStatus = asyncHandler(async (req, res) => {
   if (!tenantId) throw ApiError.badRequest('tenantId is required');
   const result = await billingService.getCheckoutStatus({ tenantId, orderId: req.validated?.params?.orderId });
   return ApiResponse.ok(res, result, 'Checkout status fetched');
+});
+
+export const cancelCheckout = asyncHandler(async (req, res) => {
+  const tenantId = resolveTenantId(req);
+  if (!tenantId) throw ApiError.badRequest('tenantId is required');
+  const result = await billingService.cancelCheckout({
+    tenantId,
+    orderId: req.validated?.params?.orderId,
+    actor: actorOf(req),
+    by: attribution(req),
+  });
+  return ApiResponse.ok(res, result, 'Checkout abandoned');
 });
 
 export const listTransactions = asyncHandler(async (req, res) => {
@@ -267,6 +285,7 @@ export default {
   createCheckoutSession,
   verifyCheckout,
   getCheckoutStatus,
+  cancelCheckout,
   listTransactions,
   listPurchasablePlans,
   reactivate,

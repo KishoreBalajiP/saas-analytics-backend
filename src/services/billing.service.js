@@ -53,6 +53,64 @@ function newReceipt(tenantId) {
   return `rzp_${String(tenantId).slice(-8)}_${Date.now().toString(36)}_${rand}`;
 }
 
+async function providerCaptureForOrder(provider, orderId, expected) {
+  const order = await provider.fetchOrder(orderId);
+  const paid = order?.status === 'paid' || (Number(order?.amount_paid ?? 0) > 0 && Number(order?.amount_due ?? 0) === 0);
+  if (!paid) return null;
+  const payments = await provider.fetchOrderPayments(orderId);
+  return payments.find((payment) =>
+    payment?.status === 'captured' &&
+    payment?.captured === true &&
+    Number(payment.amount) === Number(expected.amountMinor) &&
+    String(payment.currency ?? '').toUpperCase() === String(expected.currency).toUpperCase(),
+  ) ?? null;
+}
+
+/** Reconcile open orders before a workspace starts a different checkout. */
+async function reconcileOpenForSwitch({ tenantId, targetPlanCode, provider, actor, now = clock.now() }) {
+  const open = await paymentTransactionRepository.listOpenForTenant(tenantId);
+  let cancelled = 0;
+  for (const txn of open) {
+    if (txn.planId === targetPlanCode) continue;
+    const captured = await providerCaptureForOrder(provider, txn.providerOrderId, txn);
+    if (captured) {
+      await confirmAndApplyCapture({ transaction: txn, paymentId: captured.id, provider, actor, now });
+      throw ApiError.conflict('A previous payment completed. Refresh billing before choosing another plan.');
+    }
+    if (txn.status !== 'pending') {
+      throw ApiError.conflict('An existing payment is still being processed. Check its status before choosing another plan.');
+    }
+    const moved = await paymentTransactionRepository.transitionStatus(txn._id, {
+      to: 'cancelled',
+      fromStatuses: ['pending'],
+      patch: { cancelledAt: now, failureReason: 'superseded_by_new_checkout' },
+      by: actor?.id ?? null,
+    });
+    if (moved) {
+      cancelled += 1;
+      await auditEmit({
+        actor: actor ?? { type: 'system', id: 'billing' },
+        action: 'billing.checkout_cancelled',
+        module: 'billing.payments',
+        resource: { type: 'payment_transaction', id: String(txn._id) },
+        tenantId: String(tenantId),
+        after: { reason: 'superseded_by_new_checkout', replacedByPlan: targetPlanCode },
+      }).catch(() => {});
+    }
+  }
+  return cancelled;
+}
+
+export async function reconcileBeforePlanSwitch({ tenantId, targetPlanCode, actor = null, by = null } = {}) {
+  if ((await paymentTransactionRepository.listOpenForTenant(tenantId)).length === 0) return 0;
+  return reconcileOpenForSwitch({
+    tenantId,
+    targetPlanCode,
+    provider: requireProvider(),
+    actor: actor ?? { type: 'user', id: by ?? 'unknown' },
+  });
+}
+
 function publicCheckout(txn, provider, reused) {
   return {
     transactionId: String(txn._id),
@@ -91,6 +149,7 @@ export function shapeTransaction(txn) {
     failedAt: txn.failedAt ?? null,
     refundedAt: txn.refundedAt ?? null,
     expiredAt: txn.expiredAt ?? null,
+    cancelledAt: txn.cancelledAt ?? null,
   };
 }
 
@@ -139,6 +198,13 @@ export async function createCheckout({ tenantId, planCode, interval = 'month', a
   if (existing && (existing.interval ?? 'month') === price.interval) {
     return publicCheckout(existing, provider, true);
   }
+
+  await reconcileOpenForSwitch({
+    tenantId,
+    targetPlanCode: plan.code,
+    provider,
+    actor: actor ?? { type: 'user', id: by ?? 'unknown' },
+  });
 
   const receipt = newReceipt(tenantId);
   let order;
@@ -202,6 +268,41 @@ export async function createCheckout({ tenantId, planCode, interval = 'month', a
   return publicCheckout(txn, provider, false);
 }
 
+/** Abandon an unpaid workspace checkout after checking its provider state. */
+export async function cancelCheckout({ tenantId, orderId, actor = null, by = null, now = clock.now() } = {}) {
+  if (!tenantId || !orderId) throw ApiError.badRequest('tenantId and orderId are required');
+  const txn = await paymentTransactionRepository.findByOrderId(orderId);
+  if (!txn || String(txn.tenantId) !== String(tenantId)) {
+    throw ApiError.notFound('No matching checkout for this workspace');
+  }
+  if (txn.status === 'cancelled') return shapeTransaction(txn);
+  if (txn.status !== 'pending') {
+    throw ApiError.conflict('This checkout is already being processed and cannot be abandoned safely.');
+  }
+  const provider = requireProvider();
+  const captured = await providerCaptureForOrder(provider, txn.providerOrderId, txn);
+  if (captured) {
+    await confirmAndApplyCapture({ transaction: txn, paymentId: captured.id, provider, actor: actor ?? { type: 'user', id: by ?? 'unknown' }, now });
+    throw ApiError.conflict('This payment completed while it was being checked. Refresh billing to see the result.');
+  }
+  const moved = await paymentTransactionRepository.transitionStatus(txn._id, {
+    to: 'cancelled',
+    fromStatuses: ['pending'],
+    patch: { cancelledAt: now, failureReason: 'abandoned_by_workspace' },
+    by,
+  });
+  if (!moved) throw ApiError.conflict('Checkout changed while it was being abandoned; refresh billing.');
+  await auditEmit({
+    actor: actor ?? { type: 'user', id: by ?? 'unknown' },
+    action: 'billing.checkout_cancelled',
+    module: 'billing.payments',
+    resource: { type: 'payment_transaction', id: String(txn._id) },
+    tenantId: String(tenantId),
+    after: { reason: 'abandoned_by_workspace' },
+  }).catch(() => {});
+  return shapeTransaction(moved);
+}
+
 /**
  * Safe capture (findings bil.05 / bil.12): confirm with the provider that
  * `paymentId` is CAPTURED for this transaction's order with the stored
@@ -218,6 +319,7 @@ export async function confirmAndApplyCapture({ transaction, paymentId, provider 
   if (!txn) return { outcome: 'unknown_order', transaction: null };
   const who = actor ?? { type: 'system', id: 'billing' };
 
+  if (txn.status === 'cancelled') return { outcome: 'transaction_cancelled', transaction: txn };
   if (txn.status === 'refunded') return { outcome: 'transaction_refunded', transaction: txn };
   if (txn.status === 'captured') {
     await billingLifecycle.applyCapture({ transaction: txn, actor: who, now });
@@ -342,6 +444,7 @@ export async function getCheckoutStatus({ tenantId, orderId, transaction = null 
   else if (txn.status === 'captured') phase = 'applying';
   else if (txn.status === 'failed') phase = 'failed';
   else if (txn.status === 'expired') phase = 'expired';
+  else if (txn.status === 'cancelled') phase = 'cancelled';
   else if (txn.status === 'refunded') phase = 'refunded';
   const subscription = await subscriptionService.getForTenant(tenantId);
   return { phase, transaction: shapeTransaction(txn), subscription };
@@ -356,6 +459,8 @@ export async function listTransactionsForTenant(tenantId, { page = 1, limit = 20
 
 export default {
   createCheckout,
+  cancelCheckout,
+  reconcileBeforePlanSwitch,
   verifyCheckout,
   getCheckoutStatus,
   confirmAndApplyCapture,

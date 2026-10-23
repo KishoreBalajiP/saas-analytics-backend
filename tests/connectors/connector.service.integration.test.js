@@ -60,14 +60,21 @@ test('CRUD: create, list, get, update, validate, delete', async () => {
   // The encrypted envelope must never be returned to clients.
   assert.equal('config' in created, false);
 
-  const listed = await connectorService.listConnectorRecords({ tenantId: TENANT_A });
+  const listed = await connectorService.listConnectorRecords({
+    tenantId: TENANT_A,
+  });
   assert.equal(listed.total, 1);
 
   // Tenant isolation: tenant B sees nothing.
-  const other = await connectorService.listConnectorRecords({ tenantId: TENANT_B });
+  const other = await connectorService.listConnectorRecords({
+    tenantId: TENANT_B,
+  });
   assert.equal(other.total, 0);
 
-  const got = await connectorService.getConnectorRecord({ tenantId: TENANT_A, connectorId: String(created._id) });
+  const got = await connectorService.getConnectorRecord({
+    tenantId: TENANT_A,
+    connectorId: String(created._id),
+  });
   assert.equal(got.name, 'Orders CSV');
 
   const updated = await connectorService.updateConnectorRecord({
@@ -79,21 +86,42 @@ test('CRUD: create, list, get, update, validate, delete', async () => {
   assert.equal(updated.name, 'Orders v2');
   assert.equal(updated.configSummary.delimiter, ';');
 
-  const verdict = await connectorService.validateConnectorRecord({ tenantId: TENANT_A, connectorId: String(created._id) });
+  const verdict = await connectorService.validateConnectorRecord({
+    tenantId: TENANT_A,
+    connectorId: String(created._id),
+  });
   assert.equal(verdict.valid, true);
 
-  await connectorService.deleteConnectorRecord({ tenantId: TENANT_A, connectorId: String(created._id), actorId: 'u1' });
-  const after = await connectorService.listConnectorRecords({ tenantId: TENANT_A });
+  await connectorService.deleteConnectorRecord({
+    tenantId: TENANT_A,
+    connectorId: String(created._id),
+    actorId: 'u1',
+  });
+  const after = await connectorService.listConnectorRecords({
+    tenantId: TENANT_A,
+  });
   assert.equal(after.total, 0);
 });
 
 test('create rejects invalid configs and unknown types', async () => {
   await assert.rejects(
-    () => connectorService.createConnectorRecord({ tenantId: TENANT_A, type: 'csv', name: 'x', config: { delimiter: '::' } }),
+    () =>
+      connectorService.createConnectorRecord({
+        tenantId: TENANT_A,
+        type: 'csv',
+        name: 'x',
+        config: { delimiter: '::' },
+      }),
     (err) => err.code === 'CONFIG_INVALID',
   );
   await assert.rejects(
-    () => connectorService.createConnectorRecord({ tenantId: TENANT_A, type: 'postgres', name: 'x', config: {} }),
+    () =>
+      connectorService.createConnectorRecord({
+        tenantId: TENANT_A,
+        type: 'postgres',
+        name: 'x',
+        config: {},
+      }),
     (err) => err.code === 'CONFIG_INVALID',
   );
 });
@@ -105,11 +133,16 @@ test('config is encrypted at rest (raw envelope is not JSON config)', async () =
     name: 'Inbound',
     config: { signingSecret: SECRET, requireTimestamp: true },
   });
-  const raw = await connectorRepository.findById(String(created._id), { tenantId: TENANT_A });
+  const raw = await connectorRepository.findById(String(created._id), {
+    tenantId: TENANT_A,
+  });
   assert.equal(typeof raw.config, 'string');
   assert.ok(raw.config.startsWith('enc:v1:'), 'config should be an encrypted envelope');
   // Decrypted config matches the original secret.
-  const get = await connectorService.getConnectorRecord({ tenantId: TENANT_A, connectorId: String(created._id) });
+  const get = await connectorService.getConnectorRecord({
+    tenantId: TENANT_A,
+    connectorId: String(created._id),
+  });
   assert.equal(get.configSummary.signingSecretConfigured, true);
   assert.equal(get.configSummary.requireTimestamp, true);
 });
@@ -131,15 +164,25 @@ test('webhook: valid HMAC enqueues + persists rows; bad signature fails closed',
   // Register a capture consumer on the module queue handle.
   const { connectorQueue } = await import('../../src/queues/connector.queue.js');
   const q = connectorQueue.getQueue();
-  const unregister = q.consume((job) => { captured.push(job); });
+  const unregister = q.consume((job) => {
+    captured.push(job);
+  });
 
   const body = Buffer.from(JSON.stringify({ events: [{ id: 'evt_1', amount: 1200 }] }));
   const timestamp = Math.floor(Date.now() / 1000);
-  const sig = computeTimestampedSignature({ timestamp, rawBody: body, secret: SECRET });
+  const sig = computeTimestampedSignature({
+    timestamp,
+    rawBody: body,
+    secret: SECRET,
+  });
   const result = await connectorService.handleWebhook({
     webhookToken: created.webhookToken,
     rawBody: body,
-    headers: { 'content-type': 'application/json', 'x-saas-signature': sig, 'x-saas-timestamp': String(timestamp) },
+    headers: {
+      'content-type': 'application/json',
+      'x-saas-signature': sig,
+      'x-saas-timestamp': String(timestamp),
+    },
   });
   assert.equal(result.accepted, true);
   assert.equal(result.received, 1);
@@ -155,12 +198,18 @@ test('webhook: valid HMAC enqueues + persists rows; bad signature fails closed',
   assert.equal(sync.processed, 1);
   assert.equal(sync.upserted, 1);
 
-  const rows = await connectorService.listConnectorRows({ tenantId: WEBHOOK_TENANT, connectorId: String(created._id) });
+  const rows = await connectorService.listConnectorRows({
+    tenantId: WEBHOOK_TENANT,
+    connectorId: String(created._id),
+  });
   assert.equal(rows.total, 1);
   assert.deepEqual(rows.docs[0].data, { id: 'evt_1', amount: 1200 });
 
   // The webhook ingest is recorded as a sync run.
-  const runs = await connectorService.listSyncRuns({ tenantId: WEBHOOK_TENANT, connectorId: String(created._id) });
+  const runs = await connectorService.listSyncRuns({
+    tenantId: WEBHOOK_TENANT,
+    connectorId: String(created._id),
+  });
   assert.equal(runs.total, 1);
   assert.equal(runs.docs[0].trigger, 'webhook');
   assert.equal(runs.docs[0].status, 'succeeded');
@@ -169,15 +218,16 @@ test('webhook: valid HMAC enqueues + persists rows; bad signature fails closed',
   // Bad signature -> 401-shaped error, nothing enqueued.
   const capturedBefore = captured.length;
   await assert.rejects(
-    () => connectorService.handleWebhook({
-      webhookToken: created.webhookToken,
-      rawBody: body,
-      headers: {
-        'content-type': 'application/json',
-        'x-saas-signature': 'v2=0000000000000000000000000000000000000000000000000000000000000000',
-        'x-saas-timestamp': String(Math.floor(Date.now() / 1000)),
-      },
-    }),
+    () =>
+      connectorService.handleWebhook({
+        webhookToken: created.webhookToken,
+        rawBody: body,
+        headers: {
+          'content-type': 'application/json',
+          'x-saas-signature': 'v2=0000000000000000000000000000000000000000000000000000000000000000',
+          'x-saas-timestamp': String(Math.floor(Date.now() / 1000)),
+        },
+      }),
     WebhookSignatureError,
   );
   assert.equal(captured.length, capturedBefore, 'invalid signature must not enqueue');
@@ -186,7 +236,12 @@ test('webhook: valid HMAC enqueues + persists rows; bad signature fails closed',
 test('webhook: unknown token fails closed like a bad signature', async () => {
   const body = Buffer.from('{}');
   await assert.rejects(
-    () => connectorService.handleWebhook({ webhookToken: 'nope', rawBody: body, headers: { 'content-type': 'application/json' } }),
+    () =>
+      connectorService.handleWebhook({
+        webhookToken: 'nope',
+        rawBody: body,
+        headers: { 'content-type': 'application/json' },
+      }),
     WebhookSignatureError,
   );
 });
@@ -203,13 +258,18 @@ test('csv: enqueued sync streams, maps and persists rows idempotently', async ()
     type: 'csv',
     name: 'Customers',
     config: {},
-    fieldMapping: { customerId: 'id', name: { source: 'name', type: 'string' } },
+    fieldMapping: {
+      customerId: 'id',
+      name: { source: 'name', type: 'string' },
+    },
   });
 
   // Capture the enqueued job instead of letting a worker run it.
   const captured = [];
   const { connectorQueue } = await import('../../src/queues/connector.queue.js');
-  connectorQueue.getQueue().consume((job) => { captured.push(job); });
+  connectorQueue.getQueue().consume((job) => {
+    captured.push(job);
+  });
 
   const csv = Buffer.from('id,name\n1,Alice\n2,Bob\n');
   const enqueued = await connectorService.syncCsvUpload({
@@ -225,12 +285,13 @@ test('csv: enqueued sync streams, maps and persists rows idempotently', async ()
   // A second sync while the first holds the slot is refused (409), not a
   // misleading 202.
   await assert.rejects(
-    () => connectorService.syncCsvUpload({
-      tenantId: CSV_TENANT,
-      connectorId: String(created._id),
-      buffer: csv,
-      filename: 'customers.csv',
-    }),
+    () =>
+      connectorService.syncCsvUpload({
+        tenantId: CSV_TENANT,
+        connectorId: String(created._id),
+        buffer: csv,
+        filename: 'customers.csv',
+      }),
     (err) => err.statusCode === 409 && err.code === 'SYNC_IN_PROGRESS',
   );
   const queuedConnector = await connectorRepository.findById(String(created._id), { tenantId: CSV_TENANT });
@@ -255,7 +316,10 @@ test('csv: enqueued sync streams, maps and persists rows idempotently', async ()
   assert.equal(sync.processed, 2);
   assert.equal(sync.upserted, 2);
 
-  const rows = await connectorService.listConnectorRows({ tenantId: CSV_TENANT, connectorId: String(created._id) });
+  const rows = await connectorService.listConnectorRows({
+    tenantId: CSV_TENANT,
+    connectorId: String(created._id),
+  });
   assert.equal(rows.total, 2);
   const dataSet = rows.docs.map((r) => r.data).sort((a, b) => a.customerId.localeCompare(b.customerId));
   assert.deepEqual(dataSet, [
@@ -270,21 +334,32 @@ test('csv: enqueued sync streams, maps and persists rows idempotently', async ()
   assert.equal(redelivered.upserted, 0);
 
   // Replay: same source rows in a new message -> no new rows, only matches.
-  const replayJob = { id: 'replay-1', data: { ...job.data, syncRunId: undefined } };
+  const replayJob = {
+    id: 'replay-1',
+    data: { ...job.data, syncRunId: undefined },
+  };
   const replay = await connectorService.processSyncMessage(replayJob);
   assert.equal(replay.upserted, 0);
   assert.equal(replay.matched, 2);
-  const rowsAfter = await connectorService.listConnectorRows({ tenantId: CSV_TENANT, connectorId: String(created._id) });
+  const rowsAfter = await connectorService.listConnectorRows({
+    tenantId: CSV_TENANT,
+    connectorId: String(created._id),
+  });
   assert.equal(rowsAfter.total, 2);
 
   // lastSyncedAt updated after a successful sync; the slot is released.
-  const updated = await connectorRepository.findById(String(created._id), { tenantId: CSV_TENANT });
+  const updated = await connectorRepository.findById(String(created._id), {
+    tenantId: CSV_TENANT,
+  });
   assert.ok(updated.lastSyncedAt instanceof Date);
   assert.equal(updated.syncStatus, 'succeeded');
   assert.equal(updated.currentSyncRunId, null);
   assert.equal(updated.syncLeaseUntil, null);
 
-  const history = await connectorService.listSyncRuns({ tenantId: CSV_TENANT, connectorId: String(created._id) });
+  const history = await connectorService.listSyncRuns({
+    tenantId: CSV_TENANT,
+    connectorId: String(created._id),
+  });
   assert.equal(history.total, 2);
   const first = history.docs.find((r) => r.id === enqueued.syncRunId);
   assert.equal(first.status, 'succeeded');
@@ -293,4 +368,97 @@ test('csv: enqueued sync streams, maps and persists rows idempotently', async ()
   assert.equal(first.rows.received, 2);
   assert.equal(first.rows.upserted, 2);
   assert.ok(first.durationMs >= 0);
+});
+
+test('validate: mongodb test connection really connects and reports a safe failure', async () => {
+  const { MongoDBConnector } = await import('../../src/modules/connectors/mongodb/mongodb.connector.js');
+  const { ConnectorError } = await import('../../src/modules/connectors/shared/errors.js');
+  const tenant = await factories.tenant.create({ status: 'active' });
+  const tenantId = String(tenant._id);
+  const created = await connectorService.createConnectorRecord({
+    tenantId,
+    type: 'mongodb',
+    name: 'Ext Mongo',
+    config: {
+      uri: 'mongodb://user:s3cretpw@8.8.8.8:27017',
+      database: 'shop',
+      collection: 'orders',
+    },
+  });
+  const originalConnect = MongoDBConnector.prototype.connect;
+  let connectCalls = 0;
+  MongoDBConnector.prototype.connect = async function failingConnect() {
+    connectCalls += 1;
+    throw new ConnectorError('CONNECTOR_SOURCE_UNAVAILABLE', 'Could not connect to the MongoDB source.', { statusCode: 502 });
+  };
+  try {
+    const verdict = await connectorService.validateConnectorRecord({
+      tenantId,
+      connectorId: String(created._id),
+    });
+    assert.equal(connectCalls, 1);
+    assert.equal(verdict.valid, false);
+    assert.equal(verdict.errors[0].field, 'connection');
+    assert.doesNotMatch(JSON.stringify(verdict), /s3cretpw/);
+  } finally {
+    MongoDBConnector.prototype.connect = originalConnect;
+  }
+});
+
+test('mongodb configSummary.hasCredentials reflects URI user info', async () => {
+  const tenant = await factories.tenant.create({ status: 'active' });
+  const tenantId = String(tenant._id);
+  const created = await connectorService.createConnectorRecord({
+    tenantId,
+    type: 'mongodb',
+    name: 'No auth',
+    config: {
+      uri: 'mongodb://8.8.8.8:27017',
+      database: 'shop',
+      collection: 'orders',
+    },
+  });
+  assert.equal(created.configSummary.hasCredentials, false);
+  const updated = await connectorService.updateConnectorRecord({
+    tenantId,
+    connectorId: String(created._id),
+    patch: { config: { uri: 'mongodb://u:pw@8.8.8.8:27017' } },
+  });
+  assert.equal(updated.configSummary.hasCredentials, true);
+  assert.doesNotMatch(JSON.stringify(updated), /pw@/);
+});
+
+test('describeMongoError maps driver failures to safe recovery hints', async () => {
+  const { describeMongoError } = await import('../../src/modules/connectors/mongodb/mongodb.connector.js');
+  const auth = describeMongoError({
+    code: 18,
+    message: 'Authentication failed for user:s3cretpw@db.example.com',
+  });
+  assert.match(auth, /Authentication failed/);
+  assert.doesNotMatch(auth, /s3cretpw|example\.com/);
+  assert.match(describeMongoError({ message: 'connect ECONNREFUSED 1.2.3.4:27017' }), /unreachable/);
+  assert.match(describeMongoError({ name: 'MongoServerSelectionError', message: 'x' }), /Timed out/);
+  assert.match(describeMongoError({ message: 'getaddrinfo ENOTFOUND h' }), /could not be resolved/);
+});
+
+test('refreshConnectorSchema re-profiles and discover rejects non-mongodb connectors', async () => {
+  const tenant = await factories.tenant.create({ status: 'active' });
+  const tenantId = String(tenant._id);
+  const created = await connectorService.createConnectorRecord({
+    tenantId,
+    type: 'csv',
+    name: 'Csv',
+  });
+  const schema = await connectorService.refreshConnectorSchema({
+    tenantId,
+    connectorId: String(created._id),
+  });
+  assert.ok(schema);
+  await assert.rejects(
+    connectorService.discoverMongoSources({
+      tenantId,
+      connectorId: String(created._id),
+    }),
+    /only available for MongoDB/,
+  );
 });

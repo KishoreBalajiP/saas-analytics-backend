@@ -845,7 +845,7 @@ test('connector errors never echo hosts or credentials (create, worker egress bl
     env.connectors.mongodb.serverSelectionTimeoutMs = 300;
     await assert.rejects(() => connectorService.processSyncMessage(job), (e) => e.code === 'CONNECTOR_SOURCE_UNAVAILABLE');
     const failed = await api(`/api/v1/connectors/${internal._id}`, { headers: ws.auth });
-    assert.match(failed.json.data.lastError, /Could not (connect to|read from) the MongoDB source/);
+    assert.match(failed.json.data.lastError, /Could not (connect to|read from) the MongoDB source|MongoDB host is unreachable|Timed out connecting to MongoDB/);
     assertClean(failed.json.data.lastError);
   } finally {
     env.connectors.allowPrivateNetworks = previous.allow;

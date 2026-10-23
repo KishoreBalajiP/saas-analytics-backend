@@ -116,14 +116,21 @@ test('during the cooldown a firing rule is evaluated once per cron slot and re-t
   assert.equal(await events('suppressed'), 11);
   assert.equal(await notifications(), 1);
 
-  // 60 minutes after the first trigger the cooldown has elapsed.
-  const again = await scanAt(60);
+  // Cooldown elapsed but the firing value is unchanged: deduped, no re-notify.
+  const unchanged = await scanAt(60);
+  assert.equal(unchanged.triggered, 0, 'unchanged firing condition does not re-notify');
+  assert.equal(await notifications(), 1);
+
+  // The value changes (a new row): the rule notifies again.
+  await ConnectorRow.create({ tenantId, connectorId: datasetId, sourceRowId: 'r3', data: { amount: '30' } });
+  await cacheService.flushAll();
+  const again = await scanAt(65);
   assert.equal(again.triggered, 1);
   assert.equal(await events('triggered'), 2);
   assert.equal(await notifications(), 2);
   const stored = await alertService.getById({ tenantId, alertId: String(rule._id) });
-  assert.equal(iso(stored.lastTriggeredAt), iso(at(60)));
-  assert.equal(iso(stored.nextEvaluationAt), iso(at(65)));
+  assert.equal(iso(stored.lastTriggeredAt), iso(at(65)));
+  assert.equal(iso(stored.nextEvaluationAt), iso(at(70)));
 });
 
 test('concurrent evaluations of a firing rule trigger and notify exactly once', async () => {
@@ -168,4 +175,21 @@ test('not-met and failed evaluations advance the schedule and record the outcome
   assert.equal(stored.lastEvaluation.outcome, 'failed');
   assert.match(stored.lastEvaluation.error, /dataset/);
   assert.equal(iso(stored.nextEvaluationAt), iso(at(10)));
+});
+
+test("repeatMode 'after_cooldown' re-notifies each time the cooldown elapses while firing", async () => {
+  const rule = await firingRule({ name: 'Repeat', repeatMode: 'after_cooldown' });
+  assert.equal(rule.repeatMode, 'after_cooldown');
+  assert.equal((await scanAt(0)).triggered, 1);
+  assert.equal((await scanAt(30)).triggered, 0, 'within the cooldown: suppressed');
+  assert.equal((await scanAt(60)).triggered, 1, 'cooldown elapsed, unchanged value: notifies again');
+  assert.equal((await scanAt(120)).triggered, 1);
+  assert.equal(await notifications(), 3);
+
+  const def = await firingRule({ name: 'Default' });
+  assert.equal(def.repeatMode, 'once_per_incident');
+  await assert.rejects(
+    () => alertService.updateRule({ tenantId, alertId: String(def._id), patch: { repeatMode: 'sometimes' } }),
+    (e) => e.statusCode === 400,
+  );
 });

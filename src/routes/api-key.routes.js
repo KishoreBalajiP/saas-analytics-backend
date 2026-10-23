@@ -73,6 +73,8 @@ router.post(
   authenticate,
   resolveTenant,
   permission('api_keys', 'update'),
+  // Rotation mints a new working secret, so it needs the plan feature too.
+  requireFeature('api_access'),
   apiKeyController.rotateApiKey,
 );
 

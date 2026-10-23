@@ -145,7 +145,7 @@ export const list = async ({ tenantId, filter = {}, page = 1, limit = 20 } = {})
 
 /** Fields an MFA decision needs, including the `select: false` secrets. */
 const MFA_PROJECTION = '+mfaSecret +mfaRecoveryCodes +mfaLastTimeStep '
-  + 'tenantId email status passwordHash failedAttempts mfaEnabled mfaRecoveryCodesGeneratedAt mfaEnrollmentRequired';
+  + 'tenantId email status passwordHash failedAttempts mfaEnabled mfaRecoveryCodesGeneratedAt mfaEnrollmentExpiresAt mfaEnrollmentRequired';
 
 /**
  * MFA state of a user, including the encrypted secret and the recovery-code
@@ -159,11 +159,23 @@ export const findMfaState = (id, tenantId = null) =>
  * so a started enrolment can never silently replace an active secret.
  * Returns the updated user (without the secret) or null.
  */
-export const startMfaEnrollment = (id, mfaSecret) =>
+export const startMfaEnrollment = (id, mfaSecret, expiresAt) =>
   User.findOneAndUpdate(
     { _id: id, mfaEnabled: { $ne: true } },
-    { $set: { mfaSecret, mfaEnabled: false, mfaRecoveryCodes: [], mfaRecoveryCodesGeneratedAt: null, mfaLastTimeStep: null } },
+    { $set: { mfaSecret, mfaEnabled: false, mfaRecoveryCodes: [], mfaRecoveryCodesGeneratedAt: null, mfaLastTimeStep: null, mfaEnrollmentExpiresAt: expiresAt } },
     { new: true, runValidators: true, lean: true },
+  );
+
+/** Clear only the matching pending enrolment after its expiry. */
+export const clearExpiredMfaEnrollment = (id, mfaSecret, now = new Date()) =>
+  User.updateOne(
+    {
+      _id: id,
+      mfaEnabled: { $ne: true },
+      mfaSecret,
+      $or: [{ mfaEnrollmentExpiresAt: null }, { mfaEnrollmentExpiresAt: { $lte: now } }],
+    },
+    { $set: { mfaSecret: null, mfaEnrollmentExpiresAt: null, mfaLastTimeStep: null } },
   );
 
 /**
@@ -174,13 +186,14 @@ export const startMfaEnrollment = (id, mfaSecret) =>
  */
 export const enableMfa = (id, { mfaSecret, recoveryCodeHashes, timeStep = null }) =>
   User.findOneAndUpdate(
-    { _id: id, mfaEnabled: { $ne: true }, mfaSecret },
+    { _id: id, mfaEnabled: { $ne: true }, mfaSecret, mfaEnrollmentExpiresAt: { $gt: new Date() } },
     {
       $set: {
         mfaEnabled: true,
         mfaRecoveryCodes: recoveryCodeHashes,
         mfaRecoveryCodesGeneratedAt: new Date(),
         mfaLastTimeStep: timeStep,
+        mfaEnrollmentExpiresAt: null,
         mfaEnrollmentRequired: false,
       },
     },
@@ -191,7 +204,7 @@ export const enableMfa = (id, { mfaSecret, recoveryCodeHashes, timeStep = null }
 export const disableMfa = (id) =>
   User.findOneAndUpdate(
     { _id: id, mfaEnabled: true },
-    { $set: { mfaSecret: null, mfaEnabled: false, mfaRecoveryCodes: [], mfaRecoveryCodesGeneratedAt: null, mfaLastTimeStep: null } },
+    { $set: { mfaSecret: null, mfaEnabled: false, mfaRecoveryCodes: [], mfaRecoveryCodesGeneratedAt: null,     mfaLastTimeStep: null, mfaEnrollmentExpiresAt: null } },
     { new: true, runValidators: true, lean: true },
   );
 
@@ -247,6 +260,7 @@ export const resetMfa = (id, tenantId, { by } = {}) =>
         mfaRecoveryCodes: [],
         mfaRecoveryCodesGeneratedAt: null,
         mfaLastTimeStep: null,
+        mfaEnrollmentExpiresAt: null,
         mfaEnrollmentRequired: true,
         ...(by ? { updatedBy: by } : {}),
       },
@@ -282,6 +296,7 @@ export default {
   // mfa-tenant
   findMfaState,
   startMfaEnrollment,
+  clearExpiredMfaEnrollment,
   enableMfa,
   disableMfa,
   replaceRecoveryCodes,

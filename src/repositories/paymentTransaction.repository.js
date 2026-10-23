@@ -58,6 +58,14 @@ export const findPendingForTenantPlan = async ({ tenantId, planId, amountMinor, 
     .lean();
 };
 
+/** Open checkout attempts for one workspace, newest first. */
+export const listOpenForTenant = async (tenantId) => {
+  if (!tenantId) return [];
+  return PaymentTransaction.find({ tenantId: safeId(tenantId), status: { $in: [...OPEN_STATUSES] } })
+    .sort({ createdAt: -1, _id: -1 })
+    .lean();
+};
+
 export const listPending = async ({ limit = 50, olderThanMs = 0 } = {}) => {
   const filter = { status: 'pending' };
   if (olderThanMs > 0) {
@@ -188,6 +196,7 @@ export default {
   findByPaymentId,
   findById,
   findPendingForTenantPlan,
+  listOpenForTenant,
   listPending,
   listOpenDue,
   listCapturedUnapplied,

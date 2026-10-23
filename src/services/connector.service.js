@@ -103,8 +103,7 @@ const encryptionContext = (tenantId) => ({
   purpose: env.connectors.encryptionPurpose,
 });
 
-const encryptConfig = (config, tenantId) =>
-  encrypt(JSON.stringify(config ?? {}), encryptionContext(tenantId));
+const encryptConfig = (config, tenantId) => encrypt(JSON.stringify(config ?? {}), encryptionContext(tenantId));
 
 const decryptConfig = async (connector) => {
   if (!connector?.config) return {};
@@ -136,9 +135,11 @@ function redactConfig(type, config, connector = {}) {
   if (type === 'mongodb') {
     // Extract host:port from URI without credentials.
     let host = 'unknown';
+    let hasCredentials = false;
     try {
       const url = new URL(config?.uri ?? '');
       host = url.hostname + (url.port ? ':' + url.port : '');
+      hasCredentials = Boolean(url.username || url.password);
     } catch {
       // ignore
     }
@@ -147,7 +148,7 @@ function redactConfig(type, config, connector = {}) {
       database: config?.database,
       collection: config?.collection,
       filterConfigured: Boolean(config?.filter),
-      hasCredentials: true,
+      hasCredentials,
     };
   }
   return {
@@ -171,7 +172,9 @@ const WEBHOOK_TOKEN_RE = /^[A-Za-z0-9_-]{20,128}$/;
 const JSON_CONTENT_TYPE_RE = /^application\/(?:[\w.+-]+\+)?json\s*(?:;|$)/i;
 
 const notFound = (message = 'Connector not found') =>
-  new ConnectorError(CONNECTOR_ERROR_CODES.NOT_FOUND, message, { statusCode: 404 });
+  new ConnectorError(CONNECTOR_ERROR_CODES.NOT_FOUND, message, {
+    statusCode: 404,
+  });
 
 /**
  * True when the tenant exists and is `active` (unknown / malformed ids are
@@ -190,22 +193,16 @@ function isTenantActive(tenantId) {
  */
 async function assertTenantActive(tenantId) {
   if (!(await isTenantActive(tenantId))) {
-    throw new ConnectorError(
-      ERROR_CODES.TENANT_NOT_ACTIVE,
-      'This workspace is not active, so syncs and webhook ingestion are disabled.',
-      { statusCode: 403 },
-    );
+    throw new ConnectorError(ERROR_CODES.TENANT_NOT_ACTIVE, 'This workspace is not active, so syncs and webhook ingestion are disabled.', { statusCode: 403 });
   }
 }
 
 /** A paused connector refuses every ingestion path. */
 function assertConnectorActive(connector) {
   if (connector.status === 'paused') {
-    throw new ConnectorError(
-      CONNECTOR_ERROR_CODES.CONNECTOR_PAUSED,
-      'This connector is paused. Resume it to sync or receive webhook data.',
-      { statusCode: 409 },
-    );
+    throw new ConnectorError(CONNECTOR_ERROR_CODES.CONNECTOR_PAUSED, 'This connector is paused. Resume it to sync or receive webhook data.', {
+      statusCode: 409,
+    });
   }
 }
 
@@ -227,9 +224,7 @@ function assertFileMatchesConnector(connector, buffer, detectedType) {
   const kind = detectedType ?? sniffFileKind(buffer);
   if (kind !== connector.type) {
     const expected = connector.type === 'csv' ? '.csv (or .txt)' : '.xlsx';
-    const code = kind === 'csv' || kind === 'xlsx'
-      ? CONNECTOR_ERROR_CODES.FILE_TYPE_MISMATCH
-      : CONNECTOR_ERROR_CODES.UNSUPPORTED_FILE_TYPE;
+    const code = kind === 'csv' || kind === 'xlsx' ? CONNECTOR_ERROR_CODES.FILE_TYPE_MISMATCH : CONNECTOR_ERROR_CODES.UNSUPPORTED_FILE_TYPE;
     throw new ConnectorError(code, `This connector accepts ${expected} files only.`, { statusCode: 415 });
   }
 }
@@ -238,7 +233,9 @@ function assertFileMatchesConnector(connector, buffer, detectedType) {
 function toPreviewError(error, connectorType) {
   if (error instanceof ConnectorError) return error;
   const { message } = toPublicSyncError(error, connectorType);
-  return new ConnectorError(CONNECTOR_ERROR_CODES.FILE_PARSE_FAILED, message, { statusCode: 422 });
+  return new ConnectorError(CONNECTOR_ERROR_CODES.FILE_PARSE_FAILED, message, {
+    statusCode: 422,
+  });
 }
 
 async function audit({ tenantId, actorId, action, resourceId, after }) {
@@ -270,11 +267,7 @@ function hasLiveSync(connector, now = new Date()) {
 }
 
 function syncInProgressError() {
-  return new ConnectorError(
-    'SYNC_IN_PROGRESS',
-    'A sync is already queued or running for this connector; wait for it to finish',
-    { statusCode: 409 },
-  );
+  return new ConnectorError('SYNC_IN_PROGRESS', 'A sync is already queued or running for this connector; wait for it to finish', { statusCode: 409 });
 }
 
 /**
@@ -304,7 +297,10 @@ function assertNoLiveSync(connector) {
 export async function createConnectorRecord({ tenantId, actorId = null, type, name, config = {}, fieldMapping } = {}) {
   if (!CONNECTOR_TYPES.includes(type)) {
     throw new ConnectorConfigError(`Unsupported connector type "${type}"`, [
-      { field: 'type', message: `must be one of ${CONNECTOR_TYPES.join(', ')}` },
+      {
+        field: 'type',
+        message: `must be one of ${CONNECTOR_TYPES.join(', ')}`,
+      },
     ]);
   }
   const verdict = validateConfig(type, config);
@@ -316,18 +312,20 @@ export async function createConnectorRecord({ tenantId, actorId = null, type, na
   // Connector-count quota: consumed atomically after validation, given back
   // if the create fails.
   const isWebhook = type === 'webhook';
-  const saved = await usageService.withQuota({ tenantId, metric: 'connectors', by: actorId }, async () => connectorRepository.create({
-    tenantId,
-    type,
-    name,
-    status: 'active',
-    config: await encryptConfig(config, tenantId),
-    fieldMapping: fieldMapping ?? {},
-    webhookToken: isWebhook ? crypto.randomBytes(24).toString('base64url') : undefined,
-    webhookSignatureVersion: isWebhook ? CURRENT_SIGNATURE_VERSION : undefined,
-    webhookToleranceSeconds: isWebhook && config.toleranceSeconds !== undefined ? config.toleranceSeconds : undefined,
-    createdBy: actorId,
-  }));
+  const saved = await usageService.withQuota({ tenantId, metric: 'connectors', by: actorId }, async () =>
+    connectorRepository.create({
+      tenantId,
+      type,
+      name,
+      status: 'active',
+      config: await encryptConfig(config, tenantId),
+      fieldMapping: fieldMapping ?? {},
+      webhookToken: isWebhook ? crypto.randomBytes(24).toString('base64url') : undefined,
+      webhookSignatureVersion: isWebhook ? CURRENT_SIGNATURE_VERSION : undefined,
+      webhookToleranceSeconds: isWebhook && config.toleranceSeconds !== undefined ? config.toleranceSeconds : undefined,
+      createdBy: actorId,
+    }),
+  );
   return toPublic({ ...saved, _decryptedConfig: config });
 }
 
@@ -336,16 +334,24 @@ export async function listConnectorRecords({ tenantId, page = 1, limit = 20, typ
   const result = await connectorRepository.list({
     tenantId,
     // rls: `excludeIds` = datasets the caller may not see (dataAccess).
-    filter: { ...(type ? { type } : {}), ...(excludeIds.length ? { _id: { $nin: excludeIds } } : {}) },
+    filter: {
+      ...(type ? { type } : {}),
+      ...(excludeIds.length ? { _id: { $nin: excludeIds } } : {}),
+    },
     page,
     limit,
   });
-  return { ...result, docs: result.docs.map((c) => toPublic({ ...c, _decryptedConfig: {} })) };
+  return {
+    ...result,
+    docs: result.docs.map((c) => toPublic({ ...c, _decryptedConfig: {} })),
+  };
 }
 
 /** Single connector (public shape). */
 export async function getConnectorRecord({ tenantId, connectorId }) {
-  const connector = await connectorRepository.findById(connectorId, { tenantId });
+  const connector = await connectorRepository.findById(connectorId, {
+    tenantId,
+  });
   if (!connector) throw notFound();
   const config = await decryptConfig(connector);
   return toPublic({ ...connector, _decryptedConfig: config });
@@ -365,7 +371,9 @@ export async function getConnectorRecord({ tenantId, connectorId }) {
  * @returns {Promise<Object>} updated public connector.
  */
 export async function updateConnectorRecord({ tenantId, connectorId, actorId = null, patch = {} } = {}) {
-  const connector = await connectorRepository.findById(connectorId, { tenantId });
+  const connector = await connectorRepository.findById(connectorId, {
+    tenantId,
+  });
   if (!connector) throw notFound();
   if (patch.type && patch.type !== connector.type) {
     throw new ConnectorConfigError('Connector type is immutable');
@@ -403,18 +411,23 @@ export async function updateConnectorRecord({ tenantId, connectorId, actorId = n
     const current = connector.webhookSignatureVersion ?? SIGNATURE_VERSIONS.LEGACY;
     if (!Object.values(SIGNATURE_VERSIONS).includes(requested)) {
       throw new ConnectorConfigError('Invalid webhook signature version', [
-        { field: 'webhookSignatureVersion', message: `must be ${CURRENT_SIGNATURE_VERSION}` },
+        {
+          field: 'webhookSignatureVersion',
+          message: `must be ${CURRENT_SIGNATURE_VERSION}`,
+        },
       ]);
     }
     if (requested < current) {
       throw new ConnectorConfigError('Webhook signature version cannot be downgraded', [
-        { field: 'webhookSignatureVersion', message: 'timestamp-bound signatures cannot be turned off' },
+        {
+          field: 'webhookSignatureVersion',
+          message: 'timestamp-bound signatures cannot be turned off',
+        },
       ]);
     }
     updates.webhookSignatureVersion = requested;
-    if (requested >= SIGNATURE_VERSIONS.TIMESTAMPED && connector.webhookToleranceSeconds === undefined
-      && updates.webhookToleranceSeconds === undefined) {
-      const cfg = currentConfig ?? await decryptConfig(connector);
+    if (requested >= SIGNATURE_VERSIONS.TIMESTAMPED && connector.webhookToleranceSeconds === undefined && updates.webhookToleranceSeconds === undefined) {
+      const cfg = currentConfig ?? (await decryptConfig(connector));
       if (typeof cfg.toleranceSeconds === 'number') {
         updates.webhookToleranceSeconds = Math.min(cfg.toleranceSeconds, MAX_WEBHOOK_TOLERANCE_SECONDS);
       }
@@ -425,7 +438,7 @@ export async function updateConnectorRecord({ tenantId, connectorId, actorId = n
   const updated = await connectorRepository.update(connectorId, updates);
   if (!updated) throw notFound();
   webhookKeyCache.invalidate(connectorId);
-  const config = currentConfig ?? await decryptConfig(updated);
+  const config = currentConfig ?? (await decryptConfig(updated));
   return toPublic({ ...updated, _decryptedConfig: config });
 }
 
@@ -442,7 +455,9 @@ export async function updateConnectorRecord({ tenantId, connectorId, actorId = n
  * @returns {Promise<Object>} the removed connector plus a `cascade` summary.
  */
 export async function deleteConnectorRecord({ tenantId, connectorId, actorId = null } = {}) {
-  const connector = await connectorRepository.findById(connectorId, { tenantId });
+  const connector = await connectorRepository.findById(connectorId, {
+    tenantId,
+  });
   if (!connector) throw notFound();
 
   const removed = await connectorRepository.remove(connectorId, actorId);
@@ -457,13 +472,29 @@ export async function deleteConnectorRecord({ tenantId, connectorId, actorId = n
   // each of them when it was added).
   const rowCount = Number.isInteger(purged?.deletedCount) ? purged.deletedCount : counted;
   // Give back the capacity the connector and its rows were using.
-  await usageService.release({ tenantId, metric: 'connectors', requested: 1, by: actorId });
-  if (rowCount > 0) await usageService.release({ tenantId, metric: 'storedRows', requested: rowCount, by: actorId });
+  await usageService.release({
+    tenantId,
+    metric: 'connectors',
+    requested: 1,
+    by: actorId,
+  });
+  if (rowCount > 0)
+    await usageService.release({
+      tenantId,
+      metric: 'storedRows',
+      requested: rowCount,
+      by: actorId,
+    });
 
   // The connector is already gone, so a failure here must not fail the
   // request (a retry would 404 and never cascade): log it instead. The
   // dependants then fail at run time, as they did before the cascade.
-  let dependants = { widgets: 0, reports: 0, reportSchedulesStopped: 0, alerts: 0 };
+  let dependants = {
+    widgets: 0,
+    reports: 0,
+    reportSchedulesStopped: 0,
+    alerts: 0,
+  };
   try {
     dependants = await connectorDependantsRepository.markBrokenForConnector({
       tenantId,
@@ -473,11 +504,20 @@ export async function deleteConnectorRecord({ tenantId, connectorId, actorId = n
     // Report schedules the cascade switched off no longer hold a
     // scheduled-report slot.
     if (dependants.reportSchedulesStopped > 0) {
-      await usageService.release({ tenantId, metric: 'scheduledReports', requested: dependants.reportSchedulesStopped, by: actorId });
+      await usageService.release({
+        tenantId,
+        metric: 'scheduledReports',
+        requested: dependants.reportSchedulesStopped,
+        by: actorId,
+      });
     }
   } catch (error) {
     logger.error(
-      { err: { message: error?.message }, tenantId: String(tenantId), connectorId: String(connectorId) },
+      {
+        err: { message: error?.message },
+        tenantId: String(tenantId),
+        connectorId: String(connectorId),
+      },
       'connector delete: marking dependants broken failed',
     );
   }
@@ -496,17 +536,31 @@ export async function deleteConnectorRecord({ tenantId, connectorId, actorId = n
     reportsBroken: dependants.reports,
     alertsDisabled: dependants.alerts,
   };
-  await audit({ tenantId, actorId, action: 'connector.deleted', resourceId: connectorId, after: { type: connector.type, ...cascade } });
+  await audit({
+    tenantId,
+    actorId,
+    action: 'connector.deleted',
+    resourceId: connectorId,
+    after: { type: connector.type, ...cascade },
+  });
   return { ...removed, cascade };
 }
 
 /** List connector rows for a connector (tenant-scoped). */
 export async function listConnectorRows({ tenantId, connectorId, page = 1, limit = 50 } = {}) {
-  const connector = await connectorRepository.findById(connectorId, { tenantId });
+  const connector = await connectorRepository.findById(connectorId, {
+    tenantId,
+  });
   if (!connector) throw notFound();
   // rls: dataset grants and row rules of the current actor.
   const match = await dataAccess.rowListMatch({ tenantId, connectorId });
-  return connectorRowRepository.list({ connectorId, tenantId, page, limit, match });
+  return connectorRowRepository.list({
+    connectorId,
+    tenantId,
+    page,
+    limit,
+    match,
+  });
 }
 
 /** Registered connector types/capabilities for UI + discovery. */
@@ -523,12 +577,39 @@ export function listConnectorTypes() {
  * @returns {Promise<{ valid: boolean, errors: Array, connector: Object }>}
  */
 export async function validateConnectorRecord({ tenantId, connectorId } = {}) {
-  const connector = await connectorRepository.findById(connectorId, { tenantId });
+  const connector = await connectorRepository.findById(connectorId, {
+    tenantId,
+  });
   if (!connector) throw notFound();
   const config = await decryptConfig(connector);
-  const instance = createConnector(connector.type, { id: connectorId, config, tenantId });
-  const verdict = await instance.validate();
-  return { valid: verdict.valid, errors: verdict.errors ?? [], connector: toPublic({ ...connector, _decryptedConfig: config }) };
+  const instance = createConnector(connector.type, {
+    id: connectorId,
+    config,
+    tenantId,
+  });
+  let verdict = await instance.validate();
+  // "Test connection" must really reach the source for MongoDB: a well-formed
+  // config alone says nothing about host reachability or credentials.
+  if (verdict.valid && typeof instance.testConnection === 'function' && connector.type === 'mongodb') {
+    try {
+      verdict = await instance.testConnection();
+    } catch (error) {
+      verdict = {
+        valid: false,
+        errors: [
+          {
+            field: 'connection',
+            message: toPublicSyncError(error, connector.type).message,
+          },
+        ],
+      };
+    }
+  }
+  return {
+    valid: verdict.valid,
+    errors: verdict.errors ?? [],
+    connector: toPublic({ ...connector, _decryptedConfig: config }),
+  };
 }
 
 /* ---------------------------- files (CSV / XLSX) --------------------------- */
@@ -547,15 +628,24 @@ export async function validateConnectorRecord({ tenantId, connectorId } = {}) {
  */
 export async function previewFileUpload({ tenantId, connectorId, buffer, detectedType, limit = 10 } = {}) {
   if (!buffer || buffer.length === 0) throw new ConnectorValidationError('Preview requires an uploaded file');
-  const connector = await connectorRepository.findById(connectorId, { tenantId });
+  const connector = await connectorRepository.findById(connectorId, {
+    tenantId,
+  });
   if (!connector) throw notFound();
   assertFileMatchesConnector(connector, buffer, detectedType);
   const config = await decryptConfig(connector);
-  const instance = createConnector(connector.type, { id: connectorId, config, tenantId });
+  const instance = createConnector(connector.type, {
+    id: connectorId,
+    config,
+    tenantId,
+  });
   const verdict = await instance.validate();
   if (!verdict.valid) throw new ConnectorConfigError('Invalid connector configuration', verdict.errors);
   try {
-    return await instance.preview({ buffer, limit: Math.max(1, Math.min(Number(limit) || 10, 100)) });
+    return await instance.preview({
+      buffer,
+      limit: Math.max(1, Math.min(Number(limit) || 10, 100)),
+    });
   } catch (error) {
     throw toPreviewError(error, connector.type);
   }
@@ -583,14 +673,20 @@ export async function previewCsvUpload(input = {}) {
  */
 export async function syncFileUpload({ tenantId, connectorId, buffer, filename = null, detectedType, actorId = null } = {}) {
   if (!buffer || buffer.length === 0) throw new ConnectorValidationError('File sync requires an uploaded file');
-  const connector = await connectorRepository.findById(connectorId, { tenantId });
+  const connector = await connectorRepository.findById(connectorId, {
+    tenantId,
+  });
   if (!connector) throw notFound();
   await assertTenantActive(tenantId);
   assertConnectorActive(connector);
   assertFileMatchesConnector(connector, buffer, detectedType);
   assertNoLiveSync(connector);
   const config = await decryptConfig(connector);
-  const instance = createConnector(connector.type, { id: connectorId, config, tenantId });
+  const instance = createConnector(connector.type, {
+    id: connectorId,
+    config,
+    tenantId,
+  });
   const verdict = await instance.validate();
   if (!verdict.valid) throw new ConnectorConfigError('Invalid connector configuration', verdict.errors);
 
@@ -600,12 +696,14 @@ export async function syncFileUpload({ tenantId, connectorId, buffer, filename =
   // (usageService.createStoredRowsSink). Here only refuse a tenant that is
   // already over its hard limit (or write-blocked); a refresh at the limit
   // is allowed because it adds no rows.
-  await usageService.assertCapacity({ tenantId, metric: 'storedRows', requested: 0 });
+  await usageService.assertCapacity({
+    tenantId,
+    metric: 'storedRows',
+    requested: 0,
+  });
 
   const isXlsx = connector.type === 'xlsx';
-  const mimetype = isXlsx
-    ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-    : 'text/csv';
+  const mimetype = isXlsx ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' : 'text/csv';
 
   const run = await enqueueTrackedSync({
     connectorId,
@@ -618,10 +716,20 @@ export async function syncFileUpload({ tenantId, connectorId, buffer, filename =
       jobType: 'ingest',
       payload: { buffer: buffer.toString('base64'), filename, mimetype },
     },
-    options: { name: `${connector.type}-sync`, jobId: `${connector.type}-${connectorId}-${Date.now()}` },
+    options: {
+      name: `${connector.type}-sync`,
+      jobId: `${connector.type}-${connectorId}-${Date.now()}`,
+    },
   });
 
-  return { accepted: true, jobType: 'ingest', filename, alreadyQueued: false, syncRunId: run.id, status: run.status };
+  return {
+    accepted: true,
+    jobType: 'ingest',
+    filename,
+    alreadyQueued: false,
+    syncRunId: run.id,
+    status: run.status,
+  };
 }
 
 /** @deprecated CSV-specific alias of `syncFileUpload`. */
@@ -639,7 +747,9 @@ export async function syncCsvUpload(input = {}) {
  * @returns {Promise<{ accepted: boolean, jobType: string, alreadyQueued: boolean, syncRunId: string, status: string }>}
  */
 export async function syncMongoDB({ tenantId, connectorId, actorId = null } = {}) {
-  const connector = await connectorRepository.findById(connectorId, { tenantId });
+  const connector = await connectorRepository.findById(connectorId, {
+    tenantId,
+  });
   if (!connector) throw notFound();
   if (connector.type !== 'mongodb') throw new ConnectorValidationError('Not a mongodb connector');
   await assertTenantActive(tenantId);
@@ -649,24 +759,41 @@ export async function syncMongoDB({ tenantId, connectorId, actorId = null } = {}
   // Syncing an existing connector does not consume the `connectors` quota.
 
   const config = await decryptConfig(connector);
-  const instance = createConnector(connector.type, { id: connectorId, config, tenantId });
+  const instance = createConnector(connector.type, {
+    id: connectorId,
+    config,
+    tenantId,
+  });
   const verdict = await instance.validate();
   if (!verdict.valid) throw new ConnectorConfigError('Invalid connector configuration', verdict.errors);
 
   // storedRows is metered by the sync worker on the documents it really
   // adds (usageService.createStoredRowsSink); here only refuse a tenant that
   // is already over its hard limit or write-blocked.
-  await usageService.assertCapacity({ tenantId, metric: 'storedRows', requested: 0 });
+  await usageService.assertCapacity({
+    tenantId,
+    metric: 'storedRows',
+    requested: 0,
+  });
 
   const run = await enqueueTrackedSync({
     connectorId,
     actorId,
     tenantId,
     job: { connectorId, tenantId, jobType: 'ingest', payload: {} },
-    options: { name: 'mongodb-sync', jobId: `mongodb-${connectorId}-${Date.now()}` },
+    options: {
+      name: 'mongodb-sync',
+      jobId: `mongodb-${connectorId}-${Date.now()}`,
+    },
   });
 
-  return { accepted: true, jobType: 'ingest', alreadyQueued: false, syncRunId: run.id, status: run.status };
+  return {
+    accepted: true,
+    jobType: 'ingest',
+    alreadyQueued: false,
+    syncRunId: run.id,
+    status: run.status,
+  };
 }
 
 /* ------------------------------- Webhook --------------------------------- */
@@ -709,11 +836,9 @@ export async function handleWebhook({ webhookToken, rawBody, headers = {} } = {}
     throw new WebhookSignatureError('Invalid webhook signature');
   }
   if (!JSON_CONTENT_TYPE_RE.test(String(headers['content-type'] ?? ''))) {
-    throw new ConnectorError(
-      CONNECTOR_ERROR_CODES.WEBHOOK_UNSUPPORTED_MEDIA_TYPE,
-      'Webhook bodies must be JSON (Content-Type: application/json).',
-      { statusCode: 415 },
-    );
+    throw new ConnectorError(CONNECTOR_ERROR_CODES.WEBHOOK_UNSUPPORTED_MEDIA_TYPE, 'Webhook bodies must be JSON (Content-Type: application/json).', {
+      statusCode: 415,
+    });
   }
   if (!Buffer.isBuffer(rawBody) || rawBody.length === 0) {
     throw new ConnectorValidationError('Webhook body must be a non-empty JSON document');
@@ -739,8 +864,7 @@ export async function handleWebhook({ webhookToken, rawBody, headers = {} } = {}
   const precheck = precheckWebhookHeaders({
     headers,
     connectorVersion,
-    toleranceSeconds: mirroredTolerance
-      ?? (connectorVersion >= SIGNATURE_VERSIONS.TIMESTAMPED ? defaultTolerance : MAX_WEBHOOK_TOLERANCE_SECONDS),
+    toleranceSeconds: mirroredTolerance ?? (connectorVersion >= SIGNATURE_VERSIONS.TIMESTAMPED ? defaultTolerance : MAX_WEBHOOK_TOLERANCE_SECONDS),
     legacyEnabled: legacySignaturesEnabled,
     maxLegacyToleranceSeconds: MAX_WEBHOOK_TOLERANCE_SECONDS,
   });
@@ -753,7 +877,11 @@ export async function handleWebhook({ webhookToken, rawBody, headers = {} } = {}
     throw new WebhookSignatureError('Missing X-Saas-Timestamp header (unix seconds)', CONNECTOR_ERROR_CODES.WEBHOOK_TIMESTAMP_MISSING);
   }
   if (precheck.timestamp !== null) assertTimestampInWindow(precheck.timestamp, toleranceSeconds);
-  const signature = verifyPrechecked({ precheck, rawBody, secret: config.signingSecret });
+  const signature = verifyPrechecked({
+    precheck,
+    rawBody,
+    secret: config.signingSecret,
+  });
 
   const connectorId = String(connector._id);
   const fresh = await claimDelivery({
@@ -762,11 +890,9 @@ export async function handleWebhook({ webhookToken, rawBody, headers = {} } = {}
     ttlSeconds: toleranceSeconds + MAX_FUTURE_SKEW_SECONDS + 60,
   });
   if (!fresh) {
-    throw new ConnectorError(
-      CONNECTOR_ERROR_CODES.WEBHOOK_REPLAYED,
-      'This delivery was already received. Sign every delivery with a new timestamp.',
-      { statusCode: 409 },
-    );
+    throw new ConnectorError(CONNECTOR_ERROR_CODES.WEBHOOK_REPLAYED, 'This delivery was already received. Sign every delivery with a new timestamp.', {
+      statusCode: 409,
+    });
   }
 
   let reserved = 0;
@@ -781,17 +907,30 @@ export async function handleWebhook({ webhookToken, rawBody, headers = {} } = {}
     } catch {
       throw new ConnectorValidationError('Webhook body must be valid JSON');
     }
-    const instance = createConnector(connector.type, { id: connectorId, config, tenantId: connector.tenantId });
+    const instance = createConnector(connector.type, {
+      id: connectorId,
+      config,
+      tenantId: connector.tenantId,
+    });
     const records = await instance.ingest({ payload });
     if (records.length > maxRecords) {
-      throw new ConnectorError(
-        CONNECTOR_ERROR_CODES.WEBHOOK_TOO_MANY_RECORDS,
-        `A webhook delivery may carry at most ${maxRecords} records.`,
-        { statusCode: 413, details: [{ field: 'body', message: `at most ${maxRecords} records per delivery`, maxRecords }] },
-      );
+      throw new ConnectorError(CONNECTOR_ERROR_CODES.WEBHOOK_TOO_MANY_RECORDS, `A webhook delivery may carry at most ${maxRecords} records.`, {
+        statusCode: 413,
+        details: [
+          {
+            field: 'body',
+            message: `at most ${maxRecords} records per delivery`,
+            maxRecords,
+          },
+        ],
+      });
     }
     if (records.length === 0) {
-      return { accepted: true, received: 0, signatureVersion: precheck.version };
+      return {
+        accepted: true,
+        received: 0,
+        signatureVersion: precheck.version,
+      };
     }
 
     // Webhook rows count toward the storedRows quota like file syncs, through
@@ -812,25 +951,42 @@ export async function handleWebhook({ webhookToken, rawBody, headers = {} } = {}
     });
     reserved = records.length;
 
-    await connectorQueue.enqueue({
-      connectorId,
-      tenantId: connector.tenantId,
-      jobType: 'ingest',
-      payload: { records, reservedRows: reserved, reservationKey: jobId, source: 'webhook' },
-    }, { name: 'webhook-ingest', jobId });
+    await connectorQueue.enqueue(
+      {
+        connectorId,
+        tenantId: connector.tenantId,
+        jobType: 'ingest',
+        payload: {
+          records,
+          reservedRows: reserved,
+          reservationKey: jobId,
+          source: 'webhook',
+        },
+      },
+      { name: 'webhook-ingest', jobId },
+    );
 
-    return { accepted: true, received: records.length, signatureVersion: precheck.version };
+    return {
+      accepted: true,
+      received: records.length,
+      signatureVersion: precheck.version,
+    };
   } catch (error) {
     // A refusal for a retryable reason (quota, queue) must not make the
     // sender's retry look like a replay. Payload errors are deterministic
     // for this exact body, so those keep the claim.
-    const payloadError = error?.code === CONNECTOR_ERROR_CODES.PAYLOAD_INVALID
-      || error?.code === CONNECTOR_ERROR_CODES.WEBHOOK_TOO_MANY_RECORDS;
+    const payloadError = error?.code === CONNECTOR_ERROR_CODES.PAYLOAD_INVALID || error?.code === CONNECTOR_ERROR_CODES.WEBHOOK_TOO_MANY_RECORDS;
     if (!payloadError) await releaseDelivery({ connectorId, signature });
     if (reserved > 0) {
       // Settles the ledger entry too: if the queue did take the job after
       // all, its worker finds nothing to draw and meters the rows instead.
-      await usageService.cancelReservation({ tenantId: connector.tenantId, metric: 'storedRows', key: jobId }).catch(() => {});
+      await usageService
+        .cancelReservation({
+          tenantId: connector.tenantId,
+          metric: 'storedRows',
+          key: jobId,
+        })
+        .catch(() => {});
     }
     throw error;
   }
@@ -866,13 +1022,23 @@ async function enqueueTrackedSync({
   const syncRunId = syncRunRepository.newId();
 
   const claimed = await connectorRepository.markSyncQueued(connectorId, {
-    requestedAt, by: actorId, tenantId, leaseMs, syncRunId,
+    requestedAt,
+    by: actorId,
+    tenantId,
+    leaseMs,
+    syncRunId,
   });
   if (!claimed) throw syncInProgressError();
 
   try {
     // The previous holder lost its lease (crashed worker): close its run.
-    await closeOpenRuns({ tenantId, connectorId, exceptId: syncRunId, status: 'abandoned', now: requestedAt });
+    await closeOpenRuns({
+      tenantId,
+      connectorId,
+      exceptId: syncRunId,
+      status: 'abandoned',
+      now: requestedAt,
+    });
 
     await syncRunRepository.create({
       _id: syncRunId,
@@ -892,10 +1058,12 @@ async function enqueueTrackedSync({
     });
   } catch (error) {
     // Never leave the slot held by a run that was not recorded.
-    await connectorRepository.markSyncFailed(connectorId, {
-      requestedAt,
-      message: 'The sync could not be started; please retry shortly',
-    }).catch(() => {});
+    await connectorRepository
+      .markSyncFailed(connectorId, {
+        requestedAt,
+        message: 'The sync could not be started; please retry shortly',
+      })
+      .catch(() => {});
     throw error;
   }
 
@@ -905,12 +1073,16 @@ async function enqueueTrackedSync({
   } catch (error) {
     // Keep the machine code (QUEUE_TIMEOUT / QUEUE_UNAVAILABLE), never the
     // raw message: queue errors can name infrastructure hosts.
-    const { code } = sanitizeError(error, { fallbackCode: 'QUEUE_UNAVAILABLE' });
-    await syncRunRepository.finish(syncRunId, {
-      status: 'failed',
-      error: { code, message: QUEUE_FAILURE_MESSAGE },
-      retentionDays: syncRunRetentionDays(),
-    }).catch(() => {});
+    const { code } = sanitizeError(error, {
+      fallbackCode: 'QUEUE_UNAVAILABLE',
+    });
+    await syncRunRepository
+      .finish(syncRunId, {
+        status: 'failed',
+        error: { code, message: QUEUE_FAILURE_MESSAGE },
+        retentionDays: syncRunRetentionDays(),
+      })
+      .catch(() => {});
     await connectorRepository.markSyncFailed(connectorId, {
       requestedAt,
       message: QUEUE_FAILURE_MESSAGE,
@@ -925,15 +1097,17 @@ async function closeOpenRuns({ tenantId, connectorId, exceptId = null, status, n
   let closed = 0;
   for (const run of open) {
     if (exceptId && String(run._id) === String(exceptId)) continue;
-    const done = await syncRunRepository.finish(run._id, {
-      status,
-      finishedAt: now,
-      error: {
-        code: 'LEASE_EXPIRED',
-        message: reason ?? 'The worker running this sync stopped before it finished',
-      },
-      retentionDays: syncRunRetentionDays(),
-    }).catch(() => null);
+    const done = await syncRunRepository
+      .finish(run._id, {
+        status,
+        finishedAt: now,
+        error: {
+          code: 'LEASE_EXPIRED',
+          message: reason ?? 'The worker running this sync stopped before it finished',
+        },
+        retentionDays: syncRunRetentionDays(),
+      })
+      .catch(() => null);
     if (done) closed += 1;
   }
   return closed;
@@ -955,21 +1129,40 @@ export async function requeueRecoveredSync({ connector, recoveredFrom = null, re
     trigger: 'recovery',
     recoveryAttempt,
     recoveredFrom,
-    job: { connectorId, tenantId: connector.tenantId, jobType: 'ingest', payload: {} },
-    options: { name: `${connector.type}-sync`, jobId: `recovery-${connectorId}-${Date.now()}` },
+    job: {
+      connectorId,
+      tenantId: connector.tenantId,
+      jobType: 'ingest',
+      payload: {},
+    },
+    options: {
+      name: `${connector.type}-sync`,
+      jobId: `recovery-${connectorId}-${Date.now()}`,
+    },
   });
 }
 
 /** Sync-run history for one connector (tenant-scoped, paginated). */
 export async function listSyncRuns({ tenantId, connectorId, status, page = 1, limit = 20 } = {}) {
-  const connector = await connectorRepository.findById(connectorId, { tenantId });
+  const connector = await connectorRepository.findById(connectorId, {
+    tenantId,
+  });
   if (!connector) throw notFound();
   if (status !== undefined && !SYNC_RUN_STATUSES.includes(status)) {
     throw new ConnectorValidationError('Invalid sync run status filter', [
-      { field: 'status', message: `must be one of ${SYNC_RUN_STATUSES.join(', ')}` },
+      {
+        field: 'status',
+        message: `must be one of ${SYNC_RUN_STATUSES.join(', ')}`,
+      },
     ]);
   }
-  const result = await syncRunRepository.listForConnector({ tenantId, connectorId: String(connector._id), status, page, limit });
+  const result = await syncRunRepository.listForConnector({
+    tenantId,
+    connectorId: String(connector._id),
+    status,
+    page,
+    limit,
+  });
   return { ...result, docs: result.docs.map(toPublicRun) };
 }
 
@@ -1029,8 +1222,7 @@ const skipResult = (reason, code) => ({
  * the generic, retryable treatment and never has its message stored.
  */
 function isQuotaRefusal(error) {
-  return error instanceof ApiError
-    && (error.code === ERROR_CODES.QUOTA_EXCEEDED || error.code === ERROR_CODES.SUBSCRIPTION_WRITE_BLOCKED);
+  return error instanceof ApiError && (error.code === ERROR_CODES.QUOTA_EXCEEDED || error.code === ERROR_CODES.SUBSCRIPTION_WRITE_BLOCKED);
 }
 
 /**
@@ -1135,31 +1327,37 @@ export async function processSyncMessage(job = {}) {
   // replayed under a fresh run instead of being dropped.
   const replayable = !tracked && Array.isArray(payload.records);
   const isAbandoned = (candidate) => replayable && candidate?.status === 'abandoned';
-  const createRun = () => syncRunRepository.create({
-    ...(tracked ? { _id: syncRunId } : {}),
-    tenantId,
-    connectorId: String(connectorId),
-    trigger: trigger ?? (payload.source === 'webhook' || Array.isArray(payload.records) ? 'webhook' : 'manual'),
-    jobType,
-    status: 'queued',
-    jobId: job.id ? String(job.id) : null,
-    maxAttempts,
-    queuedAt: now,
-    filename: payload.filename ?? null,
-  });
-  const startRun = (id) => syncRunRepository.markRunning(id, {
-    attempt,
-    maxAttempts,
-    instanceId: getInstanceId(),
-    now,
-    leaseUntil: new Date(now.getTime() + leaseMs),
-  });
+  const createRun = () =>
+    syncRunRepository.create({
+      ...(tracked ? { _id: syncRunId } : {}),
+      tenantId,
+      connectorId: String(connectorId),
+      trigger: trigger ?? (payload.source === 'webhook' || Array.isArray(payload.records) ? 'webhook' : 'manual'),
+      jobType,
+      status: 'queued',
+      jobId: job.id ? String(job.id) : null,
+      maxAttempts,
+      queuedAt: now,
+      filename: payload.filename ?? null,
+    });
+  const startRun = (id) =>
+    syncRunRepository.markRunning(id, {
+      attempt,
+      maxAttempts,
+      instanceId: getInstanceId(),
+      now,
+      leaseUntil: new Date(now.getTime() + leaseMs),
+    });
 
   // Tracked messages carry their run id; untracked ones (webhook ingests)
   // find the run of an earlier attempt of the same queue job, if any.
   let run = tracked
     ? await syncRunRepository.findById(syncRunId, { tenantId })
-    : await syncRunRepository.findByJobId({ tenantId, connectorId, jobId: job.id });
+    : await syncRunRepository.findByJobId({
+        tenantId,
+        connectorId,
+        jobId: job.id,
+      });
   if (run && !['queued', 'running', 'retrying'].includes(run.status)) {
     if (!isAbandoned(run)) {
       logger.info({ connectorId, syncRunId: String(run._id), status: run.status }, 'sync message skipped: run already closed');
@@ -1171,11 +1369,16 @@ export async function processSyncMessage(job = {}) {
   if (!run) run = await createRun();
   let runId = String(run._id);
 
-  const connector = await connectorRepository.findById(connectorId, { tenantId });
+  const connector = await connectorRepository.findById(connectorId, {
+    tenantId,
+  });
   if (!connector) {
     await syncRunRepository.finish(runId, {
       status: 'cancelled',
-      error: { code: CONNECTOR_ERROR_CODES.NOT_FOUND, message: 'The connector no longer exists' },
+      error: {
+        code: CONNECTOR_ERROR_CODES.NOT_FOUND,
+        message: 'The connector no longer exists',
+      },
       retentionDays,
     });
     await storedRows.settle();
@@ -1196,18 +1399,28 @@ export async function processSyncMessage(job = {}) {
     if (attempt >= maxAttempts) {
       const message = 'The sync could not be started; please retry shortly';
       logger.warn(
-        { err: sanitizeError(error, { fallbackCode: 'SYNC_FAILED' }), connectorId, syncRunId: runId, attempt, maxAttempts },
+        {
+          err: sanitizeError(error, { fallbackCode: 'SYNC_FAILED' }),
+          connectorId,
+          syncRunId: runId,
+          attempt,
+          maxAttempts,
+        },
         'connector sync could not start',
       );
-      await syncRunRepository.finish(runId, {
-        status: 'failed',
-        error: { code: CONNECTOR_ERROR_CODES.SYNC_FAILED, message },
-        retentionDays,
-      }).catch(() => {});
-      await connectorRepository.releaseSyncSlot(connectorId, {
-        owner,
-        patch: { syncStatus: 'failed', lastError: message },
-      }).catch(() => {});
+      await syncRunRepository
+        .finish(runId, {
+          status: 'failed',
+          error: { code: CONNECTOR_ERROR_CODES.SYNC_FAILED, message },
+          retentionDays,
+        })
+        .catch(() => {});
+      await connectorRepository
+        .releaseSyncSlot(connectorId, {
+          owner,
+          patch: { syncStatus: 'failed', lastError: message },
+        })
+        .catch(() => {});
       await storedRows.settle();
     }
     throw error;
@@ -1251,28 +1464,40 @@ export async function processSyncMessage(job = {}) {
     started = await startRun(runId);
   }
   if (!started) return skipResult('run_closed', 'SYNC_RUN_CLOSED');
-  await connectorRepository.markSyncRunning(connectorId, { owner, leaseUntil: new Date(now.getTime() + leaseMs) });
+  await connectorRepository.markSyncRunning(connectorId, {
+    owner,
+    leaseUntil: new Date(now.getTime() + leaseMs),
+  });
 
   // Renew both leases while the pipeline runs, so only a dead worker's sync
   // is ever treated as stale.
-  const heartbeat = setInterval(() => {
-    const at = new Date();
-    const leaseUntil = new Date(at.getTime() + leaseMs);
-    Promise.all([
-      syncRunRepository.heartbeat(runId, { now: at, leaseUntil }),
-      connectorRepository.renewSyncLease(connectorId, { owner, leaseUntil }),
-    ]).catch((err) => logger.warn({ err: { message: err?.message }, connectorId }, 'sync heartbeat failed'));
-  }, Math.max(1000, Math.floor(leaseMs / 3)));
+  const heartbeat = setInterval(
+    () => {
+      const at = new Date();
+      const leaseUntil = new Date(at.getTime() + leaseMs);
+      Promise.all([syncRunRepository.heartbeat(runId, { now: at, leaseUntil }), connectorRepository.renewSyncLease(connectorId, { owner, leaseUntil })]).catch(
+        (err) => logger.warn({ err: { message: err?.message }, connectorId }, 'sync heartbeat failed'),
+      );
+    },
+    Math.max(1000, Math.floor(leaseMs / 3)),
+  );
   heartbeat.unref?.();
 
   // New rows actually written (reported on a permanent failure).
   let persistedNew = 0;
   try {
     const config = await decryptConfig(connector);
-    const instance = createConnector(connector.type, { id: connectorId, config, tenantId });
+    const instance = createConnector(connector.type, {
+      id: connectorId,
+      config,
+      tenantId,
+    });
     let records;
     if (payload.buffer) {
-      records = instance.ingest({ buffer: Buffer.from(payload.buffer, 'base64'), maxRows: env.connectors.maxRowsPerSync });
+      records = instance.ingest({
+        buffer: Buffer.from(payload.buffer, 'base64'),
+        maxRows: env.connectors.maxRowsPerSync,
+      });
     } else if (connector.type === 'mongodb') {
       records = instance.ingest();
     } else {
@@ -1301,7 +1526,10 @@ export async function processSyncMessage(job = {}) {
       lastError,
       errorCount: result.errors.length > 0 ? (connector.errorCount ?? 0) + 1 : 0,
     });
-    await connectorRepository.releaseSyncSlot(connectorId, { owner, patch: { syncStatus: 'succeeded' } });
+    await connectorRepository.releaseSyncSlot(connectorId, {
+      owner,
+      patch: { syncStatus: 'succeeded' },
+    });
     await syncRunRepository.finish(runId, {
       status: 'succeeded',
       rows: {
@@ -1316,8 +1544,11 @@ export async function processSyncMessage(job = {}) {
     // Give back the part of the reservation that did not become new rows.
     await storedRows.settle();
     // datasets: re-profile the typed schema (best effort; never fails the sync).
-    await profileDatasetSchema({ tenantId, connectorId, dataVersion: (connector.dataVersion ?? 0) + 1 })
-      .catch((err) => logger.warn({ err: { message: err?.message }, connectorId }, 'dataset schema profiling failed'));
+    await profileDatasetSchema({
+      tenantId,
+      connectorId,
+      dataVersion: (connector.dataVersion ?? 0) + 1,
+    }).catch((err) => logger.warn({ err: { message: err?.message }, connectorId }, 'dataset schema profiling failed'));
 
     return result;
   } catch (error) {
@@ -1329,26 +1560,54 @@ export async function processSyncMessage(job = {}) {
     // operators get the sanitised original in the log.
     const record = publicSyncError(error, connector.type);
     logger.warn(
-      { err: sanitizeError(error, { fallbackCode: 'SYNC_FAILED' }), connectorId, syncRunId: runId, attempt, maxAttempts, final },
+      {
+        err: sanitizeError(error, { fallbackCode: 'SYNC_FAILED' }),
+        connectorId,
+        syncRunId: runId,
+        attempt,
+        maxAttempts,
+        final,
+      },
       'connector sync attempt failed',
     );
     await connectorRepository.bumpError(connectorId, record.message);
     if (final) {
-      await connectorRepository.releaseSyncSlot(connectorId, { owner, patch: { syncStatus: 'failed' } });
-      await syncRunRepository.finish(runId, { status: 'failed', error: record, retentionDays });
+      await connectorRepository.releaseSyncSlot(connectorId, {
+        owner,
+        patch: { syncStatus: 'failed' },
+      });
+      await syncRunRepository.finish(runId, {
+        status: 'failed',
+        error: record,
+        retentionDays,
+      });
       // No further attempt will settle the reservation: give back what did
       // not become new rows.
       await storedRows.settle();
       // A permanent error would fail identically on every retry: report it
       // on the run and stop here instead of burning the queue's attempts.
       if (permanent && attempt < maxAttempts) {
-        return { processed: 0, skipped: 0, upserted: persistedNew, matched: 0, errors: [], failed: record };
+        return {
+          processed: 0,
+          skipped: 0,
+          upserted: persistedNew,
+          matched: 0,
+          errors: [],
+          failed: record,
+        };
       }
     } else {
       // Waiting for the queue's backoff retry: keep the slot, extend the lease.
       const leaseUntil = new Date(Date.now() + leaseMs);
-      await connectorRepository.renewSyncLease(connectorId, { owner, leaseUntil, status: 'queued' });
-      await syncRunRepository.markRetrying(runId, { error: record, leaseUntil });
+      await connectorRepository.renewSyncLease(connectorId, {
+        owner,
+        leaseUntil,
+        status: 'queued',
+      });
+      await syncRunRepository.markRetrying(runId, {
+        error: record,
+        leaseUntil,
+      });
     }
     throw error;
   } finally {
@@ -1356,16 +1615,68 @@ export async function processSyncMessage(job = {}) {
   }
 }
 
+// datasets: re-profile a dataset's schema on demand ("Refresh schema").
+export async function refreshConnectorSchema({ tenantId, connectorId } = {}) {
+  const connector = await connectorRepository.findById(connectorId, {
+    tenantId,
+  });
+  if (!connector) throw notFound();
+  try {
+    return await profileDatasetSchema({
+      tenantId,
+      connectorId,
+      dataVersion: connector.dataVersion ?? 0,
+    });
+  } catch (error) {
+    if (error instanceof ConnectorError) throw error;
+    logger.warn({ err: { message: error?.message }, connectorId }, 'dataset schema refresh failed');
+    throw new ConnectorError(CONNECTOR_ERROR_CODES.SYNC_FAILED, 'Could not refresh the dataset schema. Try again after the next successful sync.', {
+      statusCode: 500,
+    });
+  }
+}
+
+// datasets: list databases / collections / views of a MongoDB connector's source.
+export async function discoverMongoSources({ tenantId, connectorId, database } = {}) {
+  const connector = await connectorRepository.findById(connectorId, {
+    tenantId,
+  });
+  if (!connector) throw notFound();
+  if (connector.type !== 'mongodb') throw new ConnectorValidationError('Source discovery is only available for MongoDB connectors');
+  const config = await decryptConfig(connector);
+  const instance = createConnector(connector.type, {
+    id: connectorId,
+    config,
+    tenantId,
+  });
+  const db = typeof database === 'string' && /^[^\s/\."$]{1,64}$/.test(database) ? database : undefined;
+  try {
+    return await instance.discover({ database: db });
+  } catch (error) {
+    const pub = toPublicSyncError(error, connector.type);
+    throw new ConnectorError(pub.code, pub.message, { statusCode: 502 });
+  }
+}
 // datasets: typed schema of a connector's dataset (profiled on demand when missing).
 export async function getConnectorSchema({ tenantId, connectorId } = {}) {
-  const connector = await connectorRepository.findById(connectorId, { tenantId });
+  const connector = await connectorRepository.findById(connectorId, {
+    tenantId,
+  });
   if (!connector) throw notFound();
-  return (await getDatasetSchema({ tenantId, connectorId }))
-    ?? profileDatasetSchema({ tenantId, connectorId, dataVersion: connector.dataVersion ?? 0 });
+  return (
+    (await getDatasetSchema({ tenantId, connectorId })) ??
+    profileDatasetSchema({
+      tenantId,
+      connectorId,
+      dataVersion: connector.dataVersion ?? 0,
+    })
+  );
 }
 
 export default {
   getConnectorSchema,
+  refreshConnectorSchema,
+  discoverMongoSources,
   createConnectorRecord,
   listConnectorRecords,
   getConnectorRecord,

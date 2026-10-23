@@ -150,6 +150,8 @@ import { timeAnalyticsQuery } from '../utils/metrics.js';
 import { getTimezone as getWorkspaceTimezone } from './tenantSettings.service.js';
 // rls: dataset grants and row-level security, resolved from the actor.
 import { resolveAccessScope, isAccessScope, assertQueryable } from './dataAccess.service.js';
+// security: credential-like dataset columns are never queryable or returned.
+import { isSensitiveFieldName, stripSensitiveFields } from '../utils/sensitiveFields.js';
 
 const { ObjectId } = mongoose.Types;
 
@@ -251,6 +253,14 @@ export function isSafeName(value) {
     && !/[$.\u0000-\u001f]/.test(value);
 }
 
+const SENSITIVE_FIELD_MESSAGE = 'is a protected field (credential-like column) and cannot be queried';
+
+/** True (and records an error) when a field name is on the sensitive denylist. */
+function rejectSensitive(field, at, fail) {
+  if (isSensitiveFieldName(field)) { fail(at, SENSITIVE_FIELD_MESSAGE); return true; }
+  return false;
+}
+
 function isScalar(value) {
   if (value === null || typeof value === 'boolean') return true;
   if (typeof value === 'number') return Number.isFinite(value);
@@ -313,6 +323,7 @@ function validateFilters(value, at, fail) {
     rejectUnknownKeys(f, FILTER_KEYS, here, fail);
     const out = { field: f.field, op: f.op, value: f.value };
     if (!isSafeName(f.field)) fail(`${here}.field`, 'must be a field name without "$" or "."');
+    else if (rejectSensitive(f.field, `${here}.field`, fail)) { /* denied */ }
     else if (NOT_FILTERABLE.has(f.field)) fail(`${here}.field`, f.field === 'ingestedAt' ? 'use dateRange to filter on ingestedAt' : 'is not filterable');
     if (!FILTER_OPS.includes(f.op)) { fail(`${here}.op`, `must be one of ${FILTER_OPS.join(', ')}`); return out; }
     if (f.op === 'in' || f.op === 'nin') {
@@ -436,7 +447,7 @@ function validateMetrics(value, at, fail) {
     const hasField = m.field !== undefined && m.field !== null && m.field !== '';
     if (hasField) {
       if (!isSafeName(m.field)) fail(`${here}.field`, 'must be a field name without "$" or "."');
-      else out.field = m.field;
+      else if (!rejectSensitive(m.field, `${here}.field`, fail)) out.field = m.field;
     } else if (m.op !== 'count' && METRIC_OPS.includes(m.op)) {
       fail(`${here}.field`, `is required for ${m.op}`);
     }
@@ -464,6 +475,7 @@ function validateGroupBy(value, at, fail) {
     const out = { field: item.field };
     if (!isSafeName(item.field)) fail(typeof g === 'string' ? here : `${here}.field`, 'must be a field name without "$" or "."');
     else if (isReservedOutputName(item.field)) fail(`${here}.field`, `"${item.field}" is reserved (names starting with "__" are used internally)`);
+    else if (rejectSensitive(item.field, `${here}.field`, fail)) { /* denied */ }
     else if (seen.has(item.field)) fail(`${here}.field`, 'is already grouped on');
     else seen.add(item.field);
     if (item.bucket !== undefined && item.bucket !== null) {
@@ -485,6 +497,7 @@ function validateOrderBy(value, at, fail) {
     rejectUnknownKeys(item, ORDER_KEYS, here, fail);
     if (!isSafeName(item.field)) fail(`${here}.field`, 'must be a field name without "$" or "."');
     else if (RESERVED_OUTPUT_NAMES.has(item.field)) fail(`${here}.field`, `"${item.field}" is reserved`);
+    else rejectSensitive(item.field, `${here}.field`, fail);
     if (item.direction !== undefined && item.dir !== undefined && item.direction !== item.dir) {
       fail(`${here}.dir`, 'conflicts with direction');
     }
@@ -1448,7 +1461,7 @@ export async function openRowStream(rawOptions, {
     } catch (err) {
       throw aggregateError(err, timezone);
     }
-    columns = keys.map((k) => k._id).filter((k) => typeof k === 'string');
+    columns = keys.map((k) => k._id).filter((k) => typeof k === 'string' && !isSensitiveFieldName(k));
     if (columns.length > maxColumns) {
       throw new ApiError(422, `The result has more than ${maxColumns} columns; filter the query or select fewer datasets.`, { code: 'TOO_MANY_COLUMNS' });
     }
@@ -1479,6 +1492,9 @@ function normalizeRow(row) {
     out[key] = value;
   }
   if (out.connectorId && typeof out.connectorId !== 'string') out.connectorId = String(out.connectorId);
+  // security: rows ingested before the ingestion sanitizer may still hold
+  // credential-like keys; strip them from every returned row.
+  if (out.data && typeof out.data === 'object') out.data = stripSensitiveFields(out.data);
   return out;
 }
 

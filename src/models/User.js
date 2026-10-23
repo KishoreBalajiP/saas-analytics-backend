@@ -75,6 +75,7 @@ const userSchema = new mongoose.Schema(
     mfaRecoveryCodes: { type: [String], default: [], select: false },
     mfaRecoveryCodesGeneratedAt: { type: Date, default: null },
     mfaLastTimeStep: { type: Number, default: null, select: false },
+    mfaEnrollmentExpiresAt: { type: Date, default: null, select: false },
     // Set by an Owner-assisted reset: enrolment is required at the next
     // sign-in even when the workspace policy does not require MFA.
     mfaEnrollmentRequired: { type: Boolean, default: false },

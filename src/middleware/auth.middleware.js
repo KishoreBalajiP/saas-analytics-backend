@@ -53,6 +53,8 @@
  *     no credential are routine and not recorded.
  */
 import ApiError from '../utils/ApiError.js';
+import tenantMfaPolicy from '../modules/iam/auth/tenantMfaPolicy.js';
+import { SESSION_RESTRICTION_MFA_ENROLLMENT } from '../models/Session.js';
 import { verify as verifyJwt, JwtError, JWT_AUDIENCES } from '../utils/jwt.js';
 import sessionRepository from '../repositories/session.repository.js';
 import roleService from '../services/role.service.js';
@@ -167,14 +169,23 @@ export async function verifyAccessToken({ token, audience = JWT_AUDIENCES.USER, 
     }
     throw err;
   }
-  // adminauth: a restricted session reaches only the routes that allow it.
-  const restriction = session.restriction ?? null;
-  if (restriction && !allowRestrictions.includes(restriction)) throw restrictedSessionError(restriction);
-
   // A tenant user's token must name the workspace the account belongs to.
   if (!isAdmin && payload.tenantId && account?.tenantId && String(payload.tenantId) !== account.tenantId) {
     throw inactiveSession();
   }
+
+  // Workspace policy changes apply to already-live sessions on their very
+  // next request, not only after refresh or a new login.
+  let restriction = session.restriction ?? null;
+  if (
+    !isAdmin &&
+    !session.impersonatedBy &&
+    !account?.mfaEnabled &&
+    (await tenantMfaPolicy.isMfaRequired(account))
+  ) {
+    restriction = SESSION_RESTRICTION_MFA_ENROLLMENT;
+  }
+  if (restriction && !allowRestrictions.includes(restriction)) throw restrictedSessionError(restriction);
 
   // support: the session record (not the token) says whether this is a
   // support session; a token that claims impersonation is treated as one too.

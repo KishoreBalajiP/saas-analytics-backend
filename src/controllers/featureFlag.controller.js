@@ -22,6 +22,8 @@ import ApiResponse from '../utils/ApiResponse.js';
 import ApiError from '../utils/ApiError.js';
 import { getTenantId } from '../middleware/tenant.middleware.js';
 import featureFlagService from '../services/featureFlag.service.js';
+import entitlementService from '../services/entitlement.service.js';
+import aiGate from '../services/ai/gate.js';
 
 // `type` is passed through so a non-boolean flag is refused, not silently ignored.
 const FLAG_FIELDS = ['name', 'description', 'enabled', 'rollout', 'type'];
@@ -121,9 +123,65 @@ export const previewFlags = asyncHandler(async (req, res) => {
 export const evaluateFlags = asyncHandler(async (req, res) => {
   const tenantId = getTenantId(req);
   if (!tenantId) throw ApiError.badRequest('Tenant id is required');
-  const flags = await featureFlagService.resolveForTenant(tenantId);
+  const [evaluated, entitlements, ai] = await Promise.all([
+    featureFlagService.explainForTenant(tenantId),
+    entitlementService.resolveEffective(tenantId),
+    aiGate.status({ tenantId }),
+  ]);
+  const entitlementKeyByFlag = {
+    'ai.assistant': 'ai_assistant',
+    'connectors.webhooks': 'webhook_connectors',
+  };
+  const features = evaluated.filter((feature) => feature.key !== 'ai.kill_switch').map((feature) => {
+    const entitlementKey = entitlementKeyByFlag[feature.key] ?? null;
+    const planIncluded = entitlementKey ? entitlements.features[entitlementKey] === true : null;
+    let reason = feature.reason;
+    let value = feature.value;
+    let configurationRequired = false;
+    let implemented = true;
+    let operational = value;
+    if (planIncluded === false) {
+      value = false;
+      operational = false;
+      reason = 'not_in_plan';
+    } else if (feature.key === 'ai.assistant') {
+      implemented = ai.providerConfigured;
+      operational = Boolean(value && ai.providerConfigured && ai.consent && !ai.killSwitch);
+      value = operational;
+      if (ai.killSwitch) reason = 'disabled_by_platform';
+      else if (!feature.value) reason = 'disabled_by_workspace';
+      else if (!ai.providerConfigured) {
+        reason = 'requires_configuration';
+        configurationRequired = true;
+      } else if (!ai.consent && feature.value) {
+        reason = 'requires_configuration';
+        configurationRequired = true;
+      }
+    }
+    return {
+      ...feature,
+      value,
+      reason,
+      planIncluded,
+      canAdminEnable: false,
+      configurationRequired,
+      implemented,
+      operational,
+    };
+  });
+  
+  // Preserve the legacy `flags` shape: disabled catalogue rows were absent,
+  // while enabled rows (including rollout misses) were present with false.
+  const disabledKeys = new Set(
+    evaluated.filter((feature) => feature.reason === 'disabled').map((feature) => feature.key),
+  );
+  const flags = Object.fromEntries(
+    features
+      .filter((feature) => !disabledKeys.has(feature.key))
+      .map((feature) => [feature.key, feature.value]),
+  );
   res.set('Cache-Control', 'private, no-cache');
-  return ApiResponse.ok(res, { flags }, 'Feature flags evaluated');
+  return ApiResponse.ok(res, { flags, features }, 'Feature flags evaluated');
 });
 
 export default {

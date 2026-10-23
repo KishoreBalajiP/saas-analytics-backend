@@ -60,6 +60,7 @@ const logger = createChildLogger({ module: 'services/tenant_mfa' });
 const AUTH = env.security.auth;
 const MFA_ISSUER = AUTH.mfaIssuer;
 const RECOVERY_CODE_COUNT = AUTH.mfaRecoveryCodeCount;
+const MFA_ENROLLMENT_TTL_MS = 10 * 60 * 1000;
 
 /** Step-up window length in ms for tenant users. */
 export const USER_STEP_UP_TTL_MS = AUTH.userStepUpTtlMs;
@@ -167,7 +168,8 @@ export async function enroll({ userId, tenantId }) {
   const secret = totp.generateSecret();
   const uri = totp.toURI({ secret, label: user.email, issuer: MFA_ISSUER });
   const stored = await encrypt(secret, mfaContext(user._id, user.tenantId));
-  const updated = await userRepository.startMfaEnrollment(user._id, stored);
+  const expiresAt = new Date(Date.now() + MFA_ENROLLMENT_TTL_MS);
+  const updated = await userRepository.startMfaEnrollment(user._id, stored, expiresAt);
   // A concurrent confirmation turned MFA on in between.
   if (!updated) throw ApiError.conflict('MFA is already enabled');
   logger.info({ userId: String(user._id) }, 'tenant mfa enrolment started');
@@ -192,12 +194,17 @@ export async function verifyEnrollment({ userId, tenantId, code, sessionId = nul
   const user = await loadState(userId, tenantId);
   if (user.mfaEnabled) throw ApiError.conflict('MFA is already enabled');
   if (!user.mfaSecret) throw ApiError.badRequest('Start MFA enrolment first');
+  const now = new Date();
+  if (!user.mfaEnrollmentExpiresAt || new Date(user.mfaEnrollmentExpiresAt).getTime() <= now.getTime()) {
+    await userRepository.clearExpiredMfaEnrollment(user._id, user.mfaSecret, now);
+    throw ApiError.gone('MFA enrollment expired. Start again.');
+  }
   const step = await matchTimeStep(await readSecret(user), code);
   if (step === null) throw ApiError.badRequest('Invalid verification code');
 
   const { codes, hashes } = generateRecoveryCodes(RECOVERY_CODE_COUNT);
   const updated = await userRepository.enableMfa(user._id, { mfaSecret: user.mfaSecret, recoveryCodeHashes: hashes, timeStep: step });
-  if (!updated) throw ApiError.conflict('MFA enrolment changed; start again');
+  if (!updated) throw ApiError.gone('MFA enrollment expired or changed. Start again.');
   if (sessionId) await sessionRepository.setRestrictionForLogin(sessionId, null);
   const revokedOthers = await sessionRepository.revokeRestrictedForActor(user._id, 'mfa_enrolled_elsewhere');
   logger.info({ userId: String(user._id), revokedOthers }, 'tenant mfa enrolment verified');

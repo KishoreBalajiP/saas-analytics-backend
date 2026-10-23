@@ -13,6 +13,7 @@
  */
 
 import mongoose from 'mongoose';
+import { isSensitiveFieldName } from '../utils/sensitiveFields.js';
 import { DatasetSchema } from '../models/DatasetSchema.js';
 import { ConnectorRow } from '../models/ConnectorRow.js';
 
@@ -62,6 +63,7 @@ export function inferFields(rows = []) {
   for (const row of rows) {
     if (!row || typeof row !== 'object') continue;
     for (const [name, value] of Object.entries(row)) {
+      if (isSensitiveFieldName(name)) continue; // security: never profile credential columns
       if (!stats.has(name)) stats.set(name, { nulls: 0, counts: {}, distinct: new Set(), samples: [], email: 0 });
       const s = stats.get(name);
       if (isNull(value)) { s.nulls += 1; continue; }
@@ -109,7 +111,7 @@ function toContract(doc) {
     connectorId: String(doc.connectorId),
     version: doc.version,
     profiledAt: doc.profiledAt instanceof Date ? doc.profiledAt.toISOString() : doc.profiledAt,
-    fields: (doc.fields ?? []).map((f) => ({
+    fields: (doc.fields ?? []).filter((f) => !isSensitiveFieldName(f.name)).map((f) => ({
       name: f.name,
       type: f.type,
       nullable: Boolean(f.nullable),

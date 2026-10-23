@@ -159,6 +159,28 @@ test('a refresh restricts an existing session once the policy requires MFA', asy
   assert.equal((await api('/api/v1/dashboards', { headers: auth })).json.code, 'MFA_ENROLLMENT_REQUIRED');
 });
 
+test('enabling workspace MFA immediately blocks existing unenrolled sessions from protected APIs', async () => {
+  const ws = await onboard();
+  const member = await addMember(ws.tenantId, 'Viewer');
+  const session = await signIn(ws.tenantId, member.email);
+  await enrollMfa(ws.ownerSession.auth);
+  const enabled = await api(POLICY, {
+    method: 'PATCH',
+    headers: ws.ownerSession.auth,
+    body: { mfaRequired: true },
+  });
+  assert.equal(enabled.status, 200);
+
+  const blocked = await api('/api/v1/dashboards', { headers: session.auth });
+  assert.equal(blocked.status, 403);
+  assert.equal(blocked.json.code, 'MFA_ENROLLMENT_REQUIRED');
+
+  const me = await api('/api/v1/users/me', { headers: session.auth });
+  assert.equal(me.status, 200);
+  assert.equal(me.json.data.mfa.enrollmentRequired, true);
+  assert.equal(me.json.data.mfa.required, true);
+});
+
 test('disabling MFA while the policy requires it restricts every session of the member', async () => {
   const ws = await workspaceWithPolicy();
   const member = await addMember(ws.tenantId, 'Viewer');

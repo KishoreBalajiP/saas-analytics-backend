@@ -93,6 +93,7 @@ const alertSchema = new mongoose.Schema(
     thresholdHigh: { type: Number, default: null },
     schedule: { type: scheduleSchema, default: () => ({}) },
     cooldownMinutes: { type: Number, default: 60, min: 0 },
+    repeatMode: { type: String, enum: ['once_per_incident', 'after_cooldown'], default: 'once_per_incident' },
     lastEvaluatedAt: { type: Date, default: null },
     lastTriggeredAt: { type: Date, default: null },
     nextEvaluationAt: { type: Date, default: null },

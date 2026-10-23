@@ -58,6 +58,8 @@ router.post('/:connectorId/validate', authenticate, resolveTenant, permission('c
 router.get('/:connectorId/rows', authenticate, resolveTenant, permission('connectors', 'view'), connectorController.listRows);
 // datasets: typed dataset schema.
 router.get('/:connectorId/schema', authenticate, resolveTenant, permission('connectors', 'view'), connectorController.getSchema);
+router.post('/:connectorId/schema/refresh', authenticate, resolveTenant, permission('connectors', 'sync'), connectorController.refreshSchema);
+router.get('/:connectorId/discover', authenticate, resolveTenant, permission('connectors', 'view'), connectorController.discover);
 router.get('/:connectorId/sync-runs', authenticate, resolveTenant, permission('connectors', 'view'), connectorController.listSyncRuns);
 // One registration per public path. The service dispatches CSV/XLSX behavior
 // from the persisted connector type; duplicate Express registrations would

@@ -73,7 +73,13 @@ router.get( // ci:routes-exempt: authenticate + tenantIsolation above
 router.get( // ci:routes-exempt: authenticate + tenantIsolation above
   '/subscription/timeline',
   permission('iam.subscriptions', 'view'),
-  validate(idParamSchema),
+  validate({
+    ...idParamSchema,
+    query: {
+      page: { type: 'integer', min: 1, max: 1000 },
+      limit: { type: 'integer', min: 1, max: 100 },
+    },
+  }),
   subscriptionController.getTimeline,
 );
 
@@ -124,6 +130,18 @@ router.get( // ci:routes-exempt: authenticate + tenantIsolation above
     },
   }),
   subscriptionController.getCheckoutStatus,
+);
+
+router.post( // ci:routes-exempt: authenticate + tenantIsolation above
+  '/subscription/checkout/:orderId/cancel',
+  permission('iam.subscriptions', 'update'),
+  validate({
+    params: {
+      id: { type: 'objectId', required: true },
+      orderId: { type: 'string', required: true, maxLength: 100, pattern: /^[A-Za-z0-9_-]+$/ },
+    },
+  }),
+  subscriptionController.cancelCheckout,
 );
 
 // billing: workspace billing history (payment transactions, no secrets).
