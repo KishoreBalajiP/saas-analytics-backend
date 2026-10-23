@@ -41,6 +41,12 @@ import { observeEmailSend } from '../utils/metrics.js';
 
 let transport = null;
 let captureSink = null;
+let captureTransport = null;
+
+function getCaptureTransport() {
+  if (!captureTransport) captureTransport = createNoopMailer().transport;
+  return captureTransport;
+}
 
 /* -------------------------------- errors -------------------------------- */
 
@@ -80,6 +86,8 @@ export async function close() {
     transport.close?.();
   } finally {
     transport = null;
+    captureTransport?.close?.();
+    captureTransport = null;
     captureSink = null;
   }
 }
@@ -101,6 +109,9 @@ export function getTransport() {
  * @param {Array} sink - an array that will receive sent messages.
  */
 export function captureInto(sink) {
+  if (!Array.isArray(sink)) {
+    throw new EmailError('INVALID_INPUT', 'captureInto requires an array sink');
+  }
   captureSink = sink;
 }
 
@@ -108,6 +119,8 @@ export function captureInto(sink) {
  * Stop capturing messages. Subsequent sends go to the configured transport.
  */
 export function stopCapture() {
+  captureTransport?.close?.();
+  captureTransport = null;
   captureSink = null;
 }
 
@@ -150,7 +163,10 @@ export function getTransportType() {
  */
 export async function send(message) {
   validate(message);
-  const transport = init();
+  // Capture mode must never touch the configured SMTP transport. This is
+  // used by tests and local integrations, and the process may still have
+  // SMTP credentials loaded from .env.
+  const activeTransport = captureSink ? getCaptureTransport() : init();
   const envelope = {
     // Every message needs a sender. Callers (verification, invitations,
     // password reset, alerts) do not set one, so fall back to MAIL_FROM;
@@ -173,7 +189,7 @@ export async function send(message) {
       : {}),
   };
   try {
-    const info = await transport.sendMail(envelope);
+    const info = await activeTransport.sendMail(envelope);
     observeEmailSend('sent');
     if (captureSink) captureSink.push({ ...envelope, messageId: info.messageId });
     logger.debug(
