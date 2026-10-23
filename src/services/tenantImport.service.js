@@ -58,6 +58,7 @@ import {
   validateManifest,
   listedFiles,
 } from './tenantArchive.js';
+import { GENESIS_HASH, seal, signingKeys } from '../utils/auditChain.js';
 
 const BATCH_SIZE = 500;
 /** Longest accepted JSONL line (the BSON document limit plus EJSON overhead). */
@@ -290,6 +291,15 @@ export async function importTenant({ dir, manifest, connection = mongoose.connec
   };
 
   let current = null;
+  let auditHead = { seq: 0, hash: GENESIS_HASH };
+  if (mode === 'clone' && byModel.has('AuditLog')) {
+    const existing = await connection.collection(collectionNameOf('AuditLog'))
+      .find({ seq: { $type: 'number' } })
+      .sort({ seq: -1 })
+      .limit(1)
+      .next();
+    if (existing) auditHead = { seq: existing.seq, hash: existing.hash ?? GENESIS_HASH };
+  }
   try {
     for (const entry of entries) {
       current = entry.model;
@@ -330,6 +340,22 @@ export async function importTenant({ dir, manifest, connection = mongoose.connec
               });
               doc[field] = value;
             }
+          }
+          if (entry.model === 'AuditLog') {
+            // Audit sequence numbers are globally unique, not tenant-scoped.
+            // A clone must append to the target chain instead of colliding with
+            // the source tenant's sequence. Record the source chain fields as
+            // reversible rewrites so verifyImport still checks the round trip.
+            for (const field of ['seq', 'prevHash', 'hash', 'hashAlg', 'keyId']) {
+              result.rewrites.push({
+                model: entry.model,
+                id: String(doc._id),
+                field,
+                hadValue: Object.prototype.hasOwnProperty.call(source, field),
+                original: source[field],
+              });
+            }
+            auditHead = seal(doc, auditHead, { signingKey: signingKeys().current });
           }
         }
         batch.push(doc);

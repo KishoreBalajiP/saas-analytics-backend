@@ -25,6 +25,19 @@ function load(overrides = {}) {
     process.stdout.write(JSON.stringify(env.security.auth));`;
   const env = { ...process.env, NODE_ENV: 'development' };
   for (const key of KEYS) delete env[key];
+  // The application loader intentionally reads the project `.env`. Seed the
+  // documented defaults here so this child-process test is independent of a
+  // developer's local overrides while still exercising the real loader.
+  Object.assign(env, {
+    PASSWORD_RESET_TTL_MS: '3600000',
+    EMAIL_VERIFICATION_TTL_MS: '86400000',
+    EMAIL_VERIFICATION_RESEND_COOLDOWN_MS: '60000',
+    ADMIN_MFA_REQUIRED_TYPES: 'super,platform',
+    ADMIN_STEP_UP_TTL_MS: '300000',
+    ADMIN_INVITATION_TTL_MS: '259200000',
+    ADMIN_INVITATION_RESEND_COOLDOWN_MS: '60000',
+    MFA_RECOVERY_CODE_COUNT: '10',
+  });
   Object.assign(env, overrides);
   return spawnSync(process.execPath, ['--input-type=module', '-e', script], { env, encoding: 'utf8' });
 }

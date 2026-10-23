@@ -195,7 +195,14 @@ test('an owner export contains every tenant collection with matching counts and 
   const row = await TenantExport.findOne({ exportId: done.exportId }).lean();
   assert.equal(row.summary.collections, EXPORTED.length);
   assert.equal(row.inFlight, undefined, 'the in-flight slot is released');
-  const mail = sink.find((m) => m.to === a.ownerEmail);
+  // Export completion and best-effort outbox dispatch are separate async
+  // lifecycles; allow the in-memory dispatch callback to settle before
+  // asserting the captured notification.
+  let mail;
+  for (let attempt = 0; attempt < 40 && !mail; attempt += 1) {
+    mail = sink.find((m) => Array.isArray(m.to) ? m.to.includes(a.ownerEmail) : m.to === a.ownerEmail);
+    if (!mail) await new Promise((resolve) => setTimeout(resolve, 25));
+  }
   assert.ok(mail, 'the requester is notified');
   assert.match(mail.text, new RegExp(done.exportId));
   assert.equal(mail.subject, 'Your workspace data export is ready', 'rendered from the tenant.data_export_ready template');

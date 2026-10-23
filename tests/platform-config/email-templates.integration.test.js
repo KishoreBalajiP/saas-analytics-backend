@@ -63,7 +63,20 @@ test('list and detail expose the built-ins with their variable contract', async 
   const { headers } = await adminWith([VIEW]);
   const list = await api('/api/v1/email-templates', { headers });
   assert.equal(list.status, 200);
-  assert.deepEqual(list.json.data.map((t) => t.key).sort(), ['admin.invitation', 'admin.password_reset_by_admin', 'alert.triggered', 'auth.email_verification', 'auth.password_reset', 'security.alert_raised', 'tenant.invitation']);
+  assert.deepEqual(list.json.data.map((t) => t.key).sort(), [
+    'admin.invitation',
+    'admin.password_reset_by_admin',
+    'alert.triggered',
+    'auth.email_verification',
+    'auth.password_reset',
+    'billing.payment_overdue',
+    'billing.renewal_reminder',
+    'billing.trial_ending',
+    'report.delivered',
+    'security.alert_raised',
+    'tenant.data_export_ready',
+    'tenant.invitation',
+  ]);
   assert.ok(list.json.data.every((t) => t.customized === false && t.version === 0));
   const detail = await api(`/api/v1/email-templates/${RESET_KEY}`, { headers });
   assert.equal(detail.json.data.builtIn.subject, 'Reset your password');

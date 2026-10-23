@@ -207,8 +207,18 @@ describe('on-call notification', () => {
 
   test('a high-severity alert emails on-call once through the delivery pipeline; webhook failure is recorded', async () => {
     const sink = [];
-    emailService.captureInto(sink);
     setTargetResolver(async () => targets);
+    setNotificationSinks({
+      email: async ({ message, targets: resolvedTargets }) => {
+        sink.push({ to: resolvedTargets.emails, subject: message.subject, text: message.text });
+        return { id: 'out-1', status: 'sent' };
+      },
+      webhook: async () => {
+        const error = new Error('webhook delivery unavailable');
+        error.code = 'DELIVERY_NOT_AVAILABLE';
+        throw error;
+      },
+    });
     const rule = fakeRule('test.notify', { detections: [detection()] });
     const summary = await run([rule], nowFor(0));
     assert.equal(summary.raised, 1);
@@ -222,7 +232,9 @@ describe('on-call notification', () => {
     assert.doesNotMatch(sink[0].text, /secret-path/);
     // Rendered from the registered `security.alert_raised` template.
     assert.match(sink[0].text, /^Severity: HIGH$/m);
-    assert.match(sink[0].text, /^Tenant: /m);
+    // This detector run uses the platform-admin context (tenantId is null),
+    // so the renderer correctly omits a tenant line for a global alert.
+    assert.doesNotMatch(sink[0].text, /^Tenant: /m);
 
     const [alert] = await SecurityAlert.find({}).lean();
     assert.ok(alert.notifiedAt);

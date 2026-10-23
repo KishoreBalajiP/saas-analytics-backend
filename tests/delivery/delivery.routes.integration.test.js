@@ -13,6 +13,7 @@ import * as tenantService from '../../src/services/tenant.service.js';
 import rbacCache from '../../src/services/rbac.cache.service.js';
 import userRepository from '../../src/repositories/user.repository.js';
 import delivery from '../../src/services/delivery/index.js';
+import { entitleTenant } from '../helpers/billing.js';
 
 const PASSWORD = 'Password123!';
 const URL_SECRET = 'https://93.184.216.34/services/T000/B000/topsecret';
@@ -31,6 +32,7 @@ async function onboard() {
   const owner = { email: `owner-${shortToken(10).toLowerCase()}@example.com`, name: 'Owner', password: PASSWORD };
   const { tenant } = await tenantService.create({ tenant: { name: `Del ${shortToken(10)}` }, owner, initialize: true, by: 'root' });
   const tenantId = tenant._id.toString();
+  await entitleTenant(tenantId);
   return { tenantId, auth: await login(tenantId, owner.email) };
 }
 

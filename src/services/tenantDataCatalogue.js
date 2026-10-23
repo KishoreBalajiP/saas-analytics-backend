@@ -51,6 +51,7 @@ import '../models/RolePermission.js';
 import '../models/User.js';
 import '../models/UserRole.js';
 import '../models/Setting.js';
+import '../models/AiConsent.js';
 import '../models/Subscription.js';
 import '../models/SubscriptionHistory.js';
 import '../models/PaymentTransaction.js';
@@ -70,6 +71,39 @@ import '../models/Notification.js';
 import '../models/AuditLog.js';
 import '../models/AccessLog.js';
 import '../models/Permission.js';
+import '../models/AccessRequest.js';
+import '../models/AdminInvitation.js';
+import '../models/AdminRole.js';
+import '../models/AiQuestion.js';
+import '../models/ApiKey.js';
+import '../models/ApiKeyUsage.js';
+import '../models/AuditExport.js';
+import '../models/AuthCooldown.js';
+import '../models/ComplianceLog.js';
+import '../models/ConfigRevision.js';
+import '../models/DatasetAccess.js';
+import '../models/DatasetSchema.js';
+import '../models/DeliveryDestination.js';
+import '../models/DeliveryRun.js';
+import '../models/DeliveryUnsubscribe.js';
+import '../models/EmailTemplate.js';
+import '../models/FeatureFlag.js';
+import '../models/Insight.js';
+import '../models/JobLock.js';
+import '../models/JobRun.js';
+import '../models/MasterData.js';
+import '../models/MetricDefinition.js';
+import '../models/Module.js';
+import '../models/NotificationPreference.js';
+import '../models/OutboundEmail.js';
+import '../models/RowPolicy.js';
+import '../models/SecurityAlert.js';
+import '../models/SecurityDetectionCursor.js';
+import '../models/SecuritySignal.js';
+import '../models/SupportAccessGrant.js';
+import '../models/SupportImpersonation.js';
+import '../models/SupportImpersonationCounter.js';
+import '../models/TenantDeletion.js';
 
 /** Replace a field with null when present. */
 function nullField(doc, field) {
@@ -182,6 +216,37 @@ export const EXCLUDED = Object.freeze([
   { model: 'AuditExport', reason: 'platform support export bookkeeping; artefacts expire' },
   { model: 'TenantExport', reason: 'export bookkeeping (an archive cannot contain its own record)' },
   { model: 'WebhookEvent', reason: 'platform payment-provider inbox; billing state is exported via Subscription and PaymentTransaction' },
+  { model: 'AdminInvitation', reason: 'credential: platform administrator invitation tokens' },
+  { model: 'AdminRole', reason: 'platform-scoped: administrator role grants' },
+  { model: 'AiConsent', reason: 'privacy consent is re-established explicitly after a restore' },
+  { model: 'AiQuestion', reason: 'ephemeral AI interaction history; prompts and outputs are not included in tenant archives' },
+  { model: 'ApiKey', reason: 'credential: API key secret hashes; keys are re-issued after a restore' },
+  { model: 'ApiKeyUsage', reason: 'ephemeral API-key usage counters; regenerated from live key activity' },
+  { model: 'AuthCooldown', reason: 'ephemeral authentication throttling state' },
+  { model: 'ComplianceLog', reason: 'platform-scoped compliance case records' },
+  { model: 'ConfigRevision', reason: 'platform configuration history' },
+  { model: 'DatasetAccess', reason: 'derived connector access state; reconstructed from connector configuration' },
+  { model: 'DatasetSchema', reason: 'derived connector schema state; rebuilt by connector profiling' },
+  { model: 'DeliveryDestination', reason: 'delivery integration configuration is re-established after restore' },
+  { model: 'DeliveryRun', reason: 'ephemeral delivery execution history' },
+  { model: 'DeliveryUnsubscribe', reason: 'delivery suppression state is maintained by the platform' },
+  { model: 'EmailTemplate', reason: 'platform-global template catalogue' },
+  { model: 'EmbedConfig', reason: 'credential: embed signing configuration is re-issued after a restore' },
+  { model: 'FeatureFlag', reason: 'platform-global feature flag definitions and rollouts' },
+  { model: 'MasterData', reason: 'platform-global shared reference data' },
+  { model: 'Insight', reason: 'derived analytics output; regenerated from dashboards and source data' },
+  { model: 'Module', reason: 'platform-global permission module catalogue' },
+  { model: 'MetricDefinition', reason: 'derived metric catalogue managed by the platform' },
+  { model: 'NotificationPreference', reason: 'notification preferences are re-established by users after restore' },
+  { model: 'OutboundEmail', reason: 'ephemeral outbound-mail delivery records' },
+  { model: 'RowPolicy', reason: 'derived row-level access policy state' },
+  { model: 'SecurityAlert', reason: 'platform security records are retained outside tenant archives' },
+  { model: 'SecurityDetectionCursor', reason: 'platform scheduler cursor for security detection polling' },
+  { model: 'SecuritySignal', reason: 'platform security telemetry is retained outside tenant archives' },
+  { model: 'SupportAccessGrant', reason: 'platform support-access authorization records' },
+  { model: 'SupportImpersonation', reason: 'platform support impersonation audit records' },
+  { model: 'SupportImpersonationCounter', reason: 'platform support impersonation rate-limit state' },
+  { model: 'TenantDeletion', reason: 'platform tenant-lifecycle deletion bookkeeping' },
   { model: 'AccessRequest', reason: 'platform onboarding pipeline, recorded before the workspace exists' },
   { model: 'Admin', reason: 'platform-scoped: platform administrators' },
   { model: 'AdminRole', reason: 'platform-scoped: platform administrator grants' },

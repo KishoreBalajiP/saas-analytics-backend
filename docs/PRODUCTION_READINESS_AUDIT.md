@@ -175,3 +175,6 @@ Full deployment matrix is in `PRODUCTION_DEPLOYMENT_RUNBOOK.md`.
 **External configuration: ❌ not verifiable from this audit.** Real commercial prices, real Razorpay credentials, real webhook delivery, and real live-mode activation all require operator/business action against the Razorpay Dashboard and business pricing decisions.
 
 **Status: READY FOR STAGING CONFIGURATION** (see final report).
+# Current certification update — 2026-10-23
+
+The current final status is **BLOCKED**. See `ANALIVO_PRODUCTION_READINESS_FINAL_REPORT.md` and `ANALIVO_ENVIRONMENT_VARIABLE_AUDIT.md`. Remaining gates are frontend lint/test failures, full backend Node 24/26 verification, legal approval of customer-facing policies, and authorized production secret/provider validation.

@@ -10,6 +10,7 @@
 import test, { before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
+import { entitleTenant } from '../helpers/billing.js';
 
 process.env.API_KEY_RATE_LIMIT_MAX = '20';
 process.env.API_KEY_ROTATION_OVERLAP_MINUTES = '0.03'; // ~1.8 s
@@ -62,6 +63,7 @@ async function workspace() {
     result = await m.tenantService.create({ tenant: { name: `DevApi ${randomBytes(3).toString('hex')}` }, owner: { email, name: 'Owner' }, initialize: true, by: 'platform-admin' });
   });
   await m.invitations.accept({ token, name: 'Owner', password: PASSWORD });
+  await entitleTenant(result.tenant._id);
   return { tenantId: String(result.tenant._id), slug: result.tenant.slug, auth: await login(result.tenant.slug, email) };
 }
 

@@ -12,7 +12,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import mongoose from 'mongoose';
 
 import catalogue, {
@@ -39,7 +39,7 @@ const modelsDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..
 
 async function importAllModels() {
   for (const name of await fsp.readdir(modelsDir)) {
-    if (name.endsWith('.js')) await import(path.join(modelsDir, name));
+    if (name.endsWith('.js')) await import(pathToFileURL(path.join(modelsDir, name)).href);
   }
 }
 

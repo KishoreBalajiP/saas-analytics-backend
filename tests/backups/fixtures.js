@@ -132,8 +132,11 @@ export async function seedTenantData(tenantId, { ownerId, tag = shortToken(6) } 
     { tenantId, scope: 'tenant', key: `integrations.slack_token_${tag}`, group: 'integrations', type: 'string', value: 'xoxb-SECRET-SETTING-VALUE', isSecret: true, createdAt: now, updatedAt: now },
     { tenantId, scope: 'tenant', key: `branding.title_${tag}`, group: 'branding', type: 'string', value: 'Hello', isSecret: false, createdAt: now, updatedAt: now },
   ]);
-
-  await col('Subscription').insertOne({ tenantId, planId: 'free', state: 'active', currentPeriodStart: now, currentPeriodEnd: new Date('2026-10-01T00:00:00Z'), createdAt: now, updatedAt: now });
+  await col('Subscription').updateOne(
+    { tenantId },
+    { $setOnInsert: { tenantId, planId: 'free', state: 'active', currentPeriodStart: now, currentPeriodEnd: new Date('2026-10-01T00:00:00Z'), createdAt: now, updatedAt: now } },
+    { upsert: true },
+  );
   await col('SubscriptionHistory').insertOne({ tenantId, type: 'created', toPlanId: 'free', occurredAt: now });
   await col('PaymentTransaction').insertOne({
     tenantId, planId: 'pro', amountMinor: 49900, currency: 'INR', provider: 'razorpay', providerOrderId: `order_${tag}_${shortToken(8)}`,

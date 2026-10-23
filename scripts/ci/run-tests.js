@@ -84,6 +84,18 @@ process.env.ADMIN_MFA_REQUIRED_TYPES = 'none';
 // connection loaded from .env. Email tests use the service capture sink and
 // the noop transport instead.
 process.env.MAIL_PROVIDER = 'none';
+// Do not inherit developer-only signing and egress settings from `.env`.
+// Tests explicitly cover HMAC rows and local MongoDB connector sources under
+// controlled fixtures; production secrets/policies must not affect the suite.
+process.env.AUDIT_CHAIN_KEY = '';
+process.env.AUDIT_CHAIN_PREVIOUS_KEYS = '';
+process.env.CONNECTOR_ALLOW_PRIVATE_NETWORKS = 'true';
+// Keep API-key integration tests deterministic even when dotenv contains
+// developer overrides. Individual tests may still override these values.
+process.env.API_KEY_MAX_TTL_DAYS = '30';
+process.env.API_KEY_ROTATION_OVERLAP_MINUTES = '0.03';
+process.env.API_KEY_RATE_LIMIT_MAX = '20';
+process.env.SECURITY_ALERT_NOTIFY_MIN_SEVERITY = 'high';
 // The email outbox contract enables its drain job by default.  A developer's
 // `.env` may disable it for a running deployment, but must not change the
 // behavior asserted by the isolated test suite.

@@ -1,5 +1,5 @@
 /**
- * ai-ask: Ask a question over HTTP with a FAKE Anthropic SDK (no network):
+ * ai-ask: Ask a question over HTTP with a FAKE Gemini SDK (no network):
  * gating (flag, kill switch, consent, permission, noop 501, quota), plan
  * validation (unauthorised dataset/field rejected, repair then abstain),
  * clarify/unanswerable, refusal/max_tokens, logging without rows, tenant
@@ -26,12 +26,12 @@ import * as datasetSchemaService from '../../src/services/datasetSchema.service.
 let replies = [];
 let calls = [];
 const fakeSdk = () => ({
-  messages: {
-    create: async (params) => {
+  models: {
+    generateContent: async (params) => {
       calls.push(params);
       const next = replies.shift() ?? { kind: 'unanswerable', unanswerable: { reason: 'out_of_scope' } };
-      if (next.stop) return { stop_reason: next.stop, content: [], usage: { input_tokens: 10, output_tokens: 0 } };
-      return { stop_reason: 'end_turn', content: [{ type: 'text', text: JSON.stringify(next) }], usage: { input_tokens: 100, output_tokens: 20 } };
+      if (next.stop) return { candidates: [{ finishReason: next.stop }], usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 0 }, text: '' };
+      return { candidates: [{ finishReason: 'STOP' }], usageMetadata: { promptTokenCount: 100, candidatesTokenCount: 20 }, text: JSON.stringify(next) };
     },
   },
 });
@@ -39,7 +39,7 @@ const fakeSdk = () => ({
 before(async () => { await startMongo(); await startHttp(); setSdkFactory(fakeSdk); });
 beforeEach(async () => {
   await resetMongo(); await rbacCache.clearAll(); await cacheService.flushAll();
-  replies = []; calls = []; _forceProvider('anthropic');
+  replies = []; calls = []; _forceProvider('gemini');
 });
 after(async () => { _forceProvider(null); setSdkFactory(null); await stopHttp(); await stopMongo(); });
 
@@ -70,7 +70,7 @@ test('answers a validated plan with provenance; logs no rows and sends no person
   assert.equal(res.json.data.provenance.datasetId, t.ds);
   assert.deepEqual(res.json.data.assumptions, ['revenue = sum(amount)']);
   assert.ok(!JSON.stringify(calls[0]).includes('email'), 'personal field not sent');
-  assert.equal(calls[0].model, 'claude-opus-5-5');
+  assert.equal(calls[0].model, 'gemini-2.5-flash');
   const rec = await AiQuestion.findById(res.json.data.id).lean();
   assert.ok(rec.promptHash && rec.usage.inputTokens === 100);
   assert.ok(!JSON.stringify(rec).includes('"EU"') && !logs.includes('"EU"'), 'no result rows stored or logged');
@@ -88,7 +88,7 @@ test('unauthorised dataset or field is rejected; one repair round then abstain',
   assert.equal(res.json.data.outcome, 'unanswerable');
   assert.equal(res.json.data.reason, 'invalid_plan');
   assert.equal(calls.length, 2);
-  assert.match(calls[1].messages[0].content, /VALIDATOR_ERRORS/);
+  assert.match(calls[1].contents[0].parts[0].text, /VALIDATOR_ERRORS/);
 
   replies = [
     { kind: 'plan', plan: { datasetId: t.ds, metrics: [{ op: 'sum', field: 'nope' }] } },
@@ -129,7 +129,7 @@ test('gating: flag, kill switch, consent, permission, noop 501, quota; tenant is
   const noop = await ask(t.headers);
   assert.equal(noop.status, 501);
   assert.equal(noop.json.code, 'AI_NOT_CONFIGURED');
-  _forceProvider('anthropic');
+  _forceProvider('gemini');
 
   await featureFlagService.updateFlag({ key: 'ai.kill_switch', patch: { enabled: true }, actor: { type: 'admin', id: 'a' } });
   assert.equal((await ask(t.headers)).json.code, 'AI_DISABLED');

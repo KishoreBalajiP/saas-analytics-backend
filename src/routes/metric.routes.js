@@ -26,6 +26,17 @@ const router = Router();
 
 const guarded = (action, ...mw) => [authenticate, resolveTenant, permission('metrics', action), ...mw];
 
+// `/api/v1/metrics` is shared with the Prometheus scrape endpoint. Let
+// JWT-bearing requests stay in the tenant metric catalogue router; static
+// metrics tokens and unauthenticated requests fall through to the Prometheus
+// router mounted after this one.
+router.use((req, res, next) => {
+  const header = req.headers.authorization;
+  const token = typeof header === 'string' ? /^Bearer\s+(\S+)$/i.exec(header.trim())?.[1] : null;
+  if (token?.split('.').length === 3) return next();
+  return next('router');
+});
+
 router.get('/', guarded('view', validate(metricValidator.metricListSchema)), metricController.listMetrics);
 router.post('/', guarded('manage', validate(metricValidator.metricCreateSchema)), metricController.createMetric);
 router.post('/suggest', guarded('manage', validate(metricValidator.metricSuggestSchema)), metricController.suggestMetrics);

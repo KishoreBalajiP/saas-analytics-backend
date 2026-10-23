@@ -21,6 +21,7 @@ import * as alertService from '../../src/services/alert.service.js';
 import * as outboxService from '../../src/services/outbox.service.js';
 import delivery from '../../src/services/delivery/index.js';
 import { setHttpTransport, SIGNATURE_HEADER, TIMESTAMP_HEADER } from '../../src/services/delivery/transports.js';
+import { entitleTenant } from '../helpers/billing.js';
 
 const PUBLIC_URL = 'https://93.184.216.34/hook/abc-secret-path';
 let tenantId;
@@ -36,6 +37,7 @@ beforeEach(async () => {
   responder = () => ({ status: 200 });
   setHttpTransport(async (req) => { calls.push(req); return responder(req); });
   tenantId = String((await factories.tenant.create({ status: 'active' }))._id);
+  await entitleTenant(tenantId);
   datasetId = String((await connectorRepository.create({ tenantId, type: 'csv', name: 'Orders', status: 'active' }))._id);
   await ConnectorRow.collection.insertMany([{ tenantId, connectorId: new mongoose.Types.ObjectId(datasetId), sourceRowId: 'r1', data: { a: 1 } }]);
 });

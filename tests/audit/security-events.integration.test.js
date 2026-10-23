@@ -34,6 +34,7 @@ import { User } from '../../src/models/User.js';
 import { Session } from '../../src/models/Session.js';
 // support: impersonation needs workspace consent (roadmap 2.3).
 import * as supportAccessService from '../../src/services/supportAccess.service.js';
+import { entitleTenant } from '../helpers/billing.js';
 
 const PASSWORD = 'Password123!';
 

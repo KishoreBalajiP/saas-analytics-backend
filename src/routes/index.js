@@ -222,9 +222,6 @@ router.use('/delivery', deliveryRoutes);
 router.use('/workspace/data-exports', workspaceDataExportRoutes);
 router.use('/data-exports', dataExportDownloadRoutes);
 
-// observability: /metrics (token), /status (public), /client-errors (public).
-router.use('/', observabilityRoutes);
-
 // ai-insights: deterministic insights feed (roadmap 4.A3).
 router.use('/insights', insightRoutes);
 
@@ -233,5 +230,10 @@ router.use('/ai', aiRoutes);
 
 // ai-catalogue: metric definitions (roadmap 4.A1).
 router.use('/metrics', metricRoutes);
+
+// observability: /metrics (static token), /status (public), /client-errors (public).
+// Mounted after the JWT catalogue router so the shared `/metrics` path can
+// dispatch by credential type.
+router.use('/', observabilityRoutes);
 
 export default router;

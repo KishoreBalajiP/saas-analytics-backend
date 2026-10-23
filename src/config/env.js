@@ -780,7 +780,7 @@ const config = Object.freeze({
   // ai-ask: AI provider adapter (roadmap 4.A2). `noop` answers 501 AI_NOT_CONFIGURED.
   ai: {
     provider: str('AI_PROVIDER', 'noop').toLowerCase(),
-    model: str('AI_MODEL', 'claude-opus-5-5'),
+    model: str('AI_MODEL', 'gemini-2.5-flash'),
     apiKey: str('AI_API_KEY', ''),
     timeoutMs: Math.max(1000, num('AI_TIMEOUT_MS', 30000)),
     maxOutputTokens: Math.max(256, num('AI_MAX_OUTPUT_TOKENS', 4096)),
@@ -918,7 +918,7 @@ if (isProduction) {
   }
   // ai-ask: a real provider in production needs a key and a known provider name.
   if (config.ai.provider !== 'noop') {
-    if (config.ai.provider !== 'anthropic') invalid.push('AI_PROVIDER (noop or anthropic)');
+    if (!['noop', 'gemini'].includes(config.ai.provider)) invalid.push('AI_PROVIDER (noop or gemini)');
     if (!config.ai.apiKey) invalid.push('AI_API_KEY');
   }
   if (invalid.length) {
