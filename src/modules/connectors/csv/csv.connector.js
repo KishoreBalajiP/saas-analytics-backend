@@ -22,7 +22,7 @@ import BaseConnector from '../../../connectors/BaseConnector.js';
 import env from '../../../config/env.js';
 import { validateConfig } from '../shared/validators.js';
 import { RowLimitError } from '../shared/errors.js';
-import { createParser, previewCsv } from './csv.parser.js';
+import { createParser, previewCsv, toRecord } from './csv.parser.js';
 
 export class CsvConnector extends BaseConnector {
   static type = 'csv';
@@ -72,7 +72,7 @@ export class CsvConnector extends BaseConnector {
       for await (const record of parser) {
         rows += 1;
         if (rows > maxRows) throw new RowLimitError(maxRows);
-        yield record;
+        yield toRecord(record);
       }
     } finally {
       parser.destroy?.();

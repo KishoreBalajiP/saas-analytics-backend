@@ -100,6 +100,17 @@ process.env.SECURITY_ALERT_NOTIFY_MIN_SEVERITY = 'high';
 // `.env` may disable it for a running deployment, but must not change the
 // behavior asserted by the isolated test suite.
 process.env.JOB_EMAIL_ENABLED = 'true';
+// AI: suites force a fake provider themselves; a developer's AI_* values
+// (a real key, another model id) must not reach the SDK or the assertions.
+process.env.AI_PROVIDER = 'noop';
+process.env.AI_MODEL = 'gemini-2.5-flash';
+process.env.AI_API_KEY = '';
+// Billing: a developer `.env` may hold live Razorpay settings; the suite
+// asserts the provider-disabled default and enables it per test.
+process.env.RAZORPAY_ENABLED = 'false';
+for (const key of ['RAZORPAY_KEY_ID', 'RAZORPAY_KEY_SECRET', 'RAZORPAY_WEBHOOK_SECRET', 'RAZORPAY_ENVIRONMENT', 'RAZORPAY_PLAN_MAPPING_JSON']) {
+  process.env[key] = '';
+}
 process.env.JOB_EMAIL_CRON = '* * * * *';
 delete process.env.SMTP_HOST;
 delete process.env.SMTP_PORT;

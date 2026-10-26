@@ -7,6 +7,8 @@
  *   non-negative values, no compare -> pie (part-to-whole)
  *   one dimension otherwise      -> bar
  *   anything else                -> table
+ * Alternatives only list charts the result can draw: pie/doughnut need one
+ * measure with no negative values, scatter needs two measures.
  */
 const num = (v) => typeof v === "number" && Number.isFinite(v);
 
@@ -43,17 +45,23 @@ export function recommendVisualization({
       alternatives: ["line", "area", "bar", "table"],
     };
   if (dims.length === 1) {
+    if (measures.length >= 2) {
+      return {
+        ...base,
+        type: "bar",
+        alternatives: ["bar", "line", "scatter", "table"],
+      };
+    }
     const first = measures[0];
-    const partToWhole =
-      !query.compare &&
-      rows.length <= 6 &&
-      rows.every((r) => num(r?.[first]) && r[first] >= 0);
+    const nonNegative = rows.every((r) => num(r?.[first]) && r[first] >= 0);
+    const partToWhole = !query.compare && rows.length <= 6 && nonNegative;
+    const slices = nonNegative ? ["pie", "doughnut"] : [];
     return {
       ...base,
       type: partToWhole ? "pie" : "bar",
       alternatives: partToWhole
-        ? ["pie", "bar", "table"]
-        : ["bar", "pie", "table"],
+        ? ["pie", "doughnut", "bar", "table"]
+        : ["bar", ...slices, "table"],
     };
   }
   return { ...base, type: "bar", alternatives: ["bar", "table"] };

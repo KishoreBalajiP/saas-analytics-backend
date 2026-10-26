@@ -132,6 +132,7 @@
 
 import mongoose from 'mongoose';
 import { ConnectorRow } from '../models/ConnectorRow.js';
+import { Connector } from '../models/Connector.js';
 import ApiError from '../utils/ApiError.js';
 import env from '../config/env.js';
 import clock from '../utils/clock.js';
@@ -161,6 +162,7 @@ export const QUERY_ERROR_CODES = Object.freeze({
   INVALID_QUERY: 'INVALID_QUERY',
   QUERY_TIMEOUT: 'QUERY_TIMEOUT',
   QUERY_CONCURRENCY_LIMIT,
+  DATASET_NOT_READY: 'DATASET_NOT_READY',
 });
 
 export const FILTER_OPS = Object.freeze(['eq', 'neq', 'in', 'nin', 'gt', 'gte', 'lt', 'lte', 'exists']);
@@ -768,6 +770,7 @@ export async function prepareQuery(rawOptions = {}) {
   // rls: the actor's dataset grants and row rules (never from request input).
   const access = normalized.access ?? await resolveAccessScope({ tenantId: normalized.tenantId });
   assertQueryable(access, normalized.connectorIds);
+  await assertDatasetsReady(normalized.tenantId, normalized.connectorIds);
   const options = {
     ...normalized,
     access,
@@ -782,6 +785,35 @@ export async function prepareQuery(rawOptions = {}) {
   };
   delete options.now;
   return { options, window, timezone, metricDefs };
+}
+
+/**
+ * A dataset whose FIRST import is still queued / running, or failed, has no
+ * data yet: refuse with 409 DATASET_NOT_READY instead of an empty result
+ * that reads like "no rows matched". A dataset that already holds data
+ * (lastSyncedAt set) stays queryable while it re-syncs.
+ */
+async function assertDatasetsReady(tenantId, connectorIds) {
+  if (!tenantId || !connectorIds?.length) return;
+  const pending = await Connector.find({
+    tenantId: String(tenantId),
+    _id: { $in: connectorIds },
+    lastSyncedAt: null,
+    syncStatus: { $in: ['queued', 'running', 'failed'] },
+  }).select('name syncStatus').lean();
+  if (!pending.length) return;
+  const first = pending[0];
+  const message = first.syncStatus === 'failed'
+    ? `"${first.name}" has no data because its import failed. Open the dataset to see why, then upload the file or sync again.`
+    : `"${first.name}" is still importing. Run the query again when the import has finished.`;
+  throw new ApiError(409, message, {
+    code: QUERY_ERROR_CODES.DATASET_NOT_READY,
+    errors: pending.map((c) => ({
+      field: 'connectorIds',
+      message: `${c.name}: ${c.syncStatus === 'failed' ? 'import failed' : 'import in progress'}`,
+      connectorId: String(c._id),
+    })),
+  });
 }
 
 /* ------------------------- metric references (ai-catalogue) --------------- */

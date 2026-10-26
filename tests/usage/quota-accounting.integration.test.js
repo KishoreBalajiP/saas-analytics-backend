@@ -156,12 +156,13 @@ test('dashboards: create, update, publish, widgets, duplicate and delete keep th
   for (let i = 0; i < 10; i += 1) {
     await dashboardService.updateDashboard({ tenantId, dashboardId: String(created[0]._id), patch: { name: `Renamed ${i}` } });
   }
-  await dashboardService.publishDashboard({ tenantId, dashboardId: String(created[0]._id) });
   for (let i = 0; i < 4; i += 1) {
     await dashboardService.createWidget({
       tenantId, dashboardId: String(created[0]._id), data: { name: `W${i}`, type: 'table', datasetId: String(dataset._id) },
     });
   }
+  // Publishing needs widgets (an empty dashboard is refused), so it follows them.
+  await dashboardService.publishDashboard({ tenantId, dashboardId: String(created[0]._id) });
   await dashboardService.duplicateDashboard({ tenantId, dashboardId: String(created[0]._id) });
   await assertCountersMatch(tenantId, 'after edits');
   assert.equal(await counter(tenantId, 'dashboards'), 4);

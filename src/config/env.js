@@ -70,6 +70,21 @@ const list = (key, fallback = []) => {
   return value.split(',').map((item) => item.trim()).filter(Boolean);
 };
 
+/**
+ * Read an identifier-like string (provider / model names): trimmed, with one
+ * pair of surrounding quotes removed. Deploy dashboards often keep the quotes
+ * or a trailing space pasted from a `.env` file, which would otherwise turn
+ * `"gemini"` into an unknown provider.
+ */
+const ident = (key, fallback = '') => {
+  const raw = str(key, '');
+  const value = raw.trim().replace(/^(['"])(.*)\1$/, '$2').trim();
+  return value === '' ? fallback : value;
+};
+
+/** Gemini model ids, e.g. `gemini-2.5-flash` (an optional `models/` prefix is accepted). */
+export const GEMINI_MODEL_PATTERN = /^(models\/)?gemini-[a-z0-9][a-z0-9.-]*$/i;
+
 /** Fail-fast helper for variables that are mandatory in a given mode. */
 const required = (key, value) => {
   if (value === undefined || value === '') {
@@ -778,10 +793,12 @@ const config = Object.freeze({
   },
 
   // ai-ask: AI provider adapter (roadmap 4.A2). `noop` answers 501 AI_NOT_CONFIGURED.
+  // Provider and model are chosen separately: AI_PROVIDER picks the adapter,
+  // AI_MODEL the model id it calls (validated against GEMINI_MODEL_PATTERN).
   ai: {
-    provider: str('AI_PROVIDER', 'noop').toLowerCase(),
-    model: str('AI_MODEL', 'gemini-2.5-flash'),
-    apiKey: str('AI_API_KEY', ''),
+    provider: ident('AI_PROVIDER', 'noop').toLowerCase(),
+    model: ident('AI_MODEL', 'gemini-2.5-flash'),
+    apiKey: str('AI_API_KEY', '').trim(),
     timeoutMs: Math.max(1000, num('AI_TIMEOUT_MS', 30000)),
     maxOutputTokens: Math.max(256, num('AI_MAX_OUTPUT_TOKENS', 4096)),
     maxQuestionLength: Math.max(20, num('AI_MAX_QUESTION_LENGTH', 500)),
@@ -952,6 +969,16 @@ if (isProduction) {
         .join(', ')}. ` +
         'Replace these with the deployed frontend domain before the final Render deployment, ' +
         'otherwise browser CORS and Socket.IO connections will be rejected.',
+    );
+  }
+
+  // A mistyped AI_MODEL must not stop the whole API from starting: Ask
+  // reports AI_MODEL_INVALID in /ai/status instead. Say so at startup too.
+  if (config.ai.provider === 'gemini' && !GEMINI_MODEL_PATTERN.test(config.ai.model)) {
+    /* eslint-disable-next-line no-console */
+    console.warn(
+      `[config] WARNING: AI_MODEL=${JSON.stringify(config.ai.model)} is not a Gemini model id ` +
+        '(expected e.g. gemini-2.5-flash). Ask stays unavailable until it is corrected.',
     );
   }
 

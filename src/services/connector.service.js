@@ -737,6 +737,134 @@ export async function syncCsvUpload(input = {}) {
   return syncFileUpload(input);
 }
 
+/* ------------------------- file import (datasets) ------------------------- */
+
+const DATASET_NAME_MAX = 120;
+
+/**
+ * CSV / XLSX options from multipart form fields (all strings): `delimiter`
+ * (one character, `\t` for tab), `hasHeader` (true/false) and, for XLSX,
+ * `sheet` (a sheet NAME). The connector validator still checks the result.
+ */
+function fileConfigFrom(type, fields = {}) {
+  const config = {};
+  if (fields.hasHeader !== undefined && fields.hasHeader !== '') {
+    config.hasHeader = !['false', '0', 'no', 'off'].includes(String(fields.hasHeader).toLowerCase());
+  }
+  if (type === 'csv' && fields.delimiter) {
+    config.delimiter = String(fields.delimiter) === '\\t' ? '\t' : String(fields.delimiter);
+  }
+  if (type === 'xlsx' && typeof fields.sheet === 'string' && fields.sheet.trim()) {
+    config.sheet = fields.sheet.trim();
+  }
+  return config;
+}
+
+/** The sniffed type of an uploaded file, refusing anything but CSV / XLSX. */
+function uploadedFileType(buffer, detectedType) {
+  if (!buffer || buffer.length === 0) {
+    throw new ConnectorValidationError('Upload a file', [{ field: 'file', message: 'is required and must not be empty' }]);
+  }
+  const kind = detectedType ?? sniffFileKind(buffer);
+  if (!FILE_CONNECTOR_TYPES.includes(kind)) {
+    throw new ConnectorError(CONNECTOR_ERROR_CODES.UNSUPPORTED_FILE_TYPE, 'Upload a .csv or .xlsx file.', { statusCode: 415 });
+  }
+  return kind;
+}
+
+/** Parse the first rows with the provider (same parser as the import). */
+async function previewWith(type, config, buffer, limit) {
+  const verdict = validateConfig(type, config);
+  if (!verdict.valid) throw new ConnectorConfigError(`Invalid ${type} options`, verdict.errors);
+  const instance = createConnector(type, { id: null, config, tenantId: null });
+  try {
+    return await instance.preview({ buffer, limit: Math.max(1, Math.min(Number(limit) || 10, 100)) });
+  } catch (error) {
+    throw toPreviewError(error, type);
+  }
+}
+
+/**
+ * Preview an uploaded CSV / XLSX before any dataset exists (the Upload
+ * file dialog). Nothing is stored; the file type comes from the content.
+ *
+ * @returns {Promise<{ type: 'csv'|'xlsx', config: object, fields: string[], sample: object[], meta: object }>}
+ */
+export async function previewUnsavedFile({ buffer, detectedType, fields = {}, limit = 10 } = {}) {
+  const type = uploadedFileType(buffer, detectedType);
+  const config = fileConfigFrom(type, fields);
+  const preview = await previewWith(type, config, buffer, limit);
+  return { type, config, ...preview };
+}
+
+/** Dataset names are unique per workspace (case- and space-insensitive). */
+async function assertDatasetNameAvailable(tenantId, name) {
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+');
+  const { docs } = await connectorRepository.list({
+    tenantId,
+    filter: { name: { $regex: `^\\s*${escaped}\\s*$`, $options: 'i' } },
+    page: 1,
+    limit: 1,
+  });
+  if (docs.length) {
+    throw new ConnectorError('DATASET_NAME_TAKEN', `A dataset named "${docs[0].name}" already exists. Choose another name.`, {
+      statusCode: 409,
+      details: [{ field: 'name', message: 'is already used by another dataset' }],
+    });
+  }
+}
+
+/**
+ * Upload a CSV / XLSX file as a NEW dataset in one request: validate the
+ * name and the file (parsed with the import's own parser; a file without
+ * data rows is refused), create the connector, then queue the import. The
+ * dataset is only ready once the import job succeeds (`syncStatus`). If
+ * queueing fails the new connector is deleted again, so a failed upload
+ * never leaves an empty dataset behind. The original filename is kept on
+ * the sync run.
+ */
+export async function importFileDataset({ tenantId, actorId = null, name, buffer, filename = null, detectedType, fields = {} } = {}) {
+  const trimmed = typeof name === 'string' ? name.trim() : '';
+  if (!trimmed || trimmed.length > DATASET_NAME_MAX) {
+    throw new ConnectorValidationError('Give the dataset a name', [
+      { field: 'name', message: `is required (1-${DATASET_NAME_MAX} characters)` },
+    ]);
+  }
+  const type = uploadedFileType(buffer, detectedType);
+  const config = fileConfigFrom(type, fields);
+  await assertTenantActive(tenantId);
+  await assertDatasetNameAvailable(tenantId, trimmed);
+  const preview = await previewWith(type, config, buffer, 5);
+  if (!preview.fields.length || !preview.sample.length) {
+    throw new ConnectorError(CONNECTOR_ERROR_CODES.FILE_PARSE_FAILED, 'The file has no data rows to import.', {
+      statusCode: 422,
+      details: [{ field: 'file', message: type === 'xlsx' ? 'the selected sheet has no data rows' : 'no data rows below the header' }],
+    });
+  }
+
+  const connector = await createConnectorRecord({ tenantId, actorId, type, name: trimmed, config });
+  try {
+    const sync = await syncFileUpload({
+      tenantId,
+      connectorId: String(connector._id),
+      buffer,
+      filename,
+      detectedType: type,
+      actorId,
+    });
+    await audit({
+      tenantId, actorId, action: 'connector.file_imported', resourceId: String(connector._id),
+      after: { type, name: trimmed, syncRunId: sync.syncRunId },
+    });
+    return { connector: { ...connector, syncStatus: 'queued' }, sync };
+  } catch (error) {
+    await deleteConnectorRecord({ tenantId, connectorId: String(connector._id), actorId }).catch((cleanupError) => {
+      logger.warn({ err: sanitizeError(cleanupError), connectorId: String(connector._id) }, 'file import: rollback of the new connector failed');
+    });
+    throw error;
+  }
+}
+
 /**
  * Enqueue a mongodb pull-sync job. No file upload — the worker connects
  * to the external MongoDB (through the egress policy) and pulls documents.
@@ -1689,6 +1817,8 @@ export default {
   syncCsvUpload,
   previewFileUpload,
   syncFileUpload,
+  previewUnsavedFile,
+  importFileDataset,
   syncMongoDB,
   handleWebhook,
   processSyncMessage,

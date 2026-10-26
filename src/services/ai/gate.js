@@ -9,7 +9,11 @@ import ApiError from "../../utils/ApiError.js";
 import * as featureFlags from "../featureFlag.service.js";
 import usageService from "../usage.service.js";
 import aiRepository from "../../repositories/ai.repository.js";
-import { getAiProvider, AI_ERROR_CODES } from "../aiProvider.adapter.js";
+import {
+  getAiProvider,
+  aiConfigDiagnosis,
+  AI_CONFIG_ACTIONS,
+} from "../aiProvider.adapter.js";
 import entitlementService from "../entitlement.service.js";
 
 export const AI_FLAGS = Object.freeze({
@@ -29,7 +33,9 @@ export async function status({ tenantId }) {
       : false,
     aiRepository.getConsent(tenantId),
   ]);
-  const provider = getAiProvider();
+  // The configuration problem (unset/unsupported provider, missing key,
+  // invalid model) is reported as itself, never as a generic "not configured".
+  const config = aiConfigDiagnosis();
   const granted = Boolean(consent?.granted);
   // Why Ask is unavailable (first failing gate) and what to do about it.
   let reason = null;
@@ -38,10 +44,9 @@ export async function status({ tenantId }) {
     reason = "AI_DISABLED";
     action =
       "The AI assistant is temporarily disabled by the platform operator. Try again later.";
-  } else if (!provider.isImplemented) {
-    reason = AI_ERROR_CODES.NOT_CONFIGURED;
-    action =
-      "No AI provider is configured. A platform operator must set AI_PROVIDER=gemini and AI_API_KEY on the backend.";
+  } else if (!config.ready) {
+    reason = config.problem;
+    action = AI_CONFIG_ACTIONS[config.problem];
   } else if (!entitled) {
     reason = "FEATURE_NOT_AVAILABLE";
     action =
@@ -57,7 +62,7 @@ export async function status({ tenantId }) {
     enabled: entitled || flagged,
     entitled,
     consent: granted,
-    providerConfigured: provider.isImplemented,
+    providerConfigured: config.ready,
     reason,
     action,
   };
@@ -71,7 +76,7 @@ export async function check({ tenantId, actorId, consume = true }) {
     });
   if (!s.providerConfigured)
     throw new ApiError(501, "AI is not configured on this platform", {
-      code: AI_ERROR_CODES.NOT_CONFIGURED,
+      code: s.reason,
     });
   if (!s.entitled)
     throw new ApiError(403, "Your plan does not include the AI assistant", {

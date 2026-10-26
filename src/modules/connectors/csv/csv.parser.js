@@ -64,13 +64,15 @@ export async function previewCsv(buffer, { delimiter, hasHeader, limit = 10 } = 
   const useHeader = hasHeader ?? (await detectHeader(buffer, { delimiter }));
   const parser = createParser(buffer, { delimiter, hasHeader: useHeader });
   const sample = [];
+  let width = 0;
   for await (const record of parser) {
-    sample.push(record);
+    if (Array.isArray(record)) width = Math.max(width, record.length);
+    sample.push(toRecord(record));
     if (sample.length >= limit) break;
   }
-  const fields = useHeader && sample.length > 0
-    ? Object.keys(sample[0])
-    : Array.from({ length: Array.isArray(sample[0]) ? sample[0].length : 0 }, (_, i) => `column_${i + 1}`);
+  const fields = useHeader
+    ? Object.keys(sample[0] ?? {})
+    : Array.from({ length: width }, (_, i) => `column_${i + 1}`);
   return {
     fields,
     sample,
@@ -79,13 +81,19 @@ export async function previewCsv(buffer, { delimiter, hasHeader, limit = 10 } = 
 }
 
 /**
- * Heuristic header detection: a first non-empty row where every cell is a
- * number is treated as data (no header); otherwise headers are assumed.
- *
- * @param {Buffer|string} buffer
- * @param {Object} [options] - { delimiter? }.
- * @returns {Promise<boolean>} true when the file looks header-bearing.
+ * Header-less rows arrive as arrays; name their cells column_1..column_N
+ * (the preview's field names) so ingestion stores them instead of
+ * skipping non-object records.
  */
+export function toRecord(record) {
+  if (!Array.isArray(record)) return record;
+  const out = {};
+  record.forEach((value, i) => {
+    out[`column_${i + 1}`] = value;
+  });
+  return out;
+}
+
 export async function detectHeader(buffer, { delimiter } = {}) {
   const parser = parse({
     ...baseOptions({ delimiter, hasHeader: false }),
@@ -103,4 +111,4 @@ export async function detectHeader(buffer, { delimiter } = {}) {
   return true;
 }
 
-export default { createParser, previewCsv, detectHeader };
+export default { createParser, previewCsv, detectHeader, toRecord };
