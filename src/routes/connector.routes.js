@@ -10,6 +10,8 @@
  *   - GET    /types                    - registered connector types/capabilities
  *   - GET    /                         - list connectors (paginated, filterable)
  *   - POST   /                         - create (config validated + encrypted)
+ *   - POST   /file-preview             - preview a CSV/XLSX before a dataset exists (multipart `file`)
+ *   - POST   /import                   - new named dataset from a CSV/XLSX upload + queued import
  *   - GET    /:connectorId             - detail
  *   - PATCH  /:connectorId             - update (type immutable)
  *   - DELETE /:connectorId             - soft delete
@@ -51,6 +53,9 @@ const router = Router();
 router.get('/types', authenticate, resolveTenant, permission('connectors', 'view'), connectorController.listTypes);
 router.get('/', authenticate, resolveTenant, permission('connectors', 'view'), connectorController.list);
 router.post('/', authenticate, resolveTenant, permission('connectors', 'create'), connectorController.create);
+// datasets: Upload file flow - preview before a dataset exists, then create + import in one request.
+router.post('/file-preview', authenticate, resolveTenant, permission('connectors', 'preview'), connectorFileUpload, connectorController.previewNewFile);
+router.post('/import', authenticate, resolveTenant, permission('connectors', 'create'), permission('connectors', 'sync'), connectorFileUpload, connectorController.importFile);
 router.get('/:connectorId', authenticate, resolveTenant, permission('connectors', 'view'), connectorController.getById);
 router.patch('/:connectorId', authenticate, resolveTenant, permission('connectors', 'update'), connectorController.update);
 router.delete('/:connectorId', authenticate, resolveTenant, permission('connectors', 'delete'), connectorController.remove);

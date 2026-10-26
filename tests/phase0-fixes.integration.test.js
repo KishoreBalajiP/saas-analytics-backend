@@ -28,6 +28,7 @@ import planService from '../src/services/plan.service.js';
 import mfaService from '../src/modules/iam/auth/mfa.service.js';
 import adminRepository from '../src/repositories/admin.repository.js';
 import { ApiKey } from '../src/models/ApiKey.js';
+import { Connector } from '../src/models/Connector.js';
 // billing: tenants exercising paid features need a plan that includes them.
 import { entitleTenant } from './helpers/billing.js';
 
@@ -142,6 +143,12 @@ test('embed: token minted for a published dashboard serves data without internal
   const dash = await api('/api/v1/dashboards', { method: 'POST', headers: ws.auth, body: { name: 'Public KPIs' } });
   assert.equal(dash.status, 201);
   const dashboardId = dash.json.data._id;
+  // Publishing requires at least one valid widget (an empty dashboard is refused).
+  const dataset = await Connector.create({ tenantId: String(ws.tenant._id), type: 'csv', name: 'KPIs', status: 'active', lastSyncedAt: new Date() });
+  const widget = await api(`/api/v1/dashboards/${dashboardId}/widgets`, {
+    method: 'POST', headers: ws.auth, body: { name: 'Rows', type: 'kpi', datasetId: String(dataset._id), query: { metrics: [{ op: 'count', alias: 'rows' }] } },
+  });
+  assert.equal(widget.status, 201, JSON.stringify(widget.json));
   assert.equal((await api(`/api/v1/dashboards/${dashboardId}/publish`, { method: 'POST', headers: ws.auth })).status, 200);
 
   // embedding (roadmap 3.2): signed origin-bound tokens exchanged for an embed session.

@@ -160,6 +160,28 @@ function sanitizePosition(position) {
   };
 }
 
+/** Default widget size on the 12-column grid: KPI a third, table full width, charts half. */
+function defaultWidgetSize(type) {
+  if (type === 'kpi') return { w: 4, h: 2 };
+  if (type === 'table') return { w: 12, h: 5 };
+  return { w: 6, h: 4 };
+}
+
+/**
+ * First free slot (top to bottom, left to right) for a new widget, so
+ * widgets added without a position never land on top of each other.
+ */
+export function nextWidgetPosition(existing = [], type = 'bar') {
+  const { w, h } = defaultWidgetSize(type);
+  const taken = existing.map((widget) => sanitizePosition(widget.position));
+  const fits = (x, y) => taken.every((p) => x + w <= p.x || p.x + p.w <= x || y + h <= p.y || p.y + p.h <= y);
+  const bottom = taken.reduce((max, p) => Math.max(max, p.y + p.h), 0);
+  for (let y = 0; y <= bottom; y += 1) {
+    for (let x = 0; x + w <= 12; x += 1) if (fits(x, y)) return { x, y, w, h };
+  }
+  return { x: 0, y: bottom, w, h };
+}
+
 /**
  * Validate a widget's analytics query against the engine contract (the
  * `QUERY_FIELDS` subset: the dataset comes from `datasetId`). Unknown keys
@@ -708,6 +730,12 @@ export async function createWidget({ tenantId, dashboardId, actorId = null, data
   }
   // Adding a widget does not create a dashboard: no `dashboards` quota use
   // (the per-dashboard widget cap above bounds widgets).
+  const position = data.position
+    ? sanitizePosition(data.position)
+    : nextWidgetPosition(
+      (await widgetRepository.list({ tenantId, dashboardId, page: 1, limit: MAX_WIDGETS_PER_DASHBOARD })).docs,
+      data.type,
+    );
   const saved = await widgetRepository.create({
     tenantId,
     dashboardId,
@@ -716,7 +744,7 @@ export async function createWidget({ tenantId, dashboardId, actorId = null, data
     datasetId: data.datasetId,
     query,
     visualization,
-    position: sanitizePosition(data.position),
+    position,
     createdBy: actorId,
   });
   await audit({

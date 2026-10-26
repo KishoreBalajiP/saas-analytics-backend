@@ -73,7 +73,7 @@ function headerFields(values) {
 
 /**
  * Stream the rows (as value arrays, 0-based) of the selected sheet.
- * Yields `{ sheetName, values }`.
+ * Yields `{ sheetName, sheets, values }` (`sheets`: every sheet name in tab order).
  */
 async function* streamSheetRows(buffer, config, limits) {
   if (!Buffer.isBuffer(buffer) || buffer.length === 0) throw parseFailed();
@@ -90,9 +90,11 @@ async function* streamSheetRows(buffer, config, limits) {
   const reader = new ExcelJS.stream.xlsx.WorkbookReader(source, READER_OPTIONS);
   const wanted = config.sheet;
   let found = false;
+  let names = [];
   try {
     for await (const worksheet of reader) {
       const sheets = reader.model?.sheets ?? [];
+      names = sheets.map((s) => String(s.name ?? '')).filter(Boolean);
       const position = sheets.findIndex((s) => String(s.id) === String(worksheet.id));
       // Default: the first sheet in workbook (tab) order, which is not
       // necessarily the first sheet part in the archive; a sheet the
@@ -116,8 +118,10 @@ async function* streamSheetRows(buffer, config, limits) {
             },
           );
         }
-        yield { sheetName: worksheet.name, values };
+        yield { sheetName: worksheet.name, sheets: names, values };
       }
+      // A selected sheet without rows still reports its name and the sheet list.
+      yield { sheetName: worksheet.name, sheets: names, values: null };
       return;
     }
   } catch (error) {
@@ -127,7 +131,10 @@ async function* streamSheetRows(buffer, config, limits) {
     source.destroy();
   }
   if (!found) {
-    throw new ConnectorError('XLSX_SHEET_NOT_FOUND', 'The configured sheet was not found in the workbook.', { statusCode: 422 });
+    throw new ConnectorError('XLSX_SHEET_NOT_FOUND', 'The configured sheet was not found in the workbook.', {
+      statusCode: 422,
+      details: [{ field: 'sheet', message: 'not found in the workbook', sheets: names.slice(0, 50) }],
+    });
   }
 }
 
@@ -145,10 +152,13 @@ export async function previewXlsx(buffer, config = {}, opts = {}) {
   const hasHeader = config.hasHeader ?? true;
   let fields = null;
   let sheetName = null;
+  let sheets = [];
   const sample = [];
   let truncated = false;
-  for await (const { sheetName: name, values } of streamSheetRows(buffer, config, limits)) {
+  for await (const { sheetName: name, sheets: all, values } of streamSheetRows(buffer, config, limits)) {
     sheetName = name;
+    sheets = all;
+    if (values === null) break;
     if (fields === null) {
       fields = hasHeader ? headerFields(values) : values.map((_, i) => `col_${i}`);
       if (hasHeader) continue;
@@ -162,7 +172,7 @@ export async function previewXlsx(buffer, config = {}, opts = {}) {
   return {
     fields: fields ?? [],
     sample,
-    meta: { sheetName, rowCount: sample.length, hasHeader, truncated },
+    meta: { sheetName, sheets: sheets.slice(0, 50), rowCount: sample.length, hasHeader, truncated },
   };
 }
 
@@ -191,6 +201,7 @@ export async function* createRowIterator(buffer, config = {}, opts = {}) {
   let fields = null;
   let rows = 0;
   for await (const { values } of streamSheetRows(buffer, config, limits)) {
+    if (values === null) break;
     if (fields === null) {
       fields = hasHeader ? headerFields(values) : values.map((_, i) => `col_${i}`);
       if (hasHeader) continue;

@@ -61,6 +61,32 @@ async function loadPrevious({ tenantId, actorId, previousQuestionId }) {
   };
 }
 
+/**
+ * No dataset the caller may query has a schema yet: answer truthfully
+ * without spending a model call.
+ */
+async function finishEarly({ tenantId, actorId, text, previous, previousQuestionId, provider, started }) {
+  const doc = await record({
+    tenantId,
+    actorId,
+    question: text,
+    ...(previous ? { previousQuestionId: String(previousQuestionId) } : {}),
+    provider: provider.name,
+    model: env.ai.model,
+    outcome: "unanswerable",
+    reason: "no_datasets",
+    latencyMs: Date.now() - started,
+  });
+  return {
+    id: String(doc._id),
+    outcome: "unanswerable",
+    reason: "no_datasets",
+    message:
+      "There is no ready dataset you can query yet. Upload a file or sync a data source in Datasets, then ask again.",
+    scope: { available: 0, offered: 0, truncated: false },
+  };
+}
+
 export async function ask({
   tenantId,
   actorId = null,
@@ -87,7 +113,27 @@ export async function ask({
     previousQuestionId,
   });
   const started = Date.now();
-  const ctx = await buildContext({ tenantId });
+  const ctx = await buildContext({
+    tenantId,
+    question: previous ? `${previous.question} ${text}` : text,
+    preferDatasetIds: previous?.datasetIds ?? [],
+  });
+  // Which datasets the planner saw; a truncated search is said out loud.
+  const scope = ctx.scope;
+  const scopeNote = scope.truncated
+    ? ` Only the ${scope.offered} most relevant of your ${scope.available} datasets were searched; name the dataset in your question to search a specific one.`
+    : "";
+  if (!ctx.datasets.length) {
+    return finishEarly({
+      tenantId,
+      actorId,
+      text,
+      previous,
+      previousQuestionId,
+      provider,
+      started,
+    });
+  }
   const base = {
     tenantId,
     actorId,
@@ -134,6 +180,7 @@ export async function ask({
         response: {
           reason: "provider_declined",
           message: "The question could not be answered. Try the query builder.",
+          scope,
         },
       });
     }
@@ -156,9 +203,11 @@ export async function ask({
         reason,
         response: {
           reason,
+          message: `Your data does not contain what this question needs.${scopeNote}`,
           missing: (o.unanswerable?.missing ?? [])
             .slice(0, 10)
             .map((x) => String(x).slice(0, 100)),
+          scope,
         },
       });
     }
@@ -181,7 +230,8 @@ export async function ask({
       },
       response: {
         reason: "invalid_plan",
-        message: "The question could not be mapped to your data.",
+        message: `The question could not be mapped to your data.${scopeNote}`,
+        scope,
       },
     });
   }
@@ -228,6 +278,7 @@ export async function ask({
       }),
       ...(previous ? { previousQuestionId: String(previousQuestionId) } : {}),
       provenance,
+      scope,
     },
   });
 }

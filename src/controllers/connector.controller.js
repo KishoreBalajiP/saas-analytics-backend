@@ -40,6 +40,37 @@ export const previewFile = asyncHandler(async (req, res) => {
   return ApiResponse.ok(res, result, 'File preview');
 });
 
+/**
+ * POST /api/v1/connectors/file-preview - preview a CSV / XLSX before a
+ * dataset exists (fields, first rows, XLSX sheet names). Nothing is stored.
+ */
+export const previewNewFile = asyncHandler(async (req, res) => {
+  const result = await connectorService.previewUnsavedFile({
+    buffer: req.file?.buffer,
+    detectedType: req.file?.detectedType,
+    fields: req.body ?? {},
+    limit: Number(req.body?.limit) || 10,
+  });
+  return ApiResponse.ok(res, { ...result, filename: req.file?.originalname ?? null }, 'File preview');
+});
+
+/**
+ * POST /api/v1/connectors/import - upload a CSV / XLSX as a new named
+ * dataset: creates the connector and queues its import (202).
+ */
+export const importFile = asyncHandler(async (req, res) => {
+  const result = await connectorService.importFileDataset({
+    tenantId: getTenantId(req),
+    actorId: actorOf(req),
+    name: req.body?.name,
+    buffer: req.file?.buffer,
+    filename: req.file?.originalname ?? null,
+    detectedType: req.file?.detectedType,
+    fields: req.body ?? {},
+  });
+  return ApiResponse.accepted(res, result, 'Dataset created; import queued');
+});
+
 /** POST /api/v1/connectors/:connectorId/sync - generic file sync (CSV/XLSX). */
 export const syncFile = asyncHandler(async (req, res) => {
   const result = await connectorService.syncFileUpload({
@@ -254,6 +285,8 @@ export default {
   previewCsv,
   syncCsv,
   previewFile,
+  previewNewFile,
+  importFile,
   syncFile,
   syncMongoDB,
 };
